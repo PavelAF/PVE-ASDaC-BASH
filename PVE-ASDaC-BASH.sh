@@ -2,7 +2,7 @@
 ex() {((ex_var++)); [[ "$ex_var" == 1 ]] && configure_imgdir clear; echo $'\e[m'; exit; }
 trap ex INT
 
-# Запуск:               sh='PVE-ASDaC-BASH.sh';curl -sOLH 'Cache-Control: no-cache' "https://raw.githubusercontent.com/PavelAF/REGCHAMP2024/ASDaC/$sh"&&chmod +x $sh&&./$sh;rm -f $sh
+# Запуск:               sh='PVE-ASDaC-BASH.sh';curl -sOLH 'Cache-Control: no-cache' "https://github.com/PavelAF/PVE-ASDaC-BASH/raw/main/$sh"&&chmod +x $sh&&./$sh;rm -f $sh
 
 echo $'\nProxmox VE Automatic stand deployment and configuration script by AF\n'
 
