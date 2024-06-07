@@ -2,7 +2,7 @@
 ex() {((ex_var++)); [[ "$ex_var" == 1 ]] && configure_imgdir clear; echo $'\e[m'; exit; }
 trap ex INT
 
-# Запуск:               sh='PVE-ASDaC-BASH.sh';curl -sOLH 'Cache-Control: no-cache' "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/main/$sh"&&chmod +x $sh&&./$sh;rm -f $sh
+# Запуск:               sh='PVE-ASDaC-BASH.sh';curl -sOLH 'Cache-Control: no-cache' "https://raw.githubusercontent.com/PavelAF/REGCHAMP2024/ASDaC/$sh"&&chmod +x $sh&&./$sh;rm -f $sh
 
 echo $'\nProxmox VE Automatic stand deployment and configuration script by AF\n'
 
@@ -22,9 +22,6 @@ declare -A config_base=(
 
     [_start_vmid]='Начальный идентификатор ВМ (VMID), с коротого будут создаваться ВМ'
     [start_vmid]='{auto}'
-
-    [_start_vmbr_id]='Стартовый номер создаваемых bridge интерфейсов'
-    [start_vmbr_id]=0
 
     [_mk_tmpfs_imgdir]='Временный раздел tmpfs в ОЗУ для хранения образов ВМ (уничтожается в конце установки)'
     [mk_tmpfs_imgdir]='/root/ASDaC_TMPFS_IMGDIR'
@@ -75,13 +72,18 @@ declare -A config_access_roles=(
 )
 
 # Конфигурация шаблонов для создаваемых виртуальных машин. Особые параметры:
-# network{X} - список именованых сетей (сети (bridge vmbr) создаются автоматически)
-# image - файл виртуального boot диска ВМ. возможные значения: file, yadisk_url, url
-# disk1, disk2 ... - создаваемые пустые диски ( размер в Гб. прим: 1, 0.1 и т.д.). если у диска должно быть конкретноне заполнение, можно указать файл, так же, как в image
-# access_roles - список ролей (прав) доступа участника к ВМ
+# network{X} - список именованных сетей (сети (bridge vmbr) создаются автоматически)
+# возможна подстановка: заключается в скобки { }
+# внешний интерфейс vmbr: {bridge=inet}
+# добавить выключеный интерфейс: {bridge="link_down", state=down}
+# добавить другой существующий в системе vmbr: {bridge=[vmbr0]}
+# в подстанонвочных объявлениях интерфейса {bridge="iface_{0}"} возможа подстановка номера стенда
+# boot_disk0 - файл виртуального boot диска ВМ. возможные значения: file, yadisk_url, url
+# может быть несколько, boot_disk1, boot_disk2 и т.д.
+# disk1, disk2 ... - дополнительно создаваемые диски ( размер в Гб. прим: 1, 0.1 и т.д.). если у диска должно быть конкретноне заполнение, можно указать файл образа диска, так же, как в boot_disk
+# access_roles - список ролей (прав) доступа участника к ВМ (через пробел: role1 role2)
 # disk_type - тип виртуального "железа" для диска для ВМ [ide|scsi|virtio|sata]
 # netifs_type - тип виртуального "железа" сетевого интерфейса для ВМ
-# config_template - импорт настроек ВМ из ранее описанного шаблона
 # config_template - импорт настроек ВМ из ранее описанного шаблона
 _config_templates='Список шаблонов ВМ'
 declare -A config_templates=(
@@ -160,7 +162,7 @@ declare -A config_stand_1_var=(
     [ISP]='
         config_template = Alt-Server_10.1
         startup = order=1,up=8,down=30
-        network1 = 🖧: ISP<=>CLI
+        network1 = {bridge=inet}
         network2 = 🖧: ISP<=>HQ-R
         network3 = 🖧: ISP<=>BR-R
     '
@@ -168,7 +170,8 @@ declare -A config_stand_1_var=(
     [CLI]='
         config_template = Alt-Workstation_10.1
         startup = order=3,up=8,down=30
-        network1 = 🖧: ISP<=>CLI
+        network1 = {bridge=inet}
+        network2 = 🖧: CLI<=>HQ-R
     '
     [_HQ-R]='Eltex vESR'
     [HQ-R]='
@@ -176,6 +179,7 @@ declare -A config_stand_1_var=(
         startup = order=2,up=8,down=60
         network1 = 🖧: ISP<=>HQ-R
         network2 = 🖧: HQ-R<=>HQ-SRV
+        network3 = 🖧: CLI<=>HQ-R
     '
     [_HQ-SRV]='Alt Server 10.1'
     [HQ-SRV]='
@@ -215,7 +219,7 @@ declare -A config_stand_2_var=(
     [ISP]='
         config_template = Alt-Server_10.1
         startup = order=1,up=8,down=30
-        network1 = 🖧: ISP<=>CLI
+        network1 = {bridge=inet}
         network2 = 🖧: ISP<=>HQ-R
         network3 = 🖧: ISP<=>BR-R
 
@@ -224,7 +228,8 @@ declare -A config_stand_2_var=(
     [CLI]='
         config_template = Alt-Workstation_10.1
         startup = order=3,up=8,down=30
-        network1 = 🖧: ISP<=>CLI
+        network1 = {bridge=inet}
+        network2 = 🖧: CLI<=>HQ-R
     '
     [_HQ-R]='Alt Server 10.1'
     [HQ-R]='
@@ -232,6 +237,7 @@ declare -A config_stand_2_var=(
         startup = order=2,up=8,down=60
         network1 = 🖧: ISP<=>HQ-R
         network2 = 🖧: HQ-R<=>HQ-SRV
+        network3 = 🖧: CLI<=>HQ-R
     '
     [_HQ-SRV]='Alt Server 10.1'
     [HQ-SRV]='
@@ -289,10 +295,17 @@ c_warning=$c_lpurple
 c_info=$c_purple
 c_ok=$c_green
 
-function get_colour_print() {
-    [[ "$1" == "true" ]] && echo "$c_greenДа$c_null" && return
-    [[ "$1" == "false" ]] && echo "$c_redНет$c_null" && return
-    echo "$c_value$@$c_null"
+function get_val_print() {
+    [[ "$1" == true ]] && echo "$c_greenДа$c_null" && return 0
+    [[ "$1" == false ]] && echo "$c_redНет$c_null" && return 0
+    if [[ "$2" == storage ]] && ! [[ "$1" =~ ^\{(manual|auto)\}$ ]] && [[ "$sel_storage_space" != '' ]]; then
+        echo "$c_value$1$c_null (свободно $(echo "$sel_storage_space" | awk 'BEGIN{ split("К|М|Г|Т",x,"|") } { for(i=1;$1>=1024&&i<length(x);i++) $1/=1024; print int($1) " " x[i] "Б" }'))"
+        return 0
+    elif [[ "$2" == access_pass_chars ]]; then
+        echo "[$c_value$1$c_null]"
+        return 0
+    fi
+    echo "$c_value$1$c_null"
 }
 
 function echo_err() {
@@ -305,14 +318,14 @@ function echo_warn() {
 
 function read_question_select() {
     local read; until read -p "$1: $c_value" read; echo -n $c_null >/dev/tty
-        [[ -z ${2+x} || $(echo "$read" | grep -Pc "$2" ) == 1 ]] && [[ -z ${3+x} || "$read" -ge "$3" ]] && [[ -z ${4+x} || "$read" -le "$4" ]]
-    do true; done; echo $read;
+        [[ "$2" == '' || $(echo "$read" | grep -Pc "$2" ) == 1 ]] && { ! isdigit_check "$read" || [[ "$3" == '' || "$read" -ge "$3" ]] && [[ "$4" == '' || "$read" -le "$4" ]]; }
+    do true; done; echo "$read";
 }
 
-function read_question() { local read; read -n 1 -p "$1 [y|д|1]: $c_value" read; echo $c_null >/dev/tty; [[ "$read" =~ [yд1] ]] || return 1; }
+function read_question() { local read; until read -n 1 -p "$1 [y|д|1]: $c_value" read; echo $c_null >/dev/tty; [[ "$read" =~ [yд1l] ]] && return 0 || [[ "$read" != '' ]] && return 1; do true; done; }
 
 function get_numrange_array() {
-    local IFS=,;set -- $1
+    local IFS=,; set -- $1
     for range; do
         case $range in
             *-*) for (( i=${range%-*}; i<=${range#*-}; i++ )); do echo $i; done ;;
@@ -340,13 +353,17 @@ function isdigit_check() {
 }
 
 function isregex_check() {
-    [[ "$(echo -n "$1" | wc -m)" -le 255 ]] && return 0
-    [[ $(echo | grep -Psq "$1" 2>/dev/null; echo $?) != 1 ]] && return 0 || return 1
+    [[ "$(echo -n "$1" | wc -m)" -gt 255 ]] && return 1
+    [[ $( echo | grep -Psq "$1" 2>/dev/null; echo $? ) == 1 ]] && return 0 || return 1
 }
 
 function isdict_var_check() {
     #[[ "${!1}" != '' ]] && set -- "${!1}"; [[ "${!1}" != '' ]] && set -- "${!1}"; [[ "${!1}" != '' ]] && set -- "${!1}"
     [[ $(eval echo "\${#$1[@]}") -gt 0 && "$(declare -p -- "$1")" == "declare -A "* ]] && return 0 || return 1
+}
+
+function invert_bool() {
+  [[ "$1" == false ]] && echo true || echo false
 }
 
 function parse_noborder_table() {
@@ -424,8 +441,16 @@ function show_config() {
     [[ "$1" != opt_verbose ]] && echo
     [[ "$1" == install-change ]] && {
             echo $'Список параметров конфигурации:\n  0. Выйти из режима изменения дополнительных настроек'
-            for var in pool_name pool_desc take_snapshots access_create $( ${config_base[access_create]} && echo access_{user_{name,desc,enable},pass_{length,chars},auth_{pve,pam}_desc} ); do
-                echo "  $((++i)). ${config_base[_$var]:-$var}: $(get_colour_print ${config_base[$var]})"
+            for var in pool_name pool_desc storage inet_bridge take_snapshots access_create $( ${config_base[access_create]} && echo access_{user_{name,desc,enable},pass_{length,chars},auth_{pve,pam}_desc} ); do
+                echo "  $((++i)). ${config_base[_$var]:-$var}: $( get_val_print "${config_base[$var]}" "$var" )"
+            done
+            echo "  $((++i)). $_opt_dry_run: $( get_val_print $opt_dry_run )"
+            return 0
+    }
+    [[ "$1" == passwd-change ]] && {
+            echo $'Список параметров конфигурации:\n  0. Запустить установку паролей пользователей'
+            for var in access_pass_{length,chars}; do
+                echo "  $((++i)). ${config_base[_$var]:-$var}: $( get_val_print "${config_base[$var]}" "$var" )"
             done
             return 0
     }
@@ -461,12 +486,12 @@ function show_config() {
         if [[ "$1" != var ]]; then
             echo $'#>------------------ Осовные параметры конфигурации -------------------<#\n'
             for var in inet_bridge storage take_snapshots access_create; do
-                echo "$((++i)). ${config_base[_$var]:-$var}: $(get_colour_print ${config_base[$var]})"
+                echo "$((++i)). ${config_base[_$var]:-$var}: $(get_val_print "${config_base[$var]}" "$var" )"
             done
 
             if ${config_base[access_create]}; then
                 for var in $( [[ "${config_base[access_user_name]}" == '' ]] && echo def_access_user_name || echo access_user_name ) access_user_enable access_pass_length access_pass_chars; do
-                    echo "$((++i)). ${config_base[_$var]:-$var}: $(get_colour_print ${config_base[$var]})"
+                    echo "$((++i)). ${config_base[_$var]:-$var}: $(get_val_print "${config_base[$var]}" "$var" )"
                 done
             fi
         fi
@@ -501,12 +526,11 @@ function show_config() {
         $no_elem && echo '--- пусто ---'
 
         if [[ "${#opt_stand_nums[@]}" != 0 && "$1" != var && "$opt_sel_var" != 0 ]]; then
-            #echo -n "$((i++)). ";
             echo -n $'\n'"Номера стендов: $c_value"
             printf '%s\n' "${opt_stand_nums[@]}" | awk 'BEGIN{d="-"}NR==1{first=$1;last=$1;next} $1 == last+1 {last=$1;next} {d="-";if (first==last-1)d=",";printf first d last",";first=$1;last=first} END{if (first==last-1)d=",";if (first!=last)printf first d; printf last"\n"}'
             echo -n "$c_null"
-            echo "Всего стендов к развертыванию: $(get_colour_print ${#opt_stand_nums[@]})"
-            echo "Кол-во создаваемых виртуальных машин: $(get_colour_print $(( ${#opt_stand_nums[@]} * $(eval "printf '%s\n' \${!config_stand_${opt_sel_var}_var[@]}" | grep -Pv '^_' | wc -l) )) )"
+            echo "Всего стендов к развертыванию: $(get_val_print "${#opt_stand_nums[@]}" )"
+            echo "Кол-во создаваемых виртуальных машин: $(get_val_print "$(( ${#opt_stand_nums[@]} * $(eval "printf '%s\n' \${!config_stand_${opt_sel_var}_var[@]}" | grep -Pv '^_' | wc -l) ))" )"
         fi
     fi
     [[ "$1" != opt_verbose ]] && echo
@@ -655,7 +679,7 @@ function configure_standnum() {
     [[ ${#opt_stand_nums} -ge 1 ]] && return 0
     $silent_mode && [[ ${#opt_stand_nums} == 0 ]] && echo_err 'Ошибка: не указаны номера стендов для развертывания. Выход' && exit 1
     [[ "$is_show_config" == 'false' ]] && { is_show_config=true; show_config; }
-    echo 'Введите нумера инсталляций стендов. Напр., 1-5 развернет стенды под номерами 1, 2, 3, 4, 5 (всего 5)'
+    echo $'\nВведите номера инсталляций стендов. Напр., 1-5 развернет стенды под номерами 1, 2, 3, 4, 5 (всего 5)'
     set_standnum $( read_question_select 'Номера стендов (прим: 1,2,5-10)' '^([0-9]{1,3}((\-|\.\.)[0-9]{1,3})?([\,](?!$\Z)|(?![0-9])))+$' )
 }
 
@@ -676,7 +700,7 @@ function configure_varnum() {
     fi
     set_varnum $var
     echo -n "Выбранный вариант инсталляции - ${var}: "
-    get_colour_print $(eval echo "\"\$_config_stand_${var}_var\"")
+    get_val_print "$(eval echo "\$_config_stand_${var}_var")"
 }
 
 function configure_wan_vmbr() {
@@ -691,6 +715,7 @@ function configure_wan_vmbr() {
     local bridge_ifs='' all_bridge_ifs=''
     command -v ovs-vsctl >/dev/null && bridge_ifs=$( ovs-vsctl list-br 2>/dev/null )$'\n'
     bridge_ifs+=$( ip link show type bridge up | grep -Po '^[0-9]+:\ \K[\w\.]+' )
+    bridge_ifs=$( echo "$bridge_ifs" | sort )
     all_bridge_ifs="$bridge_ifs"
     echo "$bridge_ifs" | grep -Fxq "$default4" || default4=''
     echo "$bridge_ifs" | grep -Fxq "$default6" || default6=''
@@ -700,7 +725,7 @@ function configure_wan_vmbr() {
     for ((i=1;i<=$(echo -n "$bridge_ifs" | grep -c '^');i++)); do
             iface=$( echo "$bridge_ifs" | sed -n "${i}p" )
         echo "$iface" | grep -Pq '^('$default4'|'$default6')$' && {
-            bridge_ifs=$( echo "$bridge_ifs" | sed -n "${i}!p" ); ((i--)); continue;
+            bridge_ifs=$( echo "$bridge_ifs" | sed -n "${i}!p" ); (( i > 0 ? i-- : i )); continue;
         }
         ip4=$( echo "$ipr4" | grep -Po '^[\.0-9\/]+(?=\ dev\ '$iface')' )
         ip6=$( echo "$ipr6" | grep -Po '^[0-9a-f\:\/]+(?=\ dev\ '$iface'(?=\ |$))' )
@@ -714,7 +739,7 @@ function configure_wan_vmbr() {
             slave_ifs+=$( echo; echo "$list_links_master" | grep -Po '^[\w\.]+(?=.*?\ master\ '$slave'(\ |$))' )
             slave_ifs=$( echo "$slave_ifs" | sed '/^$/d' )
         done
-        ! $next && bridge_ifs=$( echo "$bridge_ifs" | sed -n "${i}!p" ) && ((i--))
+        ! $next && bridge_ifs=$( echo "$bridge_ifs" | sed -n "${i}!p" ) && (( i > 0 ? i-- : i ))
     done
     bridge_ifs=$( (echo "$bridge_ifs"; echo "$default6"; echo "$default4") | sed '/^$/d' )
 
@@ -724,15 +749,18 @@ function configure_wan_vmbr() {
         [[ "$if_count" == 0 ]] && {
             [[ "$if_all_count" == 0 ]] && echo_err "Ошибка: не найдено ни одного активного bridge интерфейса в системе. Выход" && exit 1
             bridge_ifs="$all_bridge_ifs"
+            if_count=$(echo -n "$bridge_ifs" | grep -c '^')
         }
-        echo 'Укажите внешний bridge (vmbr) интерфейс для настройки:'
-        for ((i=1;i<=$ifcount;i++)); do
+        echo $'\nУкажите bridge (vmbr) интерфейс в качестве вешнего интерфейса для ВМ:'
+        for ((i=1;i<=$if_count;i++)); do
             iface=$( echo "$bridge_ifs" | sed -n "${i}p" )
             ip4=$( echo "$ipr4" | grep -Po '^[\.0-9\/]+(?=\ dev\ '$iface')' )
             ip6=$( echo "$ipr6" | grep -Po '^[0-9a-f\:\/]+(?=\ dev\ '$iface'(?=\ |$))' )
-            echo "  ${i}. $iface IPv4=$ip4 IPv6=$ip6"
+            echo "  ${i}. $c_value$iface$c_null IPv4='$c_value$ip4$c_null' IPv6='$c_value$ip6$c_null' slaves='$c_value"$( echo "$list_links_master" | grep -Po '^[\w\.]+(?=.*?\ master\ '$iface'(\ |$))' )"$c_null'"
         done
-        config_base[inet_bridge]=$(echo "$bridge_ifs" | awk -v n=$(read_question_select $'Выберите номер сетевого интерфейса для настройки стендов: ' '^[0-9]+$' 1 $( echo -n "$bridge_ifs" | grep -c '^' )) 'NR == n')
+        local switch=$( read_question_select $'\nВыберите номер сетевого интерфейса' '' 1 $( echo -n "$bridge_ifs" | grep -c '^' ) )
+        config_base[inet_bridge]=$( echo "$bridge_ifs" | awk -v n="$switch" 'NR == n')
+        echo "$c_lgreenПодождите, идет проверка конфигурации...$c_null"
         return 0;
     }
     local check="$(echo "$all_bridge_ifs" | grep -Fxq "${config_base[inet_bridge]}" && echo true || echo false )"
@@ -747,11 +775,13 @@ function configure_wan_vmbr() {
     [[ $(echo -n "$bridge_ifs" | grep -c '^') == 1 ]] && config_base[inet_bridge]=$(echo "$bridge_ifs" | sed -n 1p ) && echo "Информация: внешний vmbr интерфейс установлен автоматически на значение \"${config_base[inet_bridge]}\", т.к. на хостовой машине это был единственный внешний bridge интерфейс" && return
     [[ $(echo -n "$all_bridge_ifs" | grep -c '^') == 1 ]] && config_base[inet_bridge]=$(echo "$all_bridge_ifs" | sed -n 1p ) && echo "Информация: внешний vmbr интерфейс установлен автоматически на значение \"${config_base[inet_bridge]}\", т.к. на хостовой машине это был единственный bridge интерфейс" && return
 
+    [[ $(echo -n "$all_bridge_ifs" | grep -c '^') == 0 ]] && echo_err "Ошибка: не найдено ни одного активного Linux|OVS bridge сетевого интерфейса в системе. Выход" && exit 1
+
     case "${config_base[inet_bridge]}" in
         \{manual\}) set_vmbr_menu;;
         \{auto\})
-            [[ "$default6" != '' ]] && config_base[inet_bridge]="$default6" && return
-            [[ "$default4" != '' ]] && config_base[inet_bridge]="$default4" && return
+            [[ "$default6" != '' ]] && config_base[inet_bridge]="$default6" && return 0
+            [[ "$default4" != '' ]] && config_base[inet_bridge]="$default4" && return 0
             $silent_mode && echo_err 'Ошибка: не удалось автоматически определить внешний vmbr интерфейс. Установите его вручную. Выход' && exit
             set_vmbr_menu
             ;;
@@ -794,8 +824,9 @@ function configure_vmid() {
 
 function configure_imgdir() {
     [[ ${#config_base[mk_tmpfs_imgdir]} -lt 1 && ${#config_base[mk_tmpfs_imgdir]} -ge 255 ]] && echo_err 'Ошибка: путь временой директории некоректен (2-255): ${#config_base[mk_tmpfs_imgdir]}. Выход' && exit 1
+
     [[ "$1" == clear ]] && {
-        ! $opt_rm_tmpfs && return 0
+        { ! $opt_rm_tmpfs || $opt_not_tmpfs; } && return 0
         [[ $(findmnt -T "${config_base[mk_tmpfs_imgdir]}" -o FSTYPE -t tmpfs | wc -l) != 1 ]] && {
             echo
             $silent_mode || read_question "Удалить временный раздел со скачанными образами ВМ ('${config_base[mk_tmpfs_imgdir]}')?" \
@@ -803,6 +834,7 @@ function configure_imgdir() {
         }
         return 0
     }
+
     if [[ "$1" == check-only ]]; then
         awk '/MemAvailable/ {if($2<16777216) {exit 1} }' /proc/meminfo || \
             { echo_err $'Ошибка: Недостаточно свободной оперативной памяти!\nДля развертывания стенда необходимо как минимум 16 ГБ свободоной ОЗУ'; exit 1; }
@@ -827,9 +859,8 @@ function configure_imgdir() {
 
 function check_name() {
     local -n ref_var="$1"
-    [[ "$ref_var" == '' ]] && echo_err 'Ошибка: check_name' && exit 1
 
-    if [[ "$ref_var" =~ ^[\-0-9a-zA-Z\_\.]*(\{0\})?[\-0-9a-zA-Z\_\.]*$ ]] \
+    if [[ "$ref_var" =~ ^[\-0-9a-zA-Z\_\.]+(\{0\})?[\-0-9a-zA-Z\_\.]*$ ]] \
         && [[ "$(echo -n "$ref_var" | wc -m)" -ge 3 && "$(echo -n "$ref_var" | wc -m)" -le 32 ]]; then
         [[ ! "$ref_var" =~ \{0\} ]] && ref_var+='{0}'
         return 0
@@ -851,7 +882,7 @@ function configure_poolname() {
         config_base[pool_name]=$( read_question_select 'Шаблон имени пула' '^[\-0-9a-zA-Z\_\.]*(\{0\})?[\-0-9a-zA-Z\_\.]*$' )
         shift
     }
-    check_name 'config_base[pool_name]' ||  { echo_err "Ошибка: шаблон имён пулов некорректный: ${config_base[pool_name]}. Запрещенные символы или длина \> 32 и \< 3. Выход"; ${3:-true} && exit 1 || config_base[pool_name]=$def_value && return 1; }
+    check_name 'config_base[pool_name]' ||  { echo_err "Ошибка: шаблон имён пулов некорректный: '${config_base[pool_name]}'. Запрещенные символы или длина больше 32 или меньше 3. Выход"; ${3:-true} && exit 1 || config_base[pool_name]=$def_value && return 1; }
 
     [[ "$1" == 'install' ]] && {
         local pool_list pool_name
@@ -877,7 +908,7 @@ function configure_username() {
         config_base[access_user_name]=$( read_question_select 'Шаблон имени пользователя' '^[\-0-9a-zA-Z\_\.]*(\{0\})?[\-0-9a-zA-Z\_\.]*$' )
         shift
     }
-    check_name 'config_base[access_user_name]' ||  { echo_err "Ошибка: шаблон имён пользователей некорректный: ${config_base[access_user_name]}. Запрещенные символы или длина \> 32 и \< 3. Выход"; ${3:-true} && exit 1 || config_base[access_user_name]=$def_value && return 1; }
+    check_name 'config_base[access_user_name]' ||  { echo_err "Ошибка: шаблон имён пользователей некорректный: '${config_base[access_user_name]}'. Запрещенные символы или длина больше 32 или меньше 3. Выход"; ${3:-true} && exit 1 || config_base[access_user_name]=$def_value && return 1; }
 
     if [[ "$1" == 'install' ]] && ${config_base[access_create]} || [[ "$1" == 'set-install' ]]; then
         local user_list user_name
@@ -899,31 +930,35 @@ function descr_string_check() {
 function configure_storage() {
     [[ "$1" == check-only ]] && [[ "${config_base[storage]}" == '{auto}' || "${config_base[storage]}" == '{manual}' ]] && return 0
     set_storage() {
-            echo $'\nМинимально требуемое место в хранилище (только для развертывания): 50 ГБ\nРекомендуется: 100 ГБ\nСписок доступных хранилищ:'
-            echo "$storage_list" | awk -F' ' 'BEGIN{split("К|М|Г|Т",x,"|")}{for(i=1;$2>=1024&&i<length(x);i++)$2/=1024;print NR"\t"$1"\t"$3"\t"int($2)" "x[i]"Б"; }' \
+            echo $'\nСписок доступных хранилищ:'
+            echo "$pve_storage_list" | awk -F' ' 'BEGIN{split("К|М|Г|Т",x,"|")}{for(i=1;$2>=1024&&i<length(x);i++)$2/=1024;print NR"\t"$1"\t"$3"\t"int($2)" "x[i]"Б"; }' \
             | column -t -s$'\t' -N'Номер,Имя хранилища,Тип хранилища,Свободное место' -o$'\t' -R1
-            config_base[storage]=$( read_question_select 'Выберите номер хранилища'  '^[1-9][0-9]*$' 1 $(echo -n "$sl" | grep -c '^') )
-            config_base[storage]=$(echo "$storage_list" | awk -F' ' -v nr="${config_base[storage]}" 'NR==nr{print $1}')
+            config_base[storage]=$( read_question_select 'Выберите номер хранилища'  '^[1-9][0-9]*$' 1 $(echo -n "$pve_storage_list" | grep -c '^') )
+            config_base[storage]=$(echo "$pve_storage_list" | awk -F' ' -v nr="${config_base[storage]}" 'NR==nr{print $1}')
     }
-    local storage_list=$( pvesm status  --target "$(hostname)" --enabled 1 --content images | awk -F' ' 'NR>1{print $1" "$6" "$2}' | sort -k2nr )
-    [[ "$storage_list" == '' ]] && echo_err 'Ошибка: подходящих хранилищ не найдено' && exit 1
+    pve_storage_list=$( pvesm status  --target "$(hostname)" --enabled 1 --content images | awk -F' ' 'NR>1{print $1" "$6" "$2}' | sort -k2nr )
+    [[ "$pve_storage_list" == '' ]] && echo_err 'Ошибка: подходящих хранилищ не найдено' && exit 1
 
-    [[ "${config_base[storage]}" != '{auto}' || "${config_base[storage]}" != '{manual}' ]] \
-        && echo "$storage_list" | awk -v s="${config_base[storage]}" 'BEGIN{e=0}s=$1{e=1;exit e}END{exit e}' && echo_err "Ошибка: выбранное имя хранилища \"${config_base[storage]}\" не существует. Выход" && exit 1
+    if [[ "$1" != check-only ]]; then
+        if [[ "${config_base[storage]}" == '{manual}' ]]; then
+            $silent_mode && config_base[storage]='{auto}' || set_storage
+        fi
+        [[ "${config_base[storage]}" == '{auto}' ]] && config_base[storage]=$(echo "$pve_storage_list" | awk 'NR==1{print $1;exit}')
 
-    [[ "$1" == check-only ]] && return 0
-
-    if [[ "${config_base[storage]}" == '{manual}' ]]; then
-        $silent_mode && config_base[storage]='{auto}' || set_storage
     fi
-    [[ "${config_base[storage]}" == '{auto}' ]] && config_base[storage]=$(echo "$storage_list" | awk 'NR==1{print $1;exit}')
-    sel_storage_type=$(echo "$storage_list" | awk -v s="${config_base[storage]}" '$1==s{print $3;exit}')
 
-    case $sel_storage_type in
-        dir|glusterfs|cifs|nfs|btrfs) config_disk_format=qcow2;;
-        rbd|iscsidirect|iscsi|zfs|zfspool|lvmthin|lvm) config_disk_format=raw;;
-        *) echo_err "Ошибка: тип хранилища '$sel_storage_type' неизвестен. Ошибка скрипта или более новая версия PVE? Выход"; exit 1;;
-    esac
+    if ! [[ "${config_base[storage]}" =~ ^\{(auto|manual)\}$ ]]; then
+        echo "$pve_storage_list" | awk -v s="${config_base[storage]}" 'BEGIN{e=0}$1==s{e=1;exit e}END{exit e}' && echo_err "Ошибка: выбранное имя хранилища \"${config_base[storage]}\" не существует. Выход" && exit 1
+
+        sel_storage_type=$( echo "$pve_storage_list" | awk -v s="${config_base[storage]}" '$1==s{print $3;exit}' )
+        sel_storage_space=$( echo "$pve_storage_list" | awk -v s="${config_base[storage]}" '$1==s{print $2;exit}' )
+
+        case $sel_storage_type in
+            dir|glusterfs|cifs|nfs|btrfs) config_disk_format=qcow2;;
+            rbd|iscsidirect|iscsi|zfs|zfspool|lvmthin|lvm) config_disk_format=raw;;
+            *) echo_err "Ошибка: тип хранилища '$sel_storage_type' неизвестен. Ошибка скрипта или более новая версия PVE? Выход"; exit 1;;
+        esac
+    fi
 }
 
 _configure_roles='проверка валидности списка access ролей (привилегий) Proxmox-а'
@@ -976,7 +1011,7 @@ function check_config() {
         $check_func $1
     done
 
-    ! $create_access_network && echo_warn "Предупреждение: версия PVE '$pve_ver' имеет меньший фукционал, чем последняя версия PVE и некоторые опции установки будут пропущены"
+    ! $create_access_network && echo_warn "Предупреждение: версия PVE '$pve_ver' имеет меньший функционал, чем последняя версия PVE и некоторые опции установки будут пропущены"
 
     [[ "$1" == 'install' ]] && return 0
 
@@ -992,13 +1027,15 @@ function check_config() {
         ! descr_string_check "${config_base[$desc]}" && { echo_err "Ошибка: описание '$desc' некорректно. Выход" && exit 1; }
     done
 
+    [[ "${config_base[access_auth_pam_desc]}" != '' && "${config_base[access_auth_pam_desc]}" == "${config_base[access_auth_pve_desc]}" ]] && echo_err 'Ошибка: выводимое имя типов аутентификации не должны быть одинаковыми' && exit 1
+
     for val in take_snapshots access_create access_user_enable; do
         $opt_verbose && echo "Проверка зачения конфигурации $val на валидость типу bool"
         ! isbool_check "${config_base[$val]}" && echo_err "Ошибка: зачение переменной конфигурации $val должна быть bool и равляться true или false. Выход" && exit 1
     done
 
-    ! isdigit_check "${config_base[access_pass_length]}" 1 20 && echo_err "Ошибка: значение переменной конфигурации access_pass_length должнно быть числом от 1 до 20. Выход" && exit 1
-    isregex_check "[${config_base[access_pass_chars]}]" && deploy_access_passwd test || { echo_err "Ошибка: паттерн regexp для разрешенных символов в пароле некорректен. Выход"; exit 1; }
+    ! isdigit_check "${config_base[access_pass_length]}" 5 20 && echo_err "Ошибка: значение переменной конфигурации access_pass_length должнно быть числом от 5 до 20. Выход" && exit 1
+    isregex_check "[${config_base[access_pass_chars]}]" && deploy_access_passwd test || { echo_err "Ошибка: паттерн regexp '[${config_base[access_pass_chars]}]' для разрешенных символов в пароле некорректен или не захватывает достаточно символов для составления пароля. Выход"; exit 1; }
 }
 
 function get_dict_config() {
@@ -1275,8 +1312,10 @@ function deploy_access_passwd() {
         #echo '  4. Текстово-табличный вариант (для печати с блокнота)'
         #echo '  5. Текстово-табличный вариант (для печати с блокнота, с заголовками к каждой записи)'
         echo
-        format_opt=$(read_question_select 'Вариант отображения' '^[0-9]$' 1 3 )
+        format_opt=$(read_question_select 'Вариант отображения' '^([1-3]|)$' )
     }
+
+    [[ $format_opt == '' ]] && format_opt=1
 
     [[ $format_opt != 1 ]] && {
         local -A pve_nodes; local i pve_url
@@ -1296,7 +1335,7 @@ function deploy_access_passwd() {
     esac
 
     for stand_num in "${opt_stand_nums[@]}"; do
-        [[ "$1" != set ]] && username=${config_base[access_user_name]/\{0\}/$stand_num} || username=$stand_num
+        [[ "$1" != set ]] && username="${config_base[access_user_name]/\{0\}/$stand_num}@pve" || username=$stand_num
         [[ $format_opt == 3 ]] && table+="\"Адрес сервера\"$tab\"Имя пользователя\"$tabПароль$nl"
 
         local passwd=$(
@@ -1304,7 +1343,7 @@ function deploy_access_passwd() {
             echo -n "${passwd_chars:RANDOM%${#passwd_chars}:1}"
         done )
 
-        run_cmd /noexit "pvesh set /access/password --userid '$username@pve' --password '$passwd'" || { echo_err "Ошибка: не удалось установить пароль пользователю $username"; exit 1; }
+        run_cmd /noexit "pvesh set /access/password --userid '$username' --password '$passwd'" || { echo_err "Ошибка: не удалось установить пароль пользователю $username"; exit 1; }
         case $format_opt in
             1) table+="$tab$username : $passwd$nl";;
             2|3) table+="$pve_url$tab$username$tab$passwd$nl";;
@@ -1330,31 +1369,37 @@ function install_stands() {
     show_config
 
     ! $silent_mode && read_question 'Хотите изменить другие параметры?' && {
-        local opt_names=( pool_name pool_desc take_snapshots access_{create,user_{name,desc,enable},pass_{length,chars},auth_{pve,pam}_desc} )
+        local opt_names=( pool_name pool_desc storage inet_bridge take_snapshots access_{create,user_{name,desc,enable},pass_{length,chars},auth_{pve,pam}_desc} dry-run )
         while true; do
             show_config install-change
             echo
-            local switch=$( read_question_select 'Выберите номер настройки для изменения' '^[0-9]+$' 0 $( ${config_base[access_create]} && echo 11 || echo 4 ) )
+            local switch=$( read_question_select 'Выберите номер настройки для изменения' '^[0-9]+$' 0 $( ${config_base[access_create]} && echo 14 || echo 7 ) )
             echo
             [[ "$switch" == 0 ]] && break
+            [[ "$switch" -ge 7 && "${config_base[access_create]}" == false ]] && (( switch+=7 ))
             local opt=$( printf '%s\n' "${opt_names[@]}" | sed "$switch!D" )
             val=''
             case $opt in
                 pool_name) configure_poolname set install exit false; continue;;
                 access_user_name) configure_username set install exit false; continue;;
+                storage) config_base[storage]='{manual}'; configure_storage install; continue;;
+                inet_bridge) configure_wan_vmbr manual; continue;;
+                take_snapshots|access_create|access_user_enable) config_base[$opt]=$( invert_bool ${config_base[$opt]} ); continue;;
+                dry-run) opt_dry_run=$( invert_bool $opt_dry_run ); continue;;
             esac
             val=$( read_question_select "${config_base[_$opt]:-$opt}" )
             case $opt in
-                pool_desc|access_user_desc|auth_pve_desc|auth_pam_desc)
-                    descr_string_check "$val" || { echo_err 'Ошибка: введенное значение является некорректным'; continue; } ;;
-                take_snapshots|access_create|access_user_enable)
-                    isbool_check val || { echo_err 'Ошибка: введенное значение не является булевым [true|false]'; continue; } ;;
-                access_pass_length) isdigit_check "$val" 1 20 || { echo_err 'Ошибка: введенное значение не является числом от 1 до 20'; continue; } ;;
+                pool_desc|access_user_desc|access_auth_pve_desc|access_auth_pam_desc)
+                    (config_base[$opt]="$val"; [[ "${config_base[access_auth_pam_desc]}" != '' && "${config_base[access_auth_pam_desc]}" == "${config_base[access_auth_pve_desc]}" ]] && echo_err 'Ошибка: видимые имена типов аутентификации не должны быть одинаковыми' ) && continue
+
+                    descr_string_check "$val" || { echo_err 'Ошибка: введенное значение является некорректным'; continue; };;
+                access_pass_length) isdigit_check "$val" 5 20 || { echo_err 'Ошибка: допустимая длина паролей от 5 до 20'; continue; } ;;
                 access_pass_chars) isregex_check "[$val]" && ( config_base[access_pass_chars]="$val"; deploy_access_passwd test ) || { echo_err 'Ошибка: введенное значение не является регулярным выражением или не захватывает достаточно символов для составления пароля'; continue; } ;;
                 *) echo_err 'Внутреняя ошибка скрипта. Выход'; exit 1;;
             esac
             [[ $opt == access_create ]] && ! ${config_base[access_create]} && $val && \
                 { configure_username set-install exit false || configure_username set set-install exit false || continue; }
+            echo test
             config_base[$opt]="$val"
         done
         show_config
@@ -1378,6 +1423,8 @@ function install_stands() {
 
     local -A roles_list
     parse_noborder_table 'pveum role list' roles_list
+
+    opt_not_tmpfs=false
 
     for stand_num in "${opt_stand_nums[@]}"; do
         deploy_stand_config $stand_num
@@ -1463,22 +1510,108 @@ function manage_stands() {
     local switch=$(read_question_select $'\nВыберите действие' '^[1-5]$' )
 
     if [[ $switch =~ [1-3] ]]; then
-        local user_name enable state
+        local user_name enable state usr_range='' usr_count=$(echo -n "${user_list[$group_name]}" | grep -c '^') usr_list=${user_list[$group_name]}
+
+        [[ "$usr_count" == 0 ]] && echo_err "Ошибка: пользователи стендов '$group_name' не найдены. Выход" && exit 1
+        if [[ "$usr_count" -gt 1 ]]; then
+            echo $'\nВыберите пользователей для конфигурирования:'
+            for ((i=1; i<=$usr_count; i++)); do
+                echo "  $i. $(echo "${user_list[$group_name]}" | sed -n "${i}p" )"
+            done
+            echo $'\nДля выбора всех пользователей нажмите Enter'
+            while true; do
+                usr_range=$( read_question_select 'Введите номера выбранных пользователей (прим 1,2-10)' '\A^(([0-9]{1,3}((\-|\.\.)[0-9]{1,3})?([\,](?!$\Z)|(?![0-9])))+|)$\Z' )
+                [[ "$usr_range" == '' ]] && break
+
+                local numarr=( $( get_numrange_array "$usr_range") )
+                usr_list=${user_list[$group_name]}
+                for ((i=1; i<=$(echo -n "$usr_list" | grep -c '^'); i++)); do
+                    printf '%s\n' "${numarr[@]}" | grep -Fxq "$i" || { usr_list=$(echo "$usr_list" | sed -n "${i}!p" ); (( i > 0 ? i-- : i )); }
+                done
+                [[ "$usr_list" != '' ]] && break || echo_warn "Не выбран ни один пользователь!"
+            done
+            user_list[$group_name]=$usr_list
+        fi
+
+        echo -n $'\nВыбранные пользователи: '; get_val_print "$(echo ${user_list[$group_name]} )"
+
+        opt_stand_nums=()
         for ((i=1; i<=$(echo -n "${user_list[$group_name]}" | grep -c '^'); i++)); do
-            user_name=$(echo "${user_list[$group_name]}" | sed -n "${i}p" | grep -Po '^[^\@]+' )
+            user_name=$(echo "${user_list[$group_name]}" | sed -n "${i}p" )
             [[ $switch != 3 ]] && {
                 [[ $switch == 1 ]] && { enable=true;state="$c_lgreenвключен"; }; [[ $switch == 2 ]] && { enable=false; state="$c_lredвыключен"; }
-                run_cmd /noexit "pveum user modify '$user_name@pve' --enable '$enable'" || { echo_err "Ошибка: не удалось изменить enable для пользователя '$user_name'"; }
+                run_cmd /noexit "pveum user modify '$user_name' --enable '$enable'" || { echo_err "Ошибка: не удалось изменить enable для пользователя '$user_name'"; }
                 echo "$user_name : $state$c_null";
                 continue
             }
             opt_stand_nums+=( "$user_name" )
         done
-        [[ $switch == 3 ]] && deploy_access_passwd set
+
+        if [[ $switch == 3 ]]; then
+            local switch=0 val='' opt=''
+            while true; do
+                show_config passwd-change
+                switch=$( read_question_select 'Выбранный пункт конфигурации' '^([0-9]+|)$' 0 2 )
+                [[ "$switch" == 0 || "$switch" == '' ]] && break
+                case "$switch" in
+                    1) opt='access_pass_length';;
+                    2) opt='access_pass_chars';;
+                esac
+                val=$( read_question_select "${config_base[_$opt]:-$opt}" )
+                case "$switch" in
+                    1) isdigit_check "$val" 5 20 || { echo_err 'Ошибка: допустимая длина паролей от 5 до 20'; continue; };;
+                    2) isregex_check "[$val]" && ( config_base[access_pass_chars]="$val"; deploy_access_passwd test ) || { echo_err "Ошибка: '[$val]' не является регулярным выражением или или не захватывает достаточно символов для составления пароля"; continue; };;
+                esac
+                config_base["$opt"]=$val
+            done
+            deploy_access_passwd set
+        fi
         echo $'\n'"$c_greenНастройка завершена.$c_null Выход" && exit 0
     fi
 
+    local stand_range='' stand_count=$(echo -n "${pool_list[$group_name]}" | grep -c '^') stand_list='' usr_list=''
+
+    [[ "$stand_count" == 0 ]] && echo_err "Ошибка: пулы стендов '$group_name' не найдены. Выход" && exit 1
+    if [[ "$stand_count" -gt 1 ]]; then
+        echo $'\nВыберите стеды для управления:'
+        for ((i=1; i<=$stand_count; i++)); do
+            echo "  $i. $(echo "${pool_list[$group_name]}" | sed -n "${i}p" )"
+        done
+        echo $'\nДля выбора всех стендов группы нажмите Enter'
+        while true; do
+            stand_range=$( read_question_select 'Введите номера выбранных стендов (прим 1,2-10)' '\A^(([0-9]{1,3}((\-|\.\.)[0-9]{1,3})?([\,](?!$\Z)|(?![0-9])))+|)$\Z' )
+            stand_list=${pool_list[$group_name]}
+            usr_list=${user_list[$group_name]}
+            [[ "$stand_range" == '' ]] && break
+
+            local numarr=( $( get_numrange_array "$stand_range") )
+            for ((i=1; i<=$(echo -n "$stand_list" | grep -c '^'); i++)); do
+                printf '%s\n' "${numarr[@]}" | grep -Fxq "$i" || {
+                    local stand_name=$(echo "$stand_list" | sed -n "${i}p")
+                    stand_list=$(echo "$stand_list" | sed -n "${i}!p" )
+                    (( i > 0 ? i-- : i ))
+                    local j=1
+                    for ((j=1; j<=$(echo -n "${acl_list[path]}" | grep -c '^'); j++)); do
+                        local path=$( echo "${acl_list[path]}" | sed -n "${j}p" )
+                        [[ "$path" == "/pool/$stand_name" && "$( echo "${acl_list[type]}" | sed -n "${j}p" )" == user ]] || continue
+                        local user=$( echo "${acl_list[ugid]}" | sed -n "${j}p" )
+                        usr_list=$(echo "$usr_list" | sed '/^'$user'$/d')
+                    done
+                }
+            done
+            [[ "$stand_list" != '' ]] && break || echo_warn "Не выбран ни один стенд!"
+        done
+        [[ "${pool_list[$group_name]}" == "$stand_list" ]] && local del_all=true
+        user_list[$group_name]=$usr_list
+        pool_list[$group_name]=$stand_list
+    else
+        local del_all=true
+    fi
+
+    echo -n $'\nВыбранные стенды: '; get_val_print "$(echo ${pool_list[$group_name]} )"
+
     local regex='\s*\"{opt_name}\"\s*:\s*(\K[0-9]+|\"\K(?(?=\\").{2}|[^"])+)'
+
     if [[ $switch == 4 ]]; then
         local vmid pool_info vmid_list vmname_list status name
         for ((i=1; i<=$( echo -n "${pool_list[$group_name]}" | grep -c '^' ); i++)); do
@@ -1503,8 +1636,12 @@ function manage_stands() {
     fi
 
     if [[ $switch == 5 ]]; then
+
+        echo -n $'Выбранные пользователи: '; get_val_print "$(echo ${user_list[$group_name]} )"
+        read_question $'\nВы действительно хотите продолжить?' || exit 0
+
         local -A ifaces_info
-        local pool_info vmid_list vmname_list vmid vm_netifs ifname deny_ifaces bridge_ports k
+        local pool_info vmid_list vmname_list vmid vm_netifs ifname deny_ifaces bridge_ports k restart_network=false
         parse_noborder_table 'pvesh get /nodes/$(hostname)/network' ifaces_info iface bridge_ports address address6 || { echo_err "Ошибка: не удалось получить информацию об сетевых интерфейсах"; exit 1; }
 
         for ((i=1; i<=$( echo -n "${ifaces_info[iface]}" | grep -c '^' ); i++)); do
@@ -1536,6 +1673,7 @@ function manage_stands() {
                     run_cmd /noexit "( pvesh delete '/nodes/$(hostname)/network/$ifname'       2>&1;echo) | grep -Pq '(^$|interface does not exist$)'" \
                         || { echo_err "Ошибка: не удалось удалить сетевой интерфейс '$ifname'"; exit 1; }
                     deny_ifaces+=" $ifname"
+                    restart_network=true
                 done
 
                 run_cmd /noexit "( qm destroy '$vmid' --skiplock 'true' --purge 'true' 2>&1;echo) | grep -Pq '(^$|does not exist$)'" \
@@ -1552,18 +1690,19 @@ function manage_stands() {
             user_name=$( echo "${user_list[$group_name]}" | sed -n "${i}p" )
             run_cmd /noexit "pveum user delete '$user_name'" || { echo_err "Ошибка: не удалось удалить пользователя '$user_name' стенда '$pool_name'"; exit 1; }
         done
-        run_cmd "pveum group delete '$group_name'"
 
-        local list_roles_after list_roles
-        parse_noborder_table 'pveum acl list' list_roles_after roleid
-        for role in $( echo ${acl_list[roleid]} | sort -u ); do
-            echo "$list_roles_after" | grep -Fxq "$role" || {
+        local roles_list_after list_roles
+        parse_noborder_table 'pveum acl list' roles_list_after roleid
+        for role in $( echo "$roles_list_after" | sort -u ); do
+            echo "$roles_list_after" | grep -Fxq "$role" || {
                 [[ "$list_roles" == '' ]] && { list_roles=$( pveum role list --output-format yaml | grep -v - | grep -Po '^\s*(roleid|special)\s*:\s*\K.*' ) || exit 1; }
                 echo "$list_roles" | grep -Pzq '(^|\n)'$role'\n0' && run_cmd "pveum role delete '$role'"
             }
         done
 
-        run_cmd "pvesh set '/nodes/$(hostname)/network'"
+        [[ "$del_all" == true ]] && run_cmd "pveum group delete '$group_name'"
+
+        $restart_network && run_cmd "pvesh set '/nodes/$(hostname)/network'"
     fi
 
     echo $'\n'"$c_lgreenНастройка завершена.$c_null Выход"
@@ -1588,6 +1727,8 @@ _opt_stand_nums='Кол-во разворачиваемых стендов. Чи
 opt_stand_nums=()
 _opt_rm_tmpfs='Не удалять временный раздел после установки'
 opt_rm_tmpfs=true
+# состояние скрипта, при котором запрос ан удаление tmpfs бессмыслен (в меню и пр)
+opt_not_tmpfs=true
 _opt_dry_run='Запустить установку в тестовом режиме, без реальных изменений'
 opt_dry_run=false
 
@@ -1641,8 +1782,6 @@ silent_mode=$opt_silent_install || $opt_silent_control
 
 check_config
 
-$opt_verbose && show_config
-
 if $opt_show_help; then show_help; show_config; exit; fi
 
 if $opt_show_config; then
@@ -1659,7 +1798,7 @@ $opt_silent_install || switch_action=$(read_question_select $'\nДействие
 case $switch_action in
     1) install_stands;;
     2) manage_stands;;
-    *) echo 'Фукционал в процессе разработки и пока недоступен. Выход'; exit 0;;
+    *) echo_warn 'Функционал в процессе разработки и пока недоступен. Выход'; exit 0;;
 esac
 
 configure_imgdir clear
