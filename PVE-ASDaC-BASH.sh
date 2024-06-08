@@ -26,7 +26,7 @@ declare -A config_base=(
     [_mk_tmpfs_imgdir]='Временный раздел tmpfs в ОЗУ для хранения образов ВМ (уничтожается в конце установки)'
     [mk_tmpfs_imgdir]='/root/ASDaC_TMPFS_IMGDIR'
 
-    [_storage]='Имя хранилища для для развертывания ВМ'
+    [_storage]='Хранилище для развертывания дисков ВМ'
     [storage]='{auto}'
 
     [_pool_name]='Шаблон имени пула стенда'
@@ -317,12 +317,12 @@ function echo_warn() {
 }
 
 function read_question_select() {
-    local read; until read -p "$1: $c_value" read; echo -n $c_null >/dev/tty
+    local read; until read -p "$1: $c_value" -e -i "$5" read; echo -n $c_null >/dev/tty
         [[ "$2" == '' || $(echo "$read" | grep -Pc "$2" ) == 1 ]] && { ! isdigit_check "$read" || [[ "$3" == '' || "$read" -ge "$3" ]] && [[ "$4" == '' || "$read" -le "$4" ]]; }
     do true; done; echo "$read";
 }
 
-function read_question() { local read; until read -n 1 -p "$1 [y|д|1]: $c_value" read; echo $c_null >/dev/tty; [[ "$read" =~ [yд1l] ]] && return 0 || [[ "$read" != '' ]] && return 1; do true; done; }
+function read_question() { local read _ret=false; until read -n 1 -p "$1 [y|д|1]: $c_value" read; echo $c_null >/dev/tty; [[ "$read" =~ ^[yд1l]$ ]] && return 0 || { [[ "$read" != '' || "$_ret" == true ]] && return 1; _ret=true; false; }; do true; done; }
 
 function get_numrange_array() {
     local IFS=,; set -- $1
@@ -440,8 +440,8 @@ function show_config() {
     local i=0
     [[ "$1" != opt_verbose ]] && echo
     [[ "$1" == install-change ]] && {
-            echo $'Список параметров конфигурации:\n  0. Выйти из режима изменения дополнительных настроек'
-            for var in pool_name pool_desc storage inet_bridge take_snapshots access_create $( ${config_base[access_create]} && echo access_{user_{name,desc,enable},pass_{length,chars},auth_{pve,pam}_desc} ); do
+            echo $'Список параметров конфигурации:\n  0. Выйти из режима изменения настроек'
+            for var in inet_bridge storage pool_name pool_desc take_snapshots access_create $( ${config_base[access_create]} && echo access_{user_{name,desc,enable},pass_{length,chars},auth_{pve,pam}_desc} ); do
                 echo "  $((++i)). ${config_base[_$var]:-$var}: $( get_val_print "${config_base[$var]}" "$var" )"
             done
             echo "  $((++i)). $_opt_dry_run: $( get_val_print $opt_dry_run )"
@@ -758,7 +758,7 @@ function configure_wan_vmbr() {
             ip6=$( echo "$ipr6" | grep -Po '^[0-9a-f\:\/]+(?=\ dev\ '$iface'(?=\ |$))' )
             echo "  ${i}. $c_value$iface$c_null IPv4='$c_value$ip4$c_null' IPv6='$c_value$ip6$c_null' slaves='$c_value"$( echo "$list_links_master" | grep -Po '^[\w\.]+(?=.*?\ master\ '$iface'(\ |$))' )"$c_null'"
         done
-        local switch=$( read_question_select $'\nВыберите номер сетевого интерфейса' '' 1 $( echo -n "$bridge_ifs" | grep -c '^' ) )
+        local switch=$( read_question_select $'\nВыберите номер сетевого интерфейса' '^[0-9]+$' 1 $( echo -n "$bridge_ifs" | grep -c '^' ) )
         config_base[inet_bridge]=$( echo "$bridge_ifs" | awk -v n="$switch" 'NR == n')
         echo "$c_lgreenПодождите, идет проверка конфигурации...$c_null"
         return 0;
@@ -879,8 +879,9 @@ function configure_poolname() {
     }
     [[ "$1" == 'set' ]] && {
         echo 'Введите шаблон имени PVE пула стенда. Прим: DE_stand_training_{0}'
-        config_base[pool_name]=$( read_question_select 'Шаблон имени пула' '^[\-0-9a-zA-Z\_\.]*(\{0\})?[\-0-9a-zA-Z\_\.]*$' )
+        config_base[pool_name]=$( read_question_select 'Шаблон имени пула' '^[\-0-9a-zA-Z\_\.]*(\{0\})?[\-0-9a-zA-Z\_\.]*$' '' '' "${config_base[pool_name]}" )
         shift
+        [[ "${config_base[pool_name]}" == "$def_value" ]] && return 0
     }
     check_name 'config_base[pool_name]' ||  { echo_err "Ошибка: шаблон имён пулов некорректный: '${config_base[pool_name]}'. Запрещенные символы или длина больше 32 или меньше 3. Выход"; ${3:-true} && exit 1 || config_base[pool_name]=$def_value && return 1; }
 
@@ -905,8 +906,9 @@ function configure_username() {
     }
     [[ "$1" == 'set' ]] && {
         echo 'Введите шаблон имени пользователя стенда. Прим: Student{0}'
-        config_base[access_user_name]=$( read_question_select 'Шаблон имени пользователя' '^[\-0-9a-zA-Z\_\.]*(\{0\})?[\-0-9a-zA-Z\_\.]*$' )
+        config_base[access_user_name]=$( read_question_select 'Шаблон имени пользователя' '^[\-0-9a-zA-Z\_\.]*(\{0\})?[\-0-9a-zA-Z\_\.]*$' '' '' "${config_base[access_user_name]}" )
         shift
+        [[ "${config_base[access_user_name]}" == "$def_value" ]] && return 0
     }
     check_name 'config_base[access_user_name]' ||  { echo_err "Ошибка: шаблон имён пользователей некорректный: '${config_base[access_user_name]}'. Запрещенные символы или длина больше 32 или меньше 3. Выход"; ${3:-true} && exit 1 || config_base[access_user_name]=$def_value && return 1; }
 
@@ -940,6 +942,9 @@ function configure_storage() {
     [[ "$pve_storage_list" == '' ]] && echo_err 'Ошибка: подходящих хранилищ не найдено' && exit 1
 
     if [[ "$1" != check-only ]]; then
+
+        [[ "$( echo -n "$pve_storage_list" | grep -c '^' )" == 0 ]] && echo_err "Ошибка: не найдено ни одного активного хранилища для дисков ВМ. Выход" && exit 1
+
         if [[ "${config_base[storage]}" == '{manual}' ]]; then
             $silent_mode && config_base[storage]='{auto}' || set_storage
         fi
@@ -1313,7 +1318,7 @@ function deploy_access_passwd() {
         #echo '  4. Текстово-табличный вариант (для печати с блокнота)'
         #echo '  5. Текстово-табличный вариант (для печати с блокнота, с заголовками к каждой записи)'
         echo
-        format_opt=$(read_question_select 'Вариант отображения' '^([1-3]|)$' )
+        format_opt=$(read_question_select 'Вариант отображения' '^[1-3]$' '' '' 1 )
     }
 
     [[ $format_opt == '' ]] && format_opt=1
@@ -1324,7 +1329,7 @@ function deploy_access_passwd() {
         for ((i=1; i<=$( echo -n "${pve_nodes[ip]}" | grep -c '^' ); i++)); do
             [[ "$( echo -n "${pve_nodes[local]}" | sed -n "${i}p" )" == '1' ]] && pve_url="https://$( echo -n "${pve_nodes[ip]}" | sed -n "${i}p" ):8006" && break
         done
-        local val=$(read_question_select "Введите отображаемый адрес (URL) сервера Proxmox VE [$pve_url]")
+        local val=$(read_question_select "Введите отображаемый адрес (URL) сервера Proxmox VE" '' '' '' "$pve_url" )
         [[ "$val" != '' ]] && pve_url=$val
     }
 
@@ -1370,7 +1375,7 @@ function install_stands() {
     show_config
 
     ! $silent_mode && read_question 'Хотите изменить другие параметры?' && {
-        local opt_names=( pool_name pool_desc storage inet_bridge take_snapshots access_{create,user_{name,desc,enable},pass_{length,chars},auth_{pve,pam}_desc} dry-run )
+        local opt_names=( inet_bridge storage pool_name pool_desc take_snapshots access_{create,user_{name,desc,enable},pass_{length,chars},auth_{pve,pam}_desc} dry-run )
         while true; do
             show_config install-change
             echo
@@ -1388,7 +1393,9 @@ function install_stands() {
                 take_snapshots|access_create|access_user_enable) config_base[$opt]=$( invert_bool ${config_base[$opt]} ); continue;;
                 dry-run) opt_dry_run=$( invert_bool $opt_dry_run ); continue;;
             esac
-            val=$( read_question_select "${config_base[_$opt]:-$opt}" )
+            val=$( read_question_select "${config_base[_$opt]:-$opt}" '' '' '' "${config_base[$opt]}" )
+            [[ "${config_base[$opt]}" == "$val" ]] && continue
+
             case $opt in
                 pool_desc|access_user_desc|access_auth_pve_desc|access_auth_pam_desc)
                     (config_base[$opt]="$val"; [[ "${config_base[access_auth_pam_desc]}" != '' && "${config_base[access_auth_pam_desc]}" == "${config_base[access_auth_pve_desc]}" ]] && echo_err 'Ошибка: видимые имена типов аутентификации не должны быть одинаковыми' ) && continue
@@ -1415,7 +1422,7 @@ function install_stands() {
 
     $opt_dry_run && echo_warn '[Предупреждение]: включен режим dry-run. Никакие изменения в конфигурацию/ВМ внесены не будут'
     echo "Для выхода из программы нажмите Ctrl-C"
-    ! $silent_mode && { read_question 'Начать установку?' || exit 0; }
+    ! $silent_mode && { read_question 'Начать установку?' || return 0; }
     $silent_mode && { echo $'\n'"10 секунд для проверки правильности конфигурации"; sleep 10; }
 
     # Начало установки
@@ -1487,7 +1494,7 @@ function manage_stands() {
         }
     done
 
-    [[ ${#print_list[@]} != 0 ]] && echo $'\n\nСписок развернутых конфигураций:' || { echo_warn "Ни одной конфигурации не было найдено. Выход"; exit; }
+    [[ ${#print_list[@]} != 0 ]] && echo $'\n\nСписок развернутых конфигураций:' || { echo_warn "Ни одной конфигурации не было найдено. Выход"; return 0; }
     local i=0
     for item in ${!print_list[@]}; do
         echo "  $((++i)). ${print_list[$item]}"
@@ -1508,8 +1515,9 @@ function manage_stands() {
     echo '  3. Установка паролей для учетных записей'
     echo '  4. Откатить виртуальные машины до снапшота Start'
     echo '  5. Удаление стендов'
-    local switch=$(read_question_select $'\nВыберите действие' '^[1-5]$' )
+    local switch=$(read_question_select $'\nВыберите действие' '^([1-5]|)$' )
 
+    [[ "$switch" = '' ]] && switch=$(read_question_select $'\nВыберите действие' '^([1-5]|)$' ) && [[ "$switch" = '' ]] && return 0
     if [[ $switch =~ [1-3] ]]; then
         local user_name enable state usr_range='' usr_count=$(echo -n "${user_list[$group_name]}" | grep -c '^') usr_list=${user_list[$group_name]}
 
@@ -1567,7 +1575,7 @@ function manage_stands() {
             done
             deploy_access_passwd set
         fi
-        echo $'\n'"$c_greenНастройка завершена.$c_null Выход" && exit 0
+        echo $'\n'"$c_greenНастройка завершена.$c_null Выход" && return 0
     fi
 
     local stand_range='' stand_count=$(echo -n "${pool_list[$group_name]}" | grep -c '^') stand_list='' usr_list=''
@@ -1794,13 +1802,25 @@ if $opt_show_config; then
 #else show_config
 fi
 
-$opt_silent_install || switch_action=$(read_question_select $'\nДействие: 1 - Развертывание стендов, 2 - Управление стендами' '^[1-2]$' )
+$silent_mode && {
+    case $switch_action in
+        1) install_stands;;
+        2) manage_stands;;
+        *) echo_warn 'Функционал в процессе разработки и пока недоступен. Выход'; exit 0;;
+    esac
+}
 
-case $switch_action in
-    1) install_stands;;
-    2) manage_stands;;
-    *) echo_warn 'Функционал в процессе разработки и пока недоступен. Выход'; exit 0;;
-esac
+_exit=false
+while ! $silent_mode; do
+    $silent_mode || switch_action=$(read_question_select $'\nДействие: 1 - Развертывание стендов, 2 - Управление стендами' '^([1-2]|)$' )
+
+    case $switch_action in
+        1) _exit=false; install_stands || exit;;
+        2) _exit=false; manage_stands || exit;;
+        '') $_exit && exit; _exit=true;;
+        *) echo_warn 'Функционал в процессе разработки и пока недоступен. Выход'; exit 0;;
+    esac
+done
 
 configure_imgdir clear
 
