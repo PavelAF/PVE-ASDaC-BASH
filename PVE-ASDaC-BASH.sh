@@ -316,6 +316,10 @@ function echo_warn() {
     echo "$c_warning$@$c_null" >/dev/tty
 }
 
+function echo_info() {
+    echo "$c_info$@$c_null" >/dev/tty
+}
+
 function read_question_select() {
     local read; until read -p "$1: $c_value" -e -i "$5" read; echo -n $c_null >/dev/tty
         [[ "$2" == '' || $(echo "$read" | grep -Pc "$2" ) == 1 ]] && { ! isdigit_check "$read" || [[ "$3" == '' || "$read" -ge "$3" ]] && [[ "$4" == '' || "$read" -le "$4" ]]; }
@@ -751,7 +755,7 @@ function configure_wan_vmbr() {
             bridge_ifs="$all_bridge_ifs"
             if_count=$(echo -n "$bridge_ifs" | grep -c '^')
         }
-        echo $'\nУкажите bridge (vmbr) интерфейс в качестве вешнего интерфейса для ВМ:'
+        echo $'\nУкажите bridge интерфейс в качестве вешнего интерфейса для ВМ:'
         for ((i=1;i<=$if_count;i++)); do
             iface=$( echo "$bridge_ifs" | sed -n "${i}p" )
             ip4=$( echo "$ipr4" | grep -Po '^[\.0-9\/]+(?=\ dev\ '$iface')' )
@@ -768,12 +772,12 @@ function configure_wan_vmbr() {
     if [[ ! $check || "$1" == manual ]]; then
         config_base[inet_bridge]='{manual}'
         if $silent_mode; then
-            echo_warn $'Предупреждение: внеший интерфейс vmbr будет установлен автоматически, т.к. он указан неверно или {manual}.\nНажмите Ctrl-C, чтобы прервать установку'; sleep 10;
+            echo_warn $'Предупреждение: внеший bridge интерфейс для ВМ будет установлен автоматически, т.к. он указан неверно или {manual}.\nНажмите Ctrl-C, чтобы прервать установку'; sleep 10;
             config_base[inet_bridge]='{auto}'
         fi
     fi
-    [[ $(echo -n "$bridge_ifs" | grep -c '^') == 1 ]] && config_base[inet_bridge]=$(echo "$bridge_ifs" | sed -n 1p ) && echo "Информация: внешний vmbr интерфейс установлен автоматически на значение \"${config_base[inet_bridge]}\", т.к. на хостовой машине это был единственный внешний bridge интерфейс" && return
-    [[ $(echo -n "$all_bridge_ifs" | grep -c '^') == 1 ]] && config_base[inet_bridge]=$(echo "$all_bridge_ifs" | sed -n 1p ) && echo "Информация: внешний vmbr интерфейс установлен автоматически на значение \"${config_base[inet_bridge]}\", т.к. на хостовой машине это был единственный bridge интерфейс" && return
+    [[ $(echo -n "$bridge_ifs" | grep -c '^') == 1 && "$1" != manual ]] && config_base[inet_bridge]=$( echo "$bridge_ifs" | sed -n 1p ) && echo_info "Информация: внешний bridge интерфейс для ВМ установлен автоматически на значение '${config_base[inet_bridge]}', т.к. на хостовой машине это был единственный внешний bridge интерфейс" && return
+    [[ $(echo -n "$all_bridge_ifs" | grep -c '^') == 1 && "$1" != manual ]] && config_base[inet_bridge]=$( echo "$all_bridge_ifs" | sed -n 1p ) && echo_info "Информация: внешний bridge интерфейс для ВМ установлен автоматически на значение '${config_base[inet_bridge]}', т.к. на хостовой машине это был единственный bridge интерфейс" && return
 
     [[ $(echo -n "$all_bridge_ifs" | grep -c '^') == 0 ]] && echo_err "Ошибка: не найдено ни одного активного Linux|OVS bridge сетевого интерфейса в системе. Выход" && exit 1
 
@@ -939,11 +943,10 @@ function configure_storage() {
             config_base[storage]=$(echo "$pve_storage_list" | awk -F' ' -v nr="${config_base[storage]}" 'NR==nr{print $1}')
     }
     pve_storage_list=$( pvesm status  --target "$(hostname)" --enabled 1 --content images | awk -F' ' 'NR>1{print $1" "$6" "$2}' | sort -k2nr )
-    [[ "$pve_storage_list" == '' ]] && echo_err 'Ошибка: подходящих хранилищ не найдено' && exit 1
+
+    [[ "$pve_storage_list" == '' ]] && echo_err 'Ошибка: не найдено ни одного активного PVE хранилища для дисков ВМ. Выход' && exit 1
 
     if [[ "$1" != check-only ]]; then
-
-        [[ "$( echo -n "$pve_storage_list" | grep -c '^' )" == 0 ]] && echo_err "Ошибка: не найдено ни одного активного хранилища для дисков ВМ. Выход" && exit 1
 
         if [[ "${config_base[storage]}" == '{manual}' ]]; then
             $silent_mode && config_base[storage]='{auto}' || set_storage
@@ -1789,6 +1792,7 @@ silent_mode=$opt_silent_install || $opt_silent_control
 
 
 
+echo "$c_lgreenПодождите, идет проверка конфигурации...$c_null"
 check_config
 
 if $opt_show_help; then show_help; show_config; exit; fi
@@ -1823,4 +1827,3 @@ while ! $silent_mode; do
 done
 
 configure_imgdir clear
-
