@@ -1261,6 +1261,7 @@ function deploy_stand_config() {
         [[ "${vm_config[config_template]}" != '' ]] && {
             [[ -v "config_templates[${vm_config[config_template]}]" ]] || { echo_err "Ошибка: шаблон конфигурации '${vm_config[config_template]}' для ВМ '$elem' не найден. Выход"; exit 1; }
             get_dict_config "config_templates[${vm_config[config_template]}]" vm_config
+            get_dict_config "config_stand_${opt_sel_var}_var[$elem]" vm_config
             unset -v 'vm_config[config_template]';
         }
         [[ "${vm_config[netifs_type]}" != '' ]] && netifs_type="${vm_config[netifs_type]}" && unset -v 'vm_config[netifs_type]'
