@@ -9,7 +9,7 @@ echo $'\nProxmox VE Automatic stand deployment and configuration script by AF\n'
 ############################# -= Конфигурация =- #############################
 
 # Необходимые команды для работы на скрипта
-script_requirements_cmd=( curl qm pvesh pvesm pveum qemu-img qemu-kvm md5sum )
+script_requirements_cmd=( curl qm pvesh pvesm pveum qemu-img kvm md5sum )
 
 # Приоритет параметров: значения в этом файле -> значения из импортированного файла конфигурации -> переопределенные значения из аргуметов командной строки
 
@@ -1207,7 +1207,7 @@ function deploy_stand_config() {
 
     function set_machine_type() {
         [[ "$1" == '' ]] && echo_err 'Ошибка: set_disk_conf нет аргумента' && exit 1
-        local machine_list=$( qemu-kvm -machine help | awk 'NR>1{print $1}' )
+        local machine_list=$( kvm -machine help | awk 'NR>1{print $1}' )
         local type=$1
         if ! echo "$machine_list" | grep -Fxq "$type"; then
             if [[ "$type" =~ ^((pc)-i440fx|pc-(q35))-[0-9]+.[0-9]+$ ]]; then
