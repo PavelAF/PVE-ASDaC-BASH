@@ -1304,7 +1304,7 @@ function deploy_stand_config() {
 
         run_cmd /noexit "$cmd_line " || { echo_err "Ошибка: не удалось создать ВМ '$elem' стенда '$pool_name'. Выход"; exit 1; }
 
-        [[ "$acc_roles" != '' ]] && run_cmd "pveum acl modify '/vms/$vmid' --roles '$acc_roles' --users '$username'"
+        ${config_base[access_create]} && [[ "${vm_config[access_roles]}" != '' ]] && run_cmd "pveum acl modify '/vms/$vmid' --roles '${vm_config[access_roles]}' --users '$username'"
 
         ${config_base[take_snapshots]} && run_cmd /pipefail "qm snapshot '$vmid' 'Start' --description 'Исходное состояние ВМ' | tail -n2"
         echo "$c_green[Выполнено]$c_null: $c_lcyanКонфигурирование VM $elem завершено$c_null"
