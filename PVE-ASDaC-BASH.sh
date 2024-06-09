@@ -676,7 +676,7 @@ function set_configfile() {
 }
 
 function set_standnum() {
-    if [[ $( echo "$1" | grep -P '\A^([0-9]{1,3}((\-|\.\.)[0-9]{1,3})?([\,](?!$\Z)|(?![0-9])))+$\Z' -c ) != 1 ]]; then
+    if [[ $( echo "$1" | grep -P '\A^([1-9][0-9]{0,2}((\-|\.\.)[1-9][0-9]{0,2})?([\,](?!$\Z)|(?![0-9])))+$\Z' -c ) != 1 ]]; then
         echo_err 'Ошибка - неверный ввод: номера стендов. Выход'; exit 1
     fi
     local tmparr=( $( get_numrange_array "$1") )
@@ -688,7 +688,7 @@ function configure_standnum() {
     $silent_mode && [[ ${#opt_stand_nums} == 0 ]] && echo_err 'Ошибка: не указаны номера стендов для развертывания. Выход' && exit 1
     [[ "$is_show_config" == 'false' ]] && { is_show_config=true; show_config; }
     echo $'\nВведите номера инсталляций стендов. Напр., 1-5 развернет стенды под номерами 1, 2, 3, 4, 5 (всего 5)'
-    set_standnum $( read_question_select 'Номера стендов (прим: 1,2,5-10)' '^([0-9]{1,3}((\-|\.\.)[0-9]{1,3})?([\,](?!$\Z)|(?![0-9])))+$' )
+    set_standnum $( read_question_select 'Номера стендов (прим: 1,2,5-10)' '^([1-9][0-9]{0,2}((\-|\.\.)[1-9][0-9]{0,2})?([\,](?!$\Z)|(?![0-9])))+$' )
 }
 
 function set_varnum() {
@@ -797,49 +797,52 @@ function configure_wan_vmbr() {
 }
 
 function configure_vmid() {
-    [[ ${config_base[start_vmid]} =~ ^[0-9]+$ ]] && ! [[ ${config_base[start_vmid]} -ge 100 && ${config_base[start_vmid]} -le 10000 ]] && \
-        echo_err 'Ошибка: указанный vmid вне диапазона разрешенных для использования'
+    [[ "${config_base[start_vmid]}" =~ ^[0-9]+$ ]] && ! [[ ${config_base[start_vmid]} -ge 100 && ${config_base[start_vmid]} -le 999900000 ]] && \
+        echo_err "Ошибка: указанный vmid='${config_base[start_vmid]}' вне диапазона разрешенных для использования" && return 1
+    ! [[ "${config_base[start_vmid]}" =~ ^(\{(auto|manual)\}|[0-9]+)$ ]] && echo_err "Ошибка: указанный vmid='${config_base[start_vmid]}' не является валидным" && return 1
     [[ "$1" == check-only ]] && return 0
     set_vmid() {
         [[ "$is_show_config" == 'false' ]] && { is_show_config=true; show_config; }
-        config_base[start_vmid]=$(read_question_select $'Укажите начальный идентификатор ВМ (VMID), с коротого будут создаваться ВМ (100-999999000)' '^[0-9]+$' 100 999999000 )
+        echo "Укажите начальный идентификатор ВМ (VMID), с коротого будут создаваться ВМ (100-999900000)"
+        echo "Кратно 100. Пример: 100, 200, 1000, 1100"
+        config_base[start_vmid]=$( read_question_select $'Начальный идентификатор ВМ' '^[1-9][0-9]*00$' 100 999900000 )
     }
-    local -a vmidlist vmbrlist
-    local vmid_str=''
     local nodes=$(pvesh get /nodes --output-format yaml | grep -Po '^\s*node\s*:\s*\K.*')
 
     [[ "$nodes" == '' ]] && echo_err "Ошибка: не удалось узнать информацию о PVE нодах" && exit 1
 
+    local node vmid_str=''
     for node in $nodes; do
         vmid_str="$( echo "$vmid_str"; pvesh get /nodes/$node/qemu --noborder | awk 'NR>1{print $2}' | sort )"
     done
 
-    IFS=$'\n' read -d '' -r -a vmidlist <<<"$( echo "$vmid_str" | sort -n )"
-    vmbrcount="$(ip -br l | grep -oP '^vmbr\K[0-9]+' | grep -c '^' )"
-
-    
+    local -a vmid_list
+    IFS=$'\n' read -d '' -r -a vmid_list <<<"$( echo "$vmid_str" | sort -n )"
     [[ "$1" == manual ]] && config_base[start_vmid]='{manual}'
     if [[ "${config_base[start_vmid]}" == '{auto}' ]] || [[ $silent_mode && "${config_base[start_vmid]}" == '{manual}' ]]; then
         config_base[start_vmid]=$( pvesh get /cluster/nextid )
         [[ "${config_base[start_vmid]}" != '' && "${config_base[start_vmid]}" -lt 1000 ]] && config_base[start_vmid]=1000
     fi
     [[ "${config_base[start_vmid]}" == '{manual}' ]] && set_vmid
-    vmidlist+=(999999999)
-    
-    local i=100 id=0 count=0
-    count=$((${#opt_stand_nums[@]}*100))
-    i=${config_base[start_vmid]}
-    while [[ $i -lt ${vmidlist[-1]} ]]; do
-        [[ "${vmidlist[$id]}" -gt $i && $((${vmidlist[$id]} - $i - 100)) -ge $count ]] && break
-        [[ $i -gt 999999000 ]] && echo_err 'Ошибка: невозможно найти свободные VMID для развертывания стендов. Выход' && exit 1
-        [[ "${vmidlist[$id]}" -gt $i ]] && i=$((${vmidlist[$id]}+1))
-        ((id++))
+
+    local id=0
+    local i=$(( ${config_base[start_vmid]} + ( 99 - ( ${config_base[start_vmid]} - 1 ) % 100 ) ))
+    local vmid_count=$(( ${#opt_stand_nums[@]} * 100 ))
+
+    for id in ${vmid_list[@]}; do
+        isdigit_check "$id" || { echo_err "Ошибка: configure_vmid внутренняя ошибка"; exit 1; }
+        [[ $id -gt $i && $(( $id - $i )) -ge $vmid_count ]] && break
+        [[ $i -gt 999900000 ]] && echo_err 'Ошибка: невозможно найти свободные VMID для развертывания стендов. Выход' && exit 1
+        i=$(( $id + ( 100 - $id % 100 ) ))
     done
-    config_base[start_vmid]=$((i % 2 * 100 + i - i % 100))
 
-    count=$(( ${#opt_stand_nums[@]} * $(eval "printf '%s\n' \${!config_stand_${opt_sel_var}_var[@]}" | grep -Pv '^_' | wc -l) ))
+    config_base[start_vmid]=$i
 
-    [[ $((11100 - vmbrcount - count)) -le 0 ]] && echo_err 'Ошибка: невозможно найти свободные номера bridge vmbr-интерфейсов для создания сетей для стендов' && exit 1
+    local vm_count=$(eval "printf '%s\n' \${!config_stand_${opt_sel_var}_var[@]}" | grep -Pv '^_' | wc -l)
+    vm_count=$(( $vm_count * ( $vm_count - 1 ) / 2 + 1 ))
+    vm_count=$(( $vm_count * ${#opt_stand_nums[@]} ))
+    local vmbr_count="$( ip -br l | grep -Pc '^vmbr[0-9]+\ ' )"
+    [[ $(( 11100 - vmbr_count - vm_count )) -le 0 ]] && echo_err 'Ошибка: невозможно найти свободные номера bridge vmbr-интерфейсов для создания сетей для стендов' && exit 1
 }
 
 function configure_imgdir() {
