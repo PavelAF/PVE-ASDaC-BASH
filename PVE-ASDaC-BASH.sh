@@ -814,10 +814,10 @@ function configure_vmid() {
         vmid_str="$( echo "$vmid_str"; pvesh get /nodes/$node/qemu --noborder | awk 'NR>1{print $2}' | sort )"
     done
 
-    IFS=' ' read -r -a vmidlist <<< "$( echo "$vmid_str" | sort -n )"
+    IFS=$'\n' read -d '' -r -a vmidlist <<<"$( echo "$vmid_str" | sort -n )"
     vmbrcount="$(ip -br l | grep -oP '^vmbr\K[0-9]+' | grep -c '^' )"
-    local -A intervalsId=()
-    local i=100 id=0 count=0
+
+    
     [[ "$1" == manual ]] && config_base[start_vmid]='{manual}'
     if [[ "${config_base[start_vmid]}" == '{auto}' ]] || [[ $silent_mode && "${config_base[start_vmid]}" == '{manual}' ]]; then
         config_base[start_vmid]=$( pvesh get /cluster/nextid )
@@ -825,6 +825,8 @@ function configure_vmid() {
     fi
     [[ "${config_base[start_vmid]}" == '{manual}' ]] && set_vmid
     vmidlist+=(999999999)
+    
+    local i=100 id=0 count=0
     count=$((${#opt_stand_nums[@]}*100))
     i=${config_base[start_vmid]}
     while [[ $i -lt ${vmidlist[-1]} ]]; do
