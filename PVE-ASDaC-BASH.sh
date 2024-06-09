@@ -111,7 +111,7 @@ declare -A config_templates=(
         cores = 2
         memory = 2048
         boot_disk0 = https://disk.yandex.ru/d/31yfM0_qNhTTkw/Alt-Workstation_10.1.qcow2
-        access_roles = Competitor PVEVMAdmin
+        access_roles = Competitor
     '
     [_Eltex-vESR]='Базовый шаблон для vESR'
     [Eltex-vESR]='
