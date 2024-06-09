@@ -489,7 +489,7 @@ function show_config() {
     else
         if [[ "$1" != var ]]; then
             echo $'#>------------------ Осовные параметры конфигурации -------------------<#\n'
-            for var in inet_bridge storage take_snapshots access_create; do
+            for var in inet_bridge storage $( [[ $opt_sel_var != 0 && "${config_base[pool_name]}" != '' ]] && echo pool_name ) take_snapshots access_create; do
                 echo "$((++i)). ${config_base[_$var]:-$var}: $(get_val_print "${config_base[$var]}" "$var" )"
             done
 
@@ -516,7 +516,8 @@ function show_config() {
             description="$(eval echo "\$_$conf")"
             [[ "$description" == "" ]] && description="Вариант $i (без названия)"
             get_dict_value "$conf[_stand_config]" pool_name=pool_name
-            [[ "$pool_name" != "" ]] && description="$pool_name : $description"
+            [[ "$pool_name" == "" ]] && pool_name=${config_base[def_pool_name]}
+            description="$pool_name : $description"
             for var in $(eval echo "\${!$conf[@]}"); do
                 [[ "$var" =~ ^_ ]] && continue
                 $first_elem && first_elem=false && echo -n $'\n  '"$((i++)). $description"$'\n  - ВМ: '
@@ -877,11 +878,13 @@ function check_name() {
 }
 
 function configure_poolname() {
+    check_name 'config_base[def_pool_name]' ||  { echo_err "Ошибка: шаблон имён пулов по умолчанию некорректный: '${config_base[def_pool_name]}'. Запрещенные символы или длина больше 32 или меньше 3. Выход"; exit 1; }
+
     [[ "$1" == check-only && "${config_base[pool_name]}" == '' && "$opt_sel_var" == 0 ]] && return
     local def_value=${config_base[pool_name]}
     [[ "$opt_sel_var" != 0 && "${config_base[pool_name]}" == '' ]] && {
         get_dict_value "config_stand_${opt_sel_var}_var[_stand_config]" config_base[pool_name]=pool_name
-        [[ "${config_base[pool_name]}" == '' ]] && config_base[pool_name]=${config_base[def_pool_name]}
+        [[ "${config_base[pool_name]}" == '' ]] && config_base[pool_name]=${config_base[def_pool_name]} && echo_warn "Предупреждение: настройке шаблона имени пула присвоено значение по умолчанию: '${config_base[def_pool_name]}'"
         $silent_mode && [[ "${config_base[pool_name]}" == '' ]] && echo_err "Ошибка: не удалось установить имя пула. Выход" && exit 1
     }
     [[ "$1" == 'set' ]] && {
@@ -894,7 +897,7 @@ function configure_poolname() {
 
     [[ "$1" == 'install' ]] && {
         local pool_list pool_name
-            parse_noborder_table 'pveum pool list' pool_list poolid
+        parse_noborder_table 'pveum pool list' pool_list poolid
         for stand in ${opt_stand_nums[@]}; do
             pool_name="${config_base[pool_name]/\{0\}/$stand}"
             echo "$pool_list" | grep -Fxq -- "$pool_name" \
@@ -904,11 +907,13 @@ function configure_poolname() {
 }
 
 function configure_username() {
+    check_name 'config_base[def_access_user_name]' ||  { echo_err "Ошибка: шаблон имён пользователей по умолчанию некорректный: '${config_base[def_access_user_name]}'. Запрещенные символы или длина больше 32 или меньше 3. Выход"; exit 1; }
+
     [[ "$1" == check-only && "${config_base[access_user_name]}" == '' && "$opt_sel_var" == 0 ]] && return 0
     local def_value=${config_base[access_user_name]}
     [[ "$opt_sel_var" != 0 && "${config_base[access_user_name]}" == '' ]] && {
         get_dict_value "config_stand_${opt_sel_var}_var[_stand_config]" 'config_base[access_user_name]=access_user_name'
-        [[ "${config_base[access_user_name]}" == '' ]] && config_base[access_user_name]=${config_base[def_access_user_name]}
+        [[ "${config_base[access_user_name]}" == '' ]] && config_base[access_user_name]=${config_base[def_access_user_name]} && echo_warn "Предупреждение: настройке шаблона имени пользователя присвоено значение по умолчанию: '${config_base[def_access_user_name]}'"
         $silent_mode && [[ "${config_base[access_user_name]}" == '' ]] && echo "Ошибка: не удалось установить имя пула. Выход" && exit 1
     }
     [[ "$1" == 'set' ]] && {
