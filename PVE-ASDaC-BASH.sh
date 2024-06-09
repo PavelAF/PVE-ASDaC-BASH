@@ -4,7 +4,7 @@ trap ex INT
 
 # Запуск:               sh='PVE-ASDaC-BASH.sh';curl -sOLH 'Cache-Control: no-cache' "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/main/$sh"&&chmod +x $sh&&./$sh;rm -f $sh
 
-echo $'\nProxmox VE Automatic stand deployment and configuration script by AF\n'
+echo $'\nProxmox VE Automatic stand deployment and configuration script by AF\n' > /dev/tty
 
 ############################# -= Конфигурация =- #############################
 
@@ -291,13 +291,13 @@ c_white=$'\e[1;37m'
 c_null=$'\e[m'
 c_value=$c_lblue
 c_error=$c_lred
-c_warning=$c_lpurple
-c_info=$c_purple
-c_ok=$c_green
+c_warning=$c_lyellow
+c_info=$c_lcyan
+c_ok=$c_lgreen
 
 function get_val_print() {
-    [[ "$1" == true ]] && echo "$c_greenДа$c_null" && return 0
-    [[ "$1" == false ]] && echo "$c_redНет$c_null" && return 0
+    [[ "$1" == true ]] && echo "$c_lgreenДа$c_null" && return 0
+    [[ "$1" == false ]] && echo "$c_lredНет$c_null" && return 0
     if [[ "$2" == storage ]] && ! [[ "$1" =~ ^\{(manual|auto)\}$ ]] && [[ "$sel_storage_space" != '' ]]; then
         echo "$c_value$1$c_null (свободно $(echo "$sel_storage_space" | awk 'BEGIN{ split("К|М|Г|Т",x,"|") } { for(i=1;$1>=1024&&i<length(x);i++) $1/=1024; print int($1) " " x[i] "Б" }'))"
         return 0
@@ -512,6 +512,7 @@ function show_config() {
             local vars=$(compgen -v | grep -P '^config_stand_[1-9][0-9]{0,3}_var$' | awk '{if (NR>1) printf " ";printf $0}')
         fi
         for conf in $vars; do
+            pool_name=''; description=''
             description="$(eval echo "\$_$conf")"
             [[ "$description" == "" ]] && description="Вариант $i (без названия)"
             get_dict_value "$conf[_stand_config]" pool_name=pool_name
@@ -628,9 +629,11 @@ function get_file() {
             curl --max-filesize $max_filesize -GL "$url" -o "$filename" || { echo_err "Ошибка скачивания. Выход"; exit 1; }
             # | iconv -f windows-1251 -t utf-8 > $tempfile
         }
+        url="$filename"
+    else
+        filename=$url
     fi
     [[ -r "$filename" ]] || { echo_err "Ошибка: файл '$filename' должен существовать и быть доступен для чтения"; exit 1; }
-    url="$filename"
     list_url_files["$md5"]="$url"
 }
 
@@ -1053,7 +1056,7 @@ function get_dict_config() {
     local -n "config_var=$1"
     local -n "dict_var=$2"
 
-    [[ "$config_var" == '' ]] && { echo_err "Ошибка: конфиг '$1' пуст"; [[ "$3" == noexit ]] && return 1; exit 1; }
+    [[ "$config_var" == '' ]] && { [[ "$3" == noexit ]] && return 1; echo_err "Ошибка: конфиг '$1' пуст"; exit 1; }
     local var value i=0
     while IFS= read -r line || [[ -n $line ]]; do
         var=$( echo $line | grep -Po '^\s*\K[\w]+(?=\ =\ )' )
@@ -1193,23 +1196,27 @@ function deploy_stand_config() {
     function set_role_config() {
         [[ "$1" == '' ]] && echo_err 'Ошибка: set_role_conf нет аргумента' > /dev/tty && exit 1
         local roles=$( echo "$1" | sed 's/,/ /g;s/  \+/ /g;s/^ *//g;s/ *$//g' )
-        local i role set_role next
+        local i role set_role role_exists
         for set_role in $roles; do
-            next=false
+            role_exists=false
             for ((i=1; i<=$(echo -n "${roles_list[roleid]}" | grep -c '^'); i++)); do
                 role=$( echo "${roles_list[roleid]}" | sed -n "${i}p" )
                 [[ "$set_role" != "$role" ]] && continue
                 if [[ -v "config_access_roles[$role]" ]]; then
                     [[ "$( echo "${roles_list[privs]}" | sed -n "${i}p" )" != "${config_access_roles[$role]}" ]] \
                         && run_cmd "pvesh set '/access/roles/$role' --privs '${config_access_roles[$role]}'"
-                    next=true
+                    role_exists=true
                 else
                     echo_err "Ошибка: в конфигурации для установки ВМ '$elem' установлена несуществующая access роль '$role'. Выход"
                     exit 1
                 fi
                 break
             done
-            ! $next && run_cmd "pvesh create /access/roles --roleid '$role' --privs '${config_access_roles[$role]}'"
+            ! $role_exists && {
+                run_cmd "pvesh create /access/roles --roleid '$set_role' --privs '${config_access_roles[$set_role]}'"
+                roles_list[roleid]+=$'\n'$set_role
+                roles_list[privs]+=$'\n'${config_access_roles[$set_role]}
+            }
         done
     }
 
@@ -1295,13 +1302,13 @@ function deploy_stand_config() {
         [[ "$acc_roles" != '' ]] && run_cmd "pveum acl modify '/vms/$vmid' --roles '$acc_roles' --users '$username'"
 
         ${config_base[take_snapshots]} && run_cmd /pipefail "qm snapshot '$vmid' 'Start' --description 'Исходное состояние ВМ' | tail -n2"
-        echo "$c_green[Выполнено]$c_null: $c_cyanКонфигурирование VM $elem завершено$c_null"
+        echo "$c_green[Выполнено]$c_null: $c_lcyanКонфигурирование VM $elem завершено$c_null"
         ((vmid++))
     done
 
     [[ "${#Networking[@]}" != 0 ]] && run_cmd "pvesh set '/nodes/$(hostname)/network'"
 
-    echo "$c_green[Выполнено]$c_null: $c_cyanКонфигурирование стенда $stand_num завершено$c_null"
+    echo "$c_green[Выполнено]$c_null: $c_lcyanКонфигурирование стенда $stand_num завершено$c_null"
 }
 
 function deploy_access_passwd() {
@@ -1447,7 +1454,7 @@ function install_stands() {
 
     deploy_access_passwd
 
-    echo $'\n'"$c_greenУстановка закочена.$c_null Выход"
+    echo $'\n'"$c_greenУстановка закочена.$c_null Выход" && exit 0
 
 }
 
@@ -1792,15 +1799,16 @@ silent_mode=$opt_silent_install || $opt_silent_control
 
 
 
-echo "$c_lgreenПодождите, идет проверка конфигурации...$c_null"
+echo "$c_lgreenПодождите, идет проверка конфигурации...$c_null" >/dev/tty
 check_config
 
 if $opt_show_help; then show_help; show_config; exit; fi
 
 if $opt_show_config; then
-    show_config detailed
+
+    [ -t 1 ] && show_config detailed || show_config detailed | sed -r 's/\x1B\[([0-9]{1,3}(;[0-9]{1,2};?)?)?[mGK]//g;s/\r//g'
     for file in ${conf_files[@]}; do
-        show_config detailed | sed -r "s/\x1B\[([0-9]{1,3}(;[0-9]{1,2};?)?)?[mGK]//g;s/\r//g" > $file
+        show_config detailed | sed -r 's/\x1B\[([0-9]{1,3}(;[0-9]{1,2};?)?)?[mGK]//g;s/\r//g' > $file
     done
     exit
 #else show_config
@@ -1827,3 +1835,4 @@ while ! $silent_mode; do
 done
 
 configure_imgdir clear
+
