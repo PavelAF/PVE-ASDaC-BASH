@@ -111,7 +111,7 @@ declare -A config_templates=(
         cores = 2
         memory = 2048
         boot_disk0 = https://disk.yandex.ru/d/31yfM0_qNhTTkw/Alt-Workstation_10.1.qcow2
-        access_roles = Competitor
+        access_roles = Competitor PVEVMAdmin
     '
     [_Eltex-vESR]='Базовый шаблон для vESR'
     [Eltex-vESR]='
@@ -1207,17 +1207,15 @@ function deploy_stand_config() {
             for ((i=1; i<=$(echo -n "${roles_list[roleid]}" | grep -c '^'); i++)); do
                 role=$( echo "${roles_list[roleid]}" | sed -n "${i}p" )
                 [[ "$set_role" != "$role" ]] && continue
-                if [[ -v "config_access_roles[$role]" ]]; then
-                    [[ "$( echo "${roles_list[privs]}" | sed -n "${i}p" )" != "${config_access_roles[$role]}" ]] \
-                        && run_cmd "pvesh set '/access/roles/$role' --privs '${config_access_roles[$role]}'"
-                    role_exists=true
-                else
-                    echo_err "Ошибка: в конфигурации для установки ВМ '$elem' установлена несуществующая access роль '$role'. Выход"
-                    exit 1
+                if [[ -v "config_access_roles[$set_role]" ]]; then
+                    [[ "$( echo "${roles_list[privs]}" | sed -n "${i}p" )" != "${config_access_roles[$set_role]}" ]] \
+                        && run_cmd /noexit "pvesh set '/access/roles/$set_role' --privs '${config_access_roles[$set_role]}'"
                 fi
+                role_exists=true
                 break
             done
             ! $role_exists && {
+                [[ ! -v "config_access_roles[$set_role]" ]] && { echo_err "Ошибка: в конфигурации для установки ВМ '$elem' установлена несуществующая access роль '$set_role'. Выход"; exit 1; }
                 run_cmd "pvesh create /access/roles --roleid '$set_role' --privs '${config_access_roles[$set_role]}'"
                 roles_list[roleid]+=$'\n'$set_role
                 roles_list[privs]+=$'\n'${config_access_roles[$set_role]}
