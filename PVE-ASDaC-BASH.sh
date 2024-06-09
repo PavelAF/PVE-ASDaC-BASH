@@ -814,7 +814,7 @@ function configure_vmid() {
         vmid_str="$( echo "$vmid_str"; pvesh get /nodes/$node/qemu --noborder | awk 'NR>1{print $2}' | sort )"
     done
 
-    IFS=' ' read -r -a vmidlist <<< "$( echo "$vmid_str" | sort )"
+    IFS=' ' read -r -a vmidlist <<< "$( echo "$vmid_str" | sort -n )"
     vmbrcount="$(ip -br l | grep -oP '^vmbr\K[0-9]+' | grep -c '^' )"
     local -A intervalsId=()
     local i=100 id=0 count=0
