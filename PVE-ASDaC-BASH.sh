@@ -47,9 +47,9 @@ declare -A config_base=(
     [def_access_user_name]='Competitor{0}'
 
     [_access_user_desc]='Описание пользователя участника'
-    [access_user_desc]='Учетная запись участика демэкзамена #{0}'
+    [access_user_desc]='Учетная запись участника демэкзамена #{0}'
 
-    [_access_user_enable]='Включить учетные записи участиков сразу после развертывания стендов'
+    [_access_user_enable]='Включить учетные записи участников сразу после развертывания стендов'
     [access_user_enable]=true
 
     [_access_pass_length]='Длина создаваемых паролей для пользователей'
@@ -111,7 +111,7 @@ declare -A config_templates=(
         cores = 2
         memory = 2048
         boot_disk0 = https://disk.yandex.ru/d/31yfM0_qNhTTkw/Alt-Workstation_10.1.qcow2
-        access_roles = Competitor
+        access_roles = Competitor PVEVMAdmin
     '
     [_Eltex-vESR]='Базовый шаблон для vESR'
     [Eltex-vESR]='
@@ -155,7 +155,7 @@ declare -A config_stand_1_var=(
         stands_display_desc = Стенды демэкзамена 09.02.06 Сетевое и системное администрирование
         pool_desc = Стенд участника демэкзамена "Сетевое и системное администрирование". Стенд #{0}
         access_user_name = Student{0}
-        access_user_desc = Учетная запись участика демэкзамена #{0}
+        access_user_desc = Учетная запись участника демэкзамена #{0}
     '
 
     [_ISP]='Alt Server 10.1'
@@ -212,7 +212,7 @@ declare -A config_stand_2_var=(
         stands_display_desc = Стенды демэкзамена 09.02.06 Сетевое и системное администрирование
         pool_desc = Стенд участника демэкзамена "Сетевое и системное администрирование". Стенд #{0}
         access_user_name = Student{0}
-        access_user_desc = Учетная запись участика демэкзамена #{0}
+        access_user_desc = Учетная запись участника демэкзамена #{0}
     '
 
     [_ISP]='Alt Server 10.1'
@@ -648,7 +648,7 @@ function set_configfile() {
 
     if [[ "$( file -bi "$file" )" == 'text/plain; charset=utf-8' ]]; then
         source <( sed -r "s/\x1B\[([0-9]{1,3}(;[0-9]{1,2};?)?)?[mGK]//g;s/\r//g" "$file" \
-            | grep -Pzo '(\R|^)\s*config_(((access_roles|templates)\[_?[a-zA-Z][a-zA-Z0-9\_\-\.]+\])|(base\[('$( printf '%q\n' "${!config_base[@]}" | grep -Pv '^_' | awk '{if (NR>1) printf "|";printf $0}' )')\]))=(([^\ "'\'']|\\["'\''\ ])*|(['\''][^'\'']*['\'']))(?=\s*($|\R))' | sed 's/\x0//g') \
+            | grep -Pzo '(\R|^)\s*config_(((access_roles|templates)\[_?[a-zA-Z][a-zA-Z0-9\_\-\.]+\])|(base\[('$( printf '%q\n' "${!config_base[@]}" | grep -Pv '^_' | awk '{if (NR>1) printf "|";printf $0}' )')\]))=(([^\ "'\'']|\\["'\''\ ])*|(['\''][^'\'']*['\'']))(?=\s*($|\R))' | sed 's/\x0//g' ) \
         || { echo_err 'Ошибка при импорте файла конфигурации. Выход'; exit 1; }
 
         start_var=$(compgen -v | grep -Po '^config_stand_\K[1-9][0-9]{0,3}(?=_var$)' | awk 'BEGIN{max=0}{if ($1>max) max=$1}END{print max}')
@@ -805,13 +805,23 @@ function configure_vmid() {
         config_base[start_vmid]=$(read_question_select $'Укажите начальный идентификатор ВМ (VMID), с коротого будут создаваться ВМ (100-999999000)' '^[0-9]+$' 100 999999000 )
     }
     local -a vmidlist vmbrlist
-    IFS=' ' read -r -a vmidlist <<< "$(qm list | awk 'NR>1{print $1}' | sort -n)"
+    local vmid_str=''
+    local nodes=$(pvesh get /nodes --output-format yaml | grep -Po '^\s*node\s*:\s*\K.*')
+
+    [[ "$nodes" == '' ]] && echo_err "Ошибка: не удалось узнать информацию о PVE нодах" && exit 1
+
+    for node in $nodes; do
+        vmid_str="$( echo "$vmid_str"; pvesh get /nodes/$node/qemu --noborder | awk 'NR>1{print $2}' | sort )"
+    done
+
+    IFS=' ' read -r -a vmidlist <<< "$( echo vmid_str | sort )"
     vmbrcount="$(ip -br l | grep -oP '^vmbr\K[0-9]+' | grep -c '^' )"
     local -A intervalsId=()
     local i=100 id=0 count=0
     [[ "$1" == manual ]] && config_base[start_vmid]='{manual}'
     if [[ "${config_base[start_vmid]}" == '{auto}' ]] || [[ $silent_mode && "${config_base[start_vmid]}" == '{manual}' ]]; then
-        config_base[start_vmid]=1000
+        config_base[start_vmid]=$( pvesh get /cluster/nextid )
+        [[ "${config_base[start_vmid]}" != '' && "${config_base[start_vmid]}" -lt 1000 ]] && config_base[start_vmid]=1000
     fi
     [[ "${config_base[start_vmid]}" == '{manual}' ]] && set_vmid
     vmidlist+=(999999999)
