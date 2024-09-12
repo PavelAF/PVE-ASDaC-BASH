@@ -87,7 +87,19 @@ declare -A config_access_roles=(
 # config_template - импорт настроек ВМ из ранее описанного шаблона
 _config_templates='Список шаблонов ВМ'
 declare -A config_templates=(
-    [_Alt-Server_10.1]='Базовый шаблон для Alt Server 10.1'
+    [_Alt-JeOS]='Базовый шаблон для Альт p11 JeOS-systemd'
+    [Alt-JeOS]='
+        tags = alt_jeos
+        ostype = l26
+        serial0 = socket
+        agent = 1
+        scsihw = virtio-scsi-single
+        cpu = host
+        cores = 1
+        memory = 1024
+        boot_disk0 = https://disk.yandex.ru/d/31yfM0_qNhTTkw/Alt-p11_Jeos-systemd.qcow2
+    '
+    [_Alt-Server_10.1]='Базовый шаблон для Альт Сервер 10.1'
     [Alt-Server_10.1]='
         tags = alt_server
         ostype = l26
@@ -96,11 +108,11 @@ declare -A config_templates=(
         scsihw = virtio-scsi-single
         cpu = host
         cores = 1
-        memory = 1536
+        memory = 2048
         boot_disk0 = https://disk.yandex.ru/d/31yfM0_qNhTTkw/Alt-Server_10.1.qcow2
         access_roles = Competitor
     '
-    [_Alt-Workstation_10.1]='Базовый шаблон для Alt-Workstation 10.1'
+    [_Alt-Workstation_10.1]='Базовый шаблон для Альт Рабочая Станция 10.1'
     [Alt-Workstation_10.1]='
         tags = alt_workstation
         ostype = l26
@@ -109,9 +121,9 @@ declare -A config_templates=(
         scsihw = virtio-scsi-single
         cpu = host
         cores = 2
-        memory = 2048
+        memory = 3072
         boot_disk0 = https://disk.yandex.ru/d/31yfM0_qNhTTkw/Alt-Workstation_10.1.qcow2
-        access_roles = Competitor PVEVMAdmin
+        access_roles = Competitor
     '
     [_Eltex-vESR]='Базовый шаблон для vESR'
     [Eltex-vESR]='
@@ -148,118 +160,54 @@ declare -A config_templates=(
     '
 )
 
-_config_stand_1_var='Вариант стенда демэкзамена 09.02.06-1-2024. ОС: Alt Server, Alt Workstation, Eltex vESR'
+_config_stand_1_var='Базовый стенд демэкзамена КОД 09.02.06-1-2025. Модуль № 1'
 declare -A config_stand_1_var=(
     [_stand_config]='
-        pool_name = DE_09.02.06-2024_stand_{0}
-        stands_display_desc = Стенды демэкзамена 09.02.06 Сетевое и системное администрирование
-        pool_desc = Стенд участника демэкзамена "Сетевое и системное администрирование". Стенд #{0}
-        access_user_name = Student{0}
+        pool_name = DE_09.02.06-2025_stand_A-{0}
+        stands_display_desc = Стенды демэкзамена 09.02.06 Сетевое и системное администрирование. Модуль A
+        pool_desc = Стенд участника демэкзамена "Сетевое и системное администрирование". Стенд A-{0}
+        access_user_name = Student-A{0}
         access_user_desc = Учетная запись участника демэкзамена #{0}
     '
 
-    [_ISP]='Alt Server 10.1'
+    [_ISP]='Альт JeOS'
     [ISP]='
-        config_template = Alt-Server_10.1
         startup = order=1,up=8,down=30
         network1 = {bridge=inet}
-        network2 = 🖧: ISP<=>HQ-R
-        network3 = 🖧: ISP<=>BR-R
+        network2 = 🖧: ISP-HQ
+        network3 = 🖧: ISP-BR
     '
-    [_CLI]='Alt Workstation 10.1'
-    [CLI]='
-        config_template = Alt-Workstation_10.1
-        startup = order=3,up=8,down=30
-        network1 = {bridge=inet}
-        network2 = 🖧: CLI<=>HQ-R
-    '
-    [_HQ-R]='Eltex vESR'
-    [HQ-R]='
-        config_template = Eltex-vESR
+    [_HQ-RTR]='EcoRouter'
+    [HQ-RTR]='
+        config_template = EcoRouter
         startup = order=2,up=8,down=60
-        network1 = 🖧: ISP<=>HQ-R
-        network2 = 🖧: HQ-R<=>HQ-SRV
-        network3 = 🖧: CLI<=>HQ-R
+        network1 = 🖧: ISP-HQ
+        network2 = 🖧: HQ-Net
     '
-    [_HQ-SRV]='Alt Server 10.1'
+    [_HQ-SRV]='Альт Сервер 10.1'
     [HQ-SRV]='
         config_template = Alt-Server_10.1
         startup = order=3,up=8,down=60
-        network1 = 🖧: HQ-R<=>HQ-SRV
+        network1 = {bridge="🖧: SRV-Net", tag=100}
     '
-    [_BR-R]='Eltex vESR'
-    [BR-R]='
-        config_template = Eltex-vESR
-        startup = order=2,up=8,down=60
-        network1 = 🖧: ISP<=>BR-R
-        network2 = 🖧: BR-R<=>BR-SRV
-    '
-    [_BR-SRV]='Alt Server 10.1'
-    [BR-SRV]='
-        config_template = Alt-Server_10.1
-        startup = order=3,up=8,down=60
-        network1 = 🖧: BR-R<=>BR-SRV
-        disk0 = 1GB
-        disk1 = 1GB
-        disk2 = 1GB
-    '
-)
-
-_config_stand_2_var='Вариант стенда демэкзамена 09.02.06-1-2024. ОС: Alt Server, Alt Workstation'
-declare -A config_stand_2_var=(
-    [_stand_config]='
-        pool_name = DE_09.02.06-2024_stand_{0}
-        stands_display_desc = Стенды демэкзамена 09.02.06 Сетевое и системное администрирование
-        pool_desc = Стенд участника демэкзамена "Сетевое и системное администрирование". Стенд #{0}
-        access_user_name = Student{0}
-        access_user_desc = Учетная запись участника демэкзамена #{0}
-    '
-
-    [_ISP]='Alt Server 10.1'
-    [ISP]='
-        config_template = Alt-Server_10.1
-        startup = order=1,up=8,down=30
-        network1 = {bridge=inet}
-        network2 = 🖧: ISP<=>HQ-R
-        network3 = 🖧: ISP<=>BR-R
-
-    '
-    [_CLI]='Alt Workstation 10.1'
-    [CLI]='
+    [_HQ-CLI]='Альт Рабочая Станция 10.1'
+    [HQ-CLI]='
         config_template = Alt-Workstation_10.1
         startup = order=3,up=8,down=30
-        network1 = {bridge=inet}
-        network2 = 🖧: CLI<=>HQ-R
+        network1 = {bridge="🖧: CLI-Net", tag=200}
     '
-    [_HQ-R]='Alt Server 10.1'
-    [HQ-R]='
-        config_template = Alt-Server_10.1
+    [_BR-RTR]='EcoRouter'
+    [BR-RTR]='
+        config_template = EcoRouter
         startup = order=2,up=8,down=60
-        network1 = 🖧: ISP<=>HQ-R
-        network2 = 🖧: HQ-R<=>HQ-SRV
-        network3 = 🖧: CLI<=>HQ-R
+        network1 = 🖧: ISP-BR
+        network2 = 🖧: BR-Net
     '
-    [_HQ-SRV]='Alt Server 10.1'
-    [HQ-SRV]='
-        config_template = Alt-Server_10.1
-        startup = order=3,up=8,down=60
-        network1 = 🖧: HQ-R<=>HQ-SRV
-    '
-    [_BR-R]='Alt Server 10.1'
-    [BR-R]='
-        config_template = Alt-Server_10.1
-        startup = order=2,up=8,down=60
-        network1 = 🖧: ISP<=>BR-R
-        network2 = 🖧: BR-R<=>BR-SRV
-    '
-    [_BR-SRV]='Alt Server 10.1'
+    [_BR-SRV]='Альт Сервер 10.1'
     [BR-SRV]='
         config_template = Alt-Server_10.1
         startup = order=3,up=8,down=60
-        network1 = 🖧: BR-R<=>BR-SRV
-        disk0 = 1GB
-        disk1 = 1GB
-        disk2 = 1GB
+        network1 = 🖧: BR-Net
     '
 )
 
@@ -1142,45 +1090,48 @@ function deploy_stand_config() {
         [[ "$1" == 'test' ]] && { [[ "$netifs_type" =~ ^(e1000|e1000-82540em|e1000-82544gc|e1000-82545em|e1000e|i82551|i82557b|i82559er|ne2k_isa|ne2k_pci|pcnet|rtl8139|virtio|vmxnet3)$ ]] && return 0; echo_err "Ошибка: указаный в конфигурации модель сетевого интерфейса '$netifs_type' не является корректным [e1000|e1000-82540em|e1000-82544gc|e1000-82545em|e1000e|i82551|i82557b|i82559er|ne2k_isa|ne2k_pci|pcnet|rtl8139|virtio|vmxnet3]"; exit 1; }
 
         [[ ! "$1" =~ ^network([0-9]+)$ ]] && { echo_err "Ошибка: опция конфигурации ВМ network некорректна '$1'"; exit 1; }
-        local if_num=${BASH_REMATCH[1]} if_desc="$2" create_if=true link_state=''
+        local if_num=${BASH_REMATCH[1]} if_config="$2" if_desc="$if_config" create_if=true if_options=''
+
+        if [[ "$if_config" =~ ^\{\ *bridge\ *=\ *([0-9\.a-z]|\"((\\\"|[^\"])+)\")\ *(,.*)?\}$ ]]; then
+            if_desc="${BASH_REMATCH[2]}"
+            if_config="${BASH_REMATCH[4]}"
+            [[ "$if_config" =~ ^.*,\ *state\ *=\ *down\ *(?=$|,.+$) ]] && if_options+=',link_down=1'
+            [[ "$if_config" =~ ^.*,\ *tag\ *=\ *([1-9][0-9]{0,2}|[1-3][0-9]{3}|40([0-8][0-9]|9[0-4]))\ *(?=$|,.+$) ]] && if_options+=",tag=${BASH_REMATCH[1]}"
+            [[ "$if_desc" == "" ]] && if_config="${BASH_REMATCH[1]}" && if_desc="{bridge=$if_config}" || if_config=0
+        elif [[ "$if_desc" =~ ^\{.*\}$ ]]; then
+            echo_err "Ошибка: некорректное значение подстановки настройки '$1 = $2' для ВМ '$elem'"
+            exit 1
+        fi
+
         for net in "${!Networking[@]}"; do
-            [[ "$if_desc" =~ ^\{.*(,\ *state\ *=\ *(up|down)\ *)?\}$ ]]
-            [[ "${BASH_REMATCH[2]}" == down ]] && link_state=',link_down=1'
-            [[ "${Networking["$net"]}" == "$if_desc" ]] && { cmd_line+=" --net$if_num '${netifs_type:-virtio},bridge=$net$link_state'"; return 0; }
+            [[ "${Networking["$net"]}" == "$if_desc" ]] && { cmd_line+=" --net$if_num '${netifs_type:-virtio},bridge=$net$if_options'"; return 0; }
         done
 
         local iface=''
-        if [[ "$if_desc" =~ ^\{\ *bridge\ *=\ *inet\ *(,\ *state\ *=\ *(up|down)\ *)?\}$ ]]; then
+        if [[ "$if_config" == inet ]]; then
             iface="${config_base[inet_bridge]}"
             create_if=false
-            [[ "${BASH_REMATCH[2]}" == down ]] && link_state=',link_down=1'
-        elif [[ "$if_desc" =~ ^\{\ *bridge\ *=\ *\[\ *([a-zA-Z0-9\_]+)\ *\]\ *(,\ *state\ *=\ *(up|down)\ *)?\}$ ]]; then
-            iface=${BASH_REMATCH[1]}
+        elif $if_config; then
+            iface="$if_config"
             echo "$pve_net_ifs" | grep -Fxq -- "$iface" || {
                 echo_err "Ошибка: указанный статически в конфигурации bridge интерфейс '$iface' не найден"
                 exit 1
             }
             create_if=false
-            [[ "${BASH_REMATCH[3]}" == down ]] && link_state=',link_down=1'
         else
-            [[ "$if_desc" =~ ^\{\ *bridge\ *=\ *\"\ *([^\"]+)\ *\"\ *(,\ *state\ *=\ *(up|down)\ *)?\}$ ]] \
-                || { [[ "$if_desc" =~ ^\{.*\}$ ]] && { echo_err "Ошибка: некорректное значение подстановки настройки '$1 = $2' для ВМ '$elem'"; exit 1;}  }
-            [[ "${BASH_REMATCH[3]}" == down ]] && link_state=',link_down=1'
-            [[ "${BASH_REMATCH[1]}" != '' ]] && if_desc=${BASH_REMATCH[1]}
-
             for i in ${!vmbr_ids[@]}; do
                 [[ -v "Networking[vmbr${vmbr_ids[$i]}]" ]] && continue
                 echo "$pve_net_ifs" | grep -Fxq -- "vmbr${vmbr_ids[$i]}" || { local set_id=${vmbr_ids[$i]}; unset 'vmbr_ids[$i]'; break; }
             done
             iface="vmbr$set_id"
         fi
-        Networking["$iface"]=$2
+        Networking["$iface"]="$if_desc"
         if_desc=${if_desc/\{0\}/$stand_num}
         $create_if && $opt_verbose && echo "Добавление сети vmbr$set_id : '$if_desc'"
         $create_if && { run_cmd /noexit "pvesh create '/nodes/$(hostname)/network' --iface '$iface' --type 'bridge' --autostart 'true' --comments '$if_desc'" \
                 || { read -n 1 -p "Интерфейс '$iface' ($if_desc) уже существует! Выход"; exit 1 ;} }
 
-        cmd_line+=" --net$if_num '${netifs_type:-virtio},bridge=$iface$link_state'"
+        cmd_line+=" --net$if_num '${netifs_type:-virtio},bridge=$iface$if_options'"
 
         $create_access_network && ${config_base[access_create]} && { run_cmd /noexit "pveum acl modify '/sdn/zones/localnetwork/$iface' --users '$username' --roles 'PVEAuditor'" || { echo_err "Не удалось создать ACL правило для сетевого интерфейса '$iface' и пользователя '$username'"; exit 1; } }
         return 0
@@ -1853,4 +1804,3 @@ while ! $silent_mode; do
 done
 
 configure_imgdir clear
-
