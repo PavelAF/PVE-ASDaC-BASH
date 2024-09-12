@@ -154,7 +154,7 @@ declare -A config_templates=(
         rng0 = source=/dev/urandom
         disk_type = ide
         netifs_type = e1000
-        network0 = { bridge="mgmt_net", state=down }
+        network0 = { bridge=inet, state=down }
         boot_disk0 = https://disk.yandex.ru/d/31yfM0_qNhTTkw/EcoRouter.qcow2
         access_roles = Competitor
     '
@@ -172,8 +172,9 @@ declare -A config_stand_1_var=(
 
     [_ISP]='Альт JeOS'
     [ISP]='
+        config_template = Alt-JeOS
         startup = order=1,up=8,down=30
-        network1 = {bridge=inet}
+        network1 = { bridge=inet }
         network2 = 🖧: ISP-HQ
         network3 = 🖧: ISP-BR
     '
@@ -778,12 +779,13 @@ function configure_vmid() {
     local vmid_count=$(( ${#opt_stand_nums[@]} * 100 ))
 
     for id in ${vmid_list[@]}; do
-        isdigit_check "$id" || { echo_err "Ошибка: configure_vmid внутренняя ошибка"; exit 1; }
+        [[ $id -lt $i ]] && continue
         [[ $id -gt $i && $(( $id - $i )) -ge $vmid_count ]] && break
         [[ $i -gt 999900000 ]] && echo_err 'Ошибка: невозможно найти свободные VMID для развертывания стендов. Выход' && exit 1
         i=$(( $id + ( 100 - $id % 100 ) ))
     done
 
+    isdigit_check "$i" || { echo_err "Ошибка: configure_vmid внутренняя ошибка"; exit 1; }
     config_base[start_vmid]=$i
 
     local vm_count=$(eval "printf '%s\n' \${!config_stand_${opt_sel_var}_var[@]}" | grep -Pv '^_' | wc -l)
@@ -1093,11 +1095,12 @@ function deploy_stand_config() {
         local if_num=${BASH_REMATCH[1]} if_config="$2" if_desc="$2" create_if=false if_options=''
 
         if [[ "$if_config" =~ ^\{\ *bridge\ *=\ *([0-9\.a-z]+|\"((\\\"|[^\"])+)\")\ *(,.*)?\}$ ]]; then
+            if_bridge=${BASH_REMATCH[1]}
             if_desc="${BASH_REMATCH[2]}"
             if_config="${BASH_REMATCH[4]}"
             [[ "$if_config" =~ ^.*,\ *state\ *=\ *down\ *($|,.+$) ]] && if_options+=',link_down=1'
             [[ "$if_config" =~ ^.*,\ *tag\ *=\ *([1-9][0-9]{0,2}|[1-3][0-9]{3}|40([0-8][0-9]|9[0-4]))\ *($|,.+$) ]] && if_options+=",tag=${BASH_REMATCH[1]}"
-            [[ "$if_desc" == "" ]] && if_config="${BASH_REMATCH[1]}" && if_desc="{bridge=$if_config}" || if_config=""
+            [[ "$if_desc" == "" ]] && if_config="$if_bridge" && if_desc="{bridge=$if_bridge}" || if_config=""
         elif [[ "$if_desc" =~ ^\{.*\}$ ]]; then
             echo_err "Ошибка: некорректное значение подстановки настройки '$1 = $2' для ВМ '$elem'"
             exit 1
@@ -1212,7 +1215,7 @@ function deploy_stand_config() {
     local -A Networking=()
 
     local stand_num=$1
-    local vmid=$((${config_base[start_vmid]} + $1 * 100 + 1))
+    local vmid=$((${config_base[start_vmid]} + $2 * 100 + 1))
     [[ "$stands_group" == '' ]] && { echo_err "Ошибка: не указана группа стендов"; exit 1; }
     local pool_name="${config_base[pool_name]/\{0\}/$stand_num}"
 
@@ -1414,8 +1417,8 @@ function install_stands() {
 
     opt_not_tmpfs=false
 
-    for stand_num in "${opt_stand_nums[@]}"; do
-        deploy_stand_config $stand_num
+    for stand_num in "${!opt_stand_nums[@]}"; do
+        deploy_stand_config ${opt_stand_nums[stand_num]} $stand_num
     done
     ${config_base[access_create]} && {
         [[ "${config_base[access_auth_pam_desc]}" != '' ]] && run_cmd "pveum realm modify pam --comment '${config_base[access_auth_pam_desc]}'"
