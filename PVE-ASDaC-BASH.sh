@@ -92,7 +92,7 @@ declare -A config_templates=(
         tags = alt_jeos
         ostype = l26
         serial0 = socket
-        agent = 1
+        tablet = 0
         scsihw = virtio-scsi-single
         cpu = host
         cores = 1
@@ -105,6 +105,7 @@ declare -A config_templates=(
         ostype = l26
         serial0 = socket
         agent = 1
+        tablet = 0
         scsihw = virtio-scsi-single
         cpu = host
         cores = 1
@@ -130,7 +131,7 @@ declare -A config_templates=(
         tags = eltex-vesr
         ostype = l26
         serial0 = socket
-        agent = 0
+        tablet = 0
         acpi = 0
         scsihw = virtio-scsi-single
         cpu = host
@@ -146,14 +147,13 @@ declare -A config_templates=(
         ostype = l26
         machine = pc-i440fx-8.0
         serial0 = socket
-        agent = 0
-        acpi = 1
+        tablet = 0
         cpu = host
         cores = 2
         memory = 4096
         rng0 = source=/dev/urandom
         disk_type = ide
-        netifs_type = e1000
+        netifs_type = vmxnet3
         network0 = { bridge=inet, state=down }
         boot_disk0 = https://disk.yandex.ru/d/31yfM0_qNhTTkw/EcoRouter.qcow2
         access_roles = Competitor
@@ -172,7 +172,7 @@ declare -A config_stand_1_var=(
 
     [_ISP]='Альт JeOS'
     [ISP]='
-        config_template = Alt-JeOS
+    	config_template = Alt-JeOS
         startup = order=1,up=8,down=30
         network1 = { bridge=inet }
         network2 = 🖧: ISP-HQ
@@ -181,33 +181,33 @@ declare -A config_stand_1_var=(
     [_HQ-RTR]='EcoRouter'
     [HQ-RTR]='
         config_template = EcoRouter
-        startup = order=2,up=8,down=60
+        startup = order=2,up=8,down=1
         network1 = 🖧: ISP-HQ
         network2 = 🖧: HQ-Net
     '
     [_HQ-SRV]='Альт Сервер 10.1'
     [HQ-SRV]='
         config_template = Alt-Server_10.1
-        startup = order=3,up=8,down=60
+        startup = order=3,up=8,down=30
         network1 = {bridge="🖧: SRV-Net", tag=100}
     '
     [_HQ-CLI]='Альт Рабочая Станция 10.1'
     [HQ-CLI]='
         config_template = Alt-Workstation_10.1
-        startup = order=3,up=8,down=30
+        startup = order=4,up=8,down=30
         network1 = {bridge="🖧: CLI-Net", tag=200}
     '
     [_BR-RTR]='EcoRouter'
     [BR-RTR]='
         config_template = EcoRouter
-        startup = order=2,up=8,down=60
+        startup = order=2,up=8,down=1
         network1 = 🖧: ISP-BR
         network2 = 🖧: BR-Net
     '
     [_BR-SRV]='Альт Сервер 10.1'
     [BR-SRV]='
         config_template = Alt-Server_10.1
-        startup = order=3,up=8,down=60
+        startup = order=3,up=8,down=30
         network1 = 🖧: BR-Net
     '
 )
@@ -779,7 +779,7 @@ function configure_vmid() {
     local vmid_count=$(( ${#opt_stand_nums[@]} * 100 ))
 
     for id in ${vmid_list[@]}; do
-        [[ $id -lt $i ]] && continue
+	[[ $id -lt $i ]] && continue
         [[ $id -gt $i && $(( $id - $i )) -ge $vmid_count ]] && break
         [[ $i -gt 999900000 ]] && echo_err 'Ошибка: невозможно найти свободные VMID для развертывания стендов. Выход' && exit 1
         i=$(( $id + ( 100 - $id % 100 ) ))
@@ -1094,19 +1094,19 @@ function deploy_stand_config() {
         [[ ! "$1" =~ ^network([0-9]+)$ ]] && { echo_err "Ошибка: опция конфигурации ВМ network некорректна '$1'"; exit 1; }
         local if_num=${BASH_REMATCH[1]} if_config="$2" if_desc="$2" create_if=false if_options=''
 
-        if [[ "$if_config" =~ ^\{\ *bridge\ *=\ *([0-9\.a-z]+|\"((\\\"|[^\"])+)\")\ *(,.*)?\}$ ]]; then
-            if_bridge=${BASH_REMATCH[1]}
+	if [[ "$if_config" =~ ^\{\ *bridge\ *=\ *([0-9\.a-z]+|\"((\\\"|[^\"])+)\")\ *(,.*)?\}$ ]]; then
+	    if_bridge=${BASH_REMATCH[1]}
             if_desc="${BASH_REMATCH[2]}"
             if_config="${BASH_REMATCH[4]}"
             [[ "$if_config" =~ ^.*,\ *state\ *=\ *down\ *($|,.+$) ]] && if_options+=',link_down=1'
             [[ "$if_config" =~ ^.*,\ *tag\ *=\ *([1-9][0-9]{0,2}|[1-3][0-9]{3}|40([0-8][0-9]|9[0-4]))\ *($|,.+$) ]] && if_options+=",tag=${BASH_REMATCH[1]}"
-            [[ "$if_desc" == "" ]] && if_config="$if_bridge" && if_desc="{bridge=$if_bridge}" || if_config=""
-        elif [[ "$if_desc" =~ ^\{.*\}$ ]]; then
+	    [[ "$if_desc" == "" ]] && if_config="$if_bridge" && if_desc="{bridge=$if_bridge}" || if_config=""
+	elif [[ "$if_desc" =~ ^\{.*\}$ ]]; then 
             echo_err "Ошибка: некорректное значение подстановки настройки '$1 = $2' для ВМ '$elem'"
             exit 1
-        else
+	else
             if_config=""
-        fi
+	fi
 
         for net in "${!Networking[@]}"; do
             [[ "${Networking["$net"]}" == "$if_desc" ]] && { cmd_line+=" --net$if_num '${netifs_type:-virtio},bridge=$net$if_options'"; return 0; }
@@ -1131,7 +1131,7 @@ function deploy_stand_config() {
         fi
         Networking["$iface"]="$if_desc"
         if_desc=${if_desc/\{0\}/$stand_num}
-        $create_if && ($opt_verbose || $opt_dry_run) && echo "Добавление сети vmbr$set_id : '$if_desc'"
+	$create_if && ($opt_verbose || $opt_dry_run) && echo "Добавление сети vmbr$set_id : '$if_desc'"
         $create_if && { run_cmd /noexit "pvesh create '/nodes/$(hostname)/network' --iface '$iface' --type 'bridge' --autostart 'true' --comments '$if_desc'" \
                 || { read -n 1 -p "Интерфейс '$iface' ($if_desc) уже существует! Выход"; exit 1 ;} }
 
@@ -1685,7 +1685,7 @@ function manage_stands() {
 
         local roles_list_after list_roles
         parse_noborder_table 'pveum acl list' roles_list_after roleid
-        for role in $( echo "$roles_list_after" | sort -u ); do
+        for role in $( echo "${acl_list[roleid]}" | sort -u ); do
             echo "$roles_list_after" | grep -Fxq "$role" || {
                 [[ "$list_roles" == '' ]] && { list_roles=$( pveum role list --output-format yaml | grep -v - | grep -Po '^\s*(roleid|special)\s*:\s*\K.*' ) || exit 1; }
                 echo "$list_roles" | grep -Pzq '(^|\n)'$role'\n0' && run_cmd "pveum role delete '$role'"
@@ -1808,4 +1808,3 @@ while ! $silent_mode; do
 done
 
 configure_imgdir clear
-
