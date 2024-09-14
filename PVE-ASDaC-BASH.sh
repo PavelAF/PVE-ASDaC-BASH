@@ -126,7 +126,7 @@ declare -A config_templates=(
         boot_disk0 = https://disk.yandex.ru/d/31yfM0_qNhTTkw/Alt-Workstation_10.1.qcow2
         access_roles = Competitor
     '
-    [_Eltex-vESR]='Базовый шаблон для vESR'
+    [_Eltex-vESR]='Базовый шаблон для Eltex vESR'
     [Eltex-vESR]='
         tags = eltex-vesr
         ostype = l26
@@ -141,8 +141,8 @@ declare -A config_templates=(
         boot_disk0 = https://disk.yandex.ru/d/31yfM0_qNhTTkw/vESR.qcow2
         access_roles = Competitor
     '
-    [_EcoRouter]='Базовый шаблон для EcoRouter'
-    [EcoRouter]='
+    [_EcoRouterOS]='Базовый шаблон для EcoRouterOS'
+    [EcoRouterOS]='
         tags = ecorouter
         ostype = l26
         machine = pc-i440fx-8.0
@@ -178,9 +178,9 @@ declare -A config_stand_1_var=(
         network2 = 🖧: ISP-HQ
         network3 = 🖧: ISP-BR
     '
-    [_HQ-RTR]='EcoRouter'
+    [_HQ-RTR]='EcoRouterOS'
     [HQ-RTR]='
-        config_template = EcoRouter
+        config_template = EcoRouterOS
         startup = order=2,up=8,down=1
         network1 = 🖧: ISP-HQ
         network2 = 🖧: HQ-Net
@@ -197,9 +197,9 @@ declare -A config_stand_1_var=(
         startup = order=4,up=8,down=30
         network1 = {bridge="🖧: CLI-Net", tag=200}
     '
-    [_BR-RTR]='EcoRouter'
+    [_BR-RTR]='EcoRouterOS'
     [BR-RTR]='
-        config_template = EcoRouter
+        config_template = EcoRouterOS
         startup = order=2,up=8,down=1
         network1 = 🖧: ISP-BR
         network2 = 🖧: BR-Net
@@ -398,6 +398,7 @@ function show_config() {
                 echo "  $((++i)). ${config_base[_$var]:-$var}: $( get_val_print "${config_base[$var]}" "$var" )"
             done
             echo "  $((++i)). $_opt_dry_run: $( get_val_print $opt_dry_run )"
+            echo "  $((++i)). $_opt_verbose: $( get_val_print $opt_verbose )"
             return 0
     }
     [[ "$1" == passwd-change ]] && {
@@ -1357,14 +1358,16 @@ function install_stands() {
     done
     show_config
 
+    _exit=false
     ! $silent_mode && read_question 'Хотите изменить другие параметры?' && {
-        local opt_names=( inet_bridge storage pool_name pool_desc take_snapshots access_{create,user_{name,desc,enable},pass_{length,chars},auth_{pve,pam}_desc} dry-run )
+        local opt_names=( inet_bridge storage pool_name pool_desc take_snapshots access_{create,user_{name,desc,enable},pass_{length,chars},auth_{pve,pam}_desc} dry-run verbose)
         while true; do
             show_config install-change
             echo
-            local switch=$( read_question_select 'Выберите номер настройки для изменения' '^[0-9]+$' 0 $( ${config_base[access_create]} && echo 14 || echo 7 ) )
+            local switch=$( read_question_select 'Выберите номер настройки для изменения' '^[0-9]*$' 0 $( ${config_base[access_create]} && echo 15 || echo 8 ) )
             echo
             [[ "$switch" == 0 ]] && break
+            [[ "$switch" == '' ]] && { $_exit && break; _exit=true; continue; }
             [[ "$switch" -ge 7 && "${config_base[access_create]}" == false ]] && (( switch+=7 ))
             local opt=$( printf '%s\n' "${opt_names[@]}" | sed "$switch!D" )
             val=''
@@ -1375,6 +1378,7 @@ function install_stands() {
                 inet_bridge) configure_wan_vmbr manual; continue;;
                 take_snapshots|access_create|access_user_enable) config_base[$opt]=$( invert_bool ${config_base[$opt]} ); continue;;
                 dry-run) opt_dry_run=$( invert_bool $opt_dry_run ); continue;;
+                verbose) opt_verbose=$( invert_bool $opt_verbose ); continue;;
             esac
             val=$( read_question_select "${config_base[_$opt]:-$opt}" '' '' '' "${config_base[$opt]}" )
             [[ "${config_base[$opt]}" == "$val" ]] && continue
@@ -1496,9 +1500,14 @@ function manage_stands() {
     echo '  1. Включение учетных записей'
     echo '  2. Отключение учетных записей'
     echo '  3. Установка паролей для учетных записей'
-    echo '  4. Откатить виртуальные машины до снапшота Start'
-    echo '  5. Удаление стендов'
-    local switch=$(read_question_select $'\nВыберите действие' '^([1-5]|)$' )
+    echo '  4. Создать снапшот с начальным состоянием ВМ: "Start"'
+    echo '  5. Откатить виртуальные машины до начального снапшота: "Start"'
+    echo '  6. Удалить снапшот: "Start"'
+    echo '  7. Создать снапшот ВМ с результатом выполнения: "End"'
+    echo '  8. Откатить виртуальные машины до снапшота: "End"'
+    echo '  9. Удалить снапшот: "End"'
+    echo '  10. Удаление стендов'
+    local switch=$(read_question_select $'\nВыберите действие' '^([1-9]{1,2}|)$' 1 10)
 
     [[ "$switch" = '' ]] && switch=$(read_question_select $'\nВыберите действие' '^([1-5]|)$' ) && [[ "$switch" = '' ]] && return 0
     if [[ $switch =~ [1-3] ]]; then
@@ -1604,8 +1613,9 @@ function manage_stands() {
 
     local regex='\s*\"{opt_name}\"\s*:\s*(\K[0-9]+|\"\K(?(?=\\").{2}|[^"])+)'
 
-    if [[ $switch == 4 ]]; then
-        local vmid pool_info vmid_list vmname_list status name
+    if [[ $switch -ge 4 || $switch -le 9 ]]; then
+        read_question $'\nВы действительно хотите продолжить?' || exit 0
+        local vmid pool_info vmid_list vmname_list status name cmd_str
         for ((i=1; i<=$( echo -n "${pool_list[$group_name]}" | grep -c '^' ); i++)); do
             echo
             pool_name=$( echo "${pool_list[$group_name]}" | sed -n "${i}p" )
@@ -1617,17 +1627,28 @@ function manage_stands() {
                 vmid=$( echo "$vmid_list" | sed -n "${j}p" )
                 name=$( echo "$vmname_list" | sed -n "${j}p" )
 
+                case $switch in
+                    4) cmd_str="qm snapshot '$vmid' 'Start' --description 'Снапшот начального состояния ВМ' 2>&1";;
+                    5) cmd_str="qm rollback '$vmid' 'Start' 2>&1";;
+                    6) cmd_str="qm delsnapshot '$vmid' 'Start' 2>&1";;
+                    7) cmd_str="qm snapshot '$vmid' 'End' --description 'Снапшот ВМ с завершенным состоянием выполнения задания участником' 2>&1";;
+                    8) cmd_str="qm rollback '$vmid' 'End' 2>&1";;
+                    9) cmd_str="qm delsnapshot '$vmid' 'End' 2>&1";;
+                esac
                 status=$( run_cmd /noexit "qm rollback '$vmid' 'Start' 2>&1" ) && {
                     echo "[${c_green}Выполнено$c_null]: стенд ${c_value}$pool_name$c_null машина ${c_lgreen}$name$c_null (${c_lcyan}$vmid$c_null)"
                     continue
                 }
+
                 echo "$status" | grep -Pq $'^Configuration file \'[^\']+\' does not exist$' && echo_err "Ошибка: ВМ $name ($vmid) стенда $pool_name не существует!" && continue
-                echo "$status" | grep -P $'^snapshot \'[^\']+\' does not exist$' && echo_err "Ошибка: Снапшот ВМ $name ($vmid) стенда $pool_name не существует!"
+                echo "$status" | grep -P $'^snapshot \'[^\']+\' does not exist$' && echo_err "Ошибка: Снапшот ВМ $name ($vmid) стенда $pool_name не существует!" && continue
+                echo "$status" | grep -P $'^snapshot name \'[^\']+\' already used$' && echo_err "Ошибка: Снапшот ВМ $name ($vmid) стенда $pool_name уже существует!" && continue
+                echo_err "Необработанная ошибка: ВМ $name ($vmid), стенд $pool_name:"$'\n'$status && exit
             done
         done
     fi
 
-    if [[ $switch == 5 ]]; then
+    if [[ $switch == 10 ]]; then
 
         echo -n $'Выбранные пользователи: '; get_val_print "$(echo ${user_list[$group_name]} )"
         read_question $'\nВы действительно хотите продолжить?' || exit 0
@@ -1711,7 +1732,7 @@ _opt_silent_install='Произвести установку стенда в "т
 opt_silent_install=false
 _opt_silent_control=$'Управление настройками уже развернутых стендов (применение настроек, управление пользователями).\n\tБез интерактивного ввода (через аргументы командной строки и конфигурационные файлы)'
 opt_silent_control=false
-_opt_verbose='Вывод параметров конфигурации и более подробный вывод сообщений'
+_opt_verbose='Включить подробный вывод сообщений (verbose mode)'
 opt_verbose=false
 _opt_zero_vms=$'Очищает конфигурацию ВМ. Срабатывает при применении конфигурации из файла'
 opt_zero_vms=false
