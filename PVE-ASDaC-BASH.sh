@@ -184,6 +184,7 @@ declare -A config_stand_1_var=(
         startup = order=2,up=8,down=1
         network1 = 🖧: ISP-HQ
         network2 = 🖧: HQ-Net
+        network2 = {bridge="🖧: SRV-Net", slave="🖧: SRV-Net", slave="🖧: CLI-Net"}
     '
     [_HQ-SRV]='Альт Сервер 10.1'
     [HQ-SRV]='
@@ -1093,25 +1094,56 @@ function deploy_stand_config() {
         [[ "$1" == 'test' ]] && { [[ "$netifs_type" =~ ^(e1000|e1000-82540em|e1000-82544gc|e1000-82545em|e1000e|i82551|i82557b|i82559er|ne2k_isa|ne2k_pci|pcnet|rtl8139|virtio|vmxnet3)$ ]] && return 0; echo_err "Ошибка: указаный в конфигурации модель сетевого интерфейса '$netifs_type' не является корректным [e1000|e1000-82540em|e1000-82544gc|e1000-82545em|e1000e|i82551|i82557b|i82559er|ne2k_isa|ne2k_pci|pcnet|rtl8139|virtio|vmxnet3]"; exit 1; }
 
         [[ ! "$1" =~ ^network([0-9]+)$ ]] && { echo_err "Ошибка: опция конфигурации ВМ network некорректна '$1'"; exit 1; }
-        local if_num=${BASH_REMATCH[1]} if_config="$2" if_desc="$2" create_if=false if_options=''
+        local if_num=${BASH_REMATCH[1]} if_config="$2" if_desc="$2" create_if=false if_options='' slaves=() slaves_str='' vlan_aware_str=''
 
-	if [[ "$if_config" =~ ^\{\ *bridge\ *=\ *([0-9\.a-z]+|\"((\\\"|[^\"])+)\")\ *(,.*)?\}$ ]]; then
-	    if_bridge=${BASH_REMATCH[1]}
-            if_desc="${BASH_REMATCH[2]}"
+        if [[ "$if_config" =~ ^\{\ *bridge\ *=\ *([0-9\.a-z]+|\"((\\\"|[^\"])+)\")\ *(,.*)?\}$ ]]; then
+            if_bridge=${BASH_REMATCH[1]}
+            if_desc="${BASH_REMATCH[2]/\\\"/\"}"
             if_config="${BASH_REMATCH[4]}"
             [[ "$if_config" =~ ^.*,\ *state\ *=\ *down\ *($|,.+$) ]] && if_options+=',link_down=1'
-            [[ "$if_config" =~ ^.*,\ *tag\ *=\ *([1-9][0-9]{0,2}|[1-3][0-9]{3}|40([0-8][0-9]|9[0-4]))\ *($|,.+$) ]] && if_options+=",tag=${BASH_REMATCH[1]}"
-	    [[ "$if_desc" == "" ]] && if_config="$if_bridge" && if_desc="{bridge=$if_bridge}" || if_config=""
-	elif [[ "$if_desc" =~ ^\{.*\}$ ]]; then 
-            echo_err "Ошибка: некорректное значение подстановки настройки '$1 = $2' для ВМ '$elem'"
-            exit 1
-	else
-            if_config=""
-	fi
+            [[ "$if_config" =~ ^.*,\ *tag\ *=\ *([1-9][0-9]{0,2}|[1-3][0-9]{3}|40([0-8][0-9]|9[0-4]))\ *($|,.+$) ]] && if_options+=",tag=${BASH_REMATCH[1]}" && vlan_aware_str=" --bridge_vlan_aware 'true'"
+            [[ "$if_config" =~ , *slave *= *\"([^\"]+)\" ]] && slaves=("${BASH_REMATCH[@]:1}") && slaves_str=" --slaves '"
+            [[ "$if_desc" == "" ]] && if_config="$if_bridge" && if_desc="{bridge=$if_bridge}" || if_config=""
+        elif [[ "$if_desc" =~ ^\{.*\}$ ]]; then 
+                echo_err "Ошибка: некорректное значение подстановки настройки '$1 = $2' для ВМ '$elem'"
+                exit 1
+        else
+                if_config=""
+        fi
+
+        function add_bridge() {
+            if_desc="$1"
+            if [[ "$iface" == "" ]]; then
+                create_if=true
+                for i in ${!vmbr_ids[@]}; do
+                    [[ -v "Networking[vmbr${vmbr_ids[$i]}]" ]] && continue
+                    echo "$pve_net_ifs" | grep -Fxq -- "vmbr${vmbr_ids[$i]}" || { local set_id=${vmbr_ids[$i]}; unset 'vmbr_ids[$i]'; break; }
+                done
+                iface="vmbr$set_id"
+            fi
+            Networking["$iface"]="$if_desc"
+            cmd_line+=" --net$if_num '${netifs_type:-virtio},bridge=$iface$if_options'"
+
+            if_desc=${if_desc/\{0\}/$stand_num}
+            $create_if && ($opt_verbose || $opt_dry_run) && echo "Добавление сети vmbr$set_id : '$if_desc'"
+            $create_if && { run_cmd /noexit "pvesh create '/nodes/$(hostname)/network' --iface '$iface' --type 'bridge' --autostart 'true' --comments '$if_desc'$slaves_str$vlan_aware_str" \
+                    || { read -n 1 -p "Интерфейс '$iface' ($if_desc) уже существует! Выход"; exit 1 ;} }
+
+            $create_access_network && ${config_base[access_create]} && { run_cmd /noexit "pveum acl modify '/sdn/zones/localnetwork/$iface' --users '$username' --roles 'PVEAuditor'" || { echo_err "Не удалось создать ACL правило для сетевого интерфейса '$iface' и пользователя '$username'"; exit 1; } }
+            
+        }
+        for slave in "${slaves[@]}"; do
+            printf '%s\0' "${Networking[@]}" | grep -Fxz -- "$slave" || add_bridge "$slave"
+        done
 
         for net in "${!Networking[@]}"; do
-            [[ "${Networking["$net"]}" == "$if_desc" ]] && { cmd_line+=" --net$if_num '${netifs_type:-virtio},bridge=$net$if_options'"; return 0; }
+            [[ "$slaves_str" != "" ]] && printf '%s\0' "${slaves[@]}" | grep -Fxz -- "${Networking["$net"]}" && slaves_str+="$net "
+            [[ "${Networking["$net"]}" != "$if_desc" ]] && continue
+            cmd_line+=" --net$if_num '${netifs_type:-virtio},bridge=$net$if_options'"
+            [[ "$vlan_aware_str" != '' ]] && run_cmd "pvesh set '/nodes/$(hostname)/network' --iface '$iface'$vlan_aware_str"
+            return 0
         done
+        [[ "$slaves_str" != "" ]] && slaves_str="${slaves_str::-1}'"
 
         local iface=''
         if [[ "$if_config" == inet ]]; then
@@ -1122,23 +1154,9 @@ function deploy_stand_config() {
                 echo_err "Ошибка: указанный статически в конфигурации bridge интерфейс '$iface' не найден"
                 exit 1
             }
-        else
-            for i in ${!vmbr_ids[@]}; do
-                [[ -v "Networking[vmbr${vmbr_ids[$i]}]" ]] && continue
-                echo "$pve_net_ifs" | grep -Fxq -- "vmbr${vmbr_ids[$i]}" || { local set_id=${vmbr_ids[$i]}; unset 'vmbr_ids[$i]'; break; }
-            done
-            iface="vmbr$set_id"
-            create_if=true
         fi
-        Networking["$iface"]="$if_desc"
-        if_desc=${if_desc/\{0\}/$stand_num}
-	$create_if && ($opt_verbose || $opt_dry_run) && echo "Добавление сети vmbr$set_id : '$if_desc'"
-        $create_if && { run_cmd /noexit "pvesh create '/nodes/$(hostname)/network' --iface '$iface' --type 'bridge' --autostart 'true' --comments '$if_desc'" \
-                || { read -n 1 -p "Интерфейс '$iface' ($if_desc) уже существует! Выход"; exit 1 ;} }
-
-        cmd_line+=" --net$if_num '${netifs_type:-virtio},bridge=$iface$if_options'"
-
-        $create_access_network && ${config_base[access_create]} && { run_cmd /noexit "pveum acl modify '/sdn/zones/localnetwork/$iface' --users '$username' --roles 'PVEAuditor'" || { echo_err "Не удалось создать ACL правило для сетевого интерфейса '$iface' и пользователя '$username'"; exit 1; } }
+        
+        add_bridge $iface $if_desc
         return 0
 
     }
