@@ -183,8 +183,7 @@ declare -A config_stand_1_var=(
         config_template = EcoRouterOS
         startup = order=2,up=8,down=1
         network1 = 🖧: ISP-HQ
-        network2 = 🖧: HQ-Net
-        network2 = {bridge="🖧: SRV-Net", slave="🖧: SRV-Net", slave="🖧: CLI-Net"}
+        network2 = {bridge="🖧: HQ-Net", slave="🖧: SRV-Net", slave="🖧: CLI-Net"}
     '
     [_HQ-SRV]='Альт Сервер 10.1'
     [HQ-SRV]='
