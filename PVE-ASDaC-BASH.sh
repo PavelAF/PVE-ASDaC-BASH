@@ -212,7 +212,7 @@ declare -A config_stand_1_var=(
     '
 )
 
-_config_stand_1_var='Базовый стенд демэкзамена КОД 09.02.06-1-2025. Модуль № 2'
+_config_stand_2_var='Базовый стенд демэкзамена КОД 09.02.06-1-2025. Модуль № 2'
 declare -A config_stand_2_var=(
     [_stand_config]='
         pool_name = DE_09.02.06-2025_stand_B-{0}
