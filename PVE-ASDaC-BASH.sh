@@ -164,7 +164,7 @@ _config_stand_1_var='Базовый стенд демэкзамена КОД 09.
 declare -A config_stand_1_var=(
     [_stand_config]='
         pool_name = DE_09.02.06-2025_stand_A-{0}
-        stands_display_desc = Стенды демэкзамена 09.02.06 Сетевое и системное администрирование. Модуль A
+        stands_display_desc = Стенды демэкзамена 09.02.06 Сетевое и системное администрирование. Модуль 1
         pool_desc = Стенд участника демэкзамена "Сетевое и системное администрирование". Стенд A-{0}
         access_user_name = Student-A{0}
         access_user_desc = Учетная запись участника демэкзамена #{0}
@@ -212,6 +212,60 @@ declare -A config_stand_1_var=(
     '
 )
 
+_config_stand_1_var='Базовый стенд демэкзамена КОД 09.02.06-1-2025. Модуль № 2'
+declare -A config_stand_2_var=(
+    [_stand_config]='
+        pool_name = DE_09.02.06-2025_stand_B-{0}
+        stands_display_desc = Стенды демэкзамена 09.02.06 Сетевое и системное администрирование. Модуль 2
+        pool_desc = Стенд участника демэкзамена "Сетевое и системное администрирование". Стенд B-{0}
+        access_user_name = Student-B{0}
+        access_user_desc = Учетная запись участника демэкзамена B#{0}
+    '
+
+    [_ISP]='Альт JeOS'
+    [ISP]='
+    	config_template = Alt-JeOS
+        startup = order=1,up=8,down=30
+        network1 = { bridge=inet }
+        network2 = 🖧: ISP-HQ
+        network3 = 🖧: ISP-BR
+        boot_disk0 = https://disk.yandex.ru/d/31yfM0_qNhTTkw/ISP_DE39-2025_M2.qcow2
+    '
+    [_HQ-RTR]='EcoRouterOS'
+    [HQ-RTR]='
+        config_template = EcoRouterOS
+        startup = order=2,up=8,down=1
+        network1 = 🖧: ISP-HQ
+        network2 = {bridge="🖧: HQ-Net", slave="🖧: SRV-Net", slave="🖧: CLI-Net"}
+        boot_disk0 = https://disk.yandex.ru/d/31yfM0_qNhTTkw/HQ-RTR_DE39-2025_M2.qcow2
+    '
+    [_HQ-SRV]='Альт Сервер 10.1'
+    [HQ-SRV]='
+        config_template = Alt-Server_10.1
+        startup = order=3,up=8,down=30
+        network1 = {bridge="🖧: SRV-Net", tag=100}
+    '
+    [_HQ-CLI]='Альт Рабочая Станция 10.1'
+    [HQ-CLI]='
+        config_template = Alt-Workstation_10.1
+        startup = order=4,up=8,down=30
+        network1 = {bridge="🖧: CLI-Net", tag=200}
+    '
+    [_BR-RTR]='EcoRouterOS'
+    [BR-RTR]='
+        config_template = EcoRouterOS
+        startup = order=2,up=8,down=1
+        network1 = 🖧: ISP-BR
+        network2 = 🖧: BR-Net
+        boot_disk0 = https://disk.yandex.ru/d/31yfM0_qNhTTkw/BR-RTR_DE39-2025_M2.qcow2
+    '
+    [_BR-SRV]='Альт Сервер 10.1'
+    [BR-SRV]='
+        config_template = Alt-Server_10.1
+        startup = order=3,up=8,down=30
+        network1 = 🖧: BR-Net
+    '
+)
 ########################## -= Конец конфигурации =- ##########################
 
 
