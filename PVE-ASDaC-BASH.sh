@@ -1246,7 +1246,7 @@ function deploy_stand_config() {
         for net in "${!Networking[@]}"; do
             [[ "${Networking["$net"]}" != "$if_desc" ]] && continue
             cmd_line+=" --net$if_num '${netifs_type:-virtio},bridge=$net$net_options'"
-            [[ "$if_options" != '' ]] && run_cmd "pvesh set '/nodes/$(hostname)/network' --iface '$net'$if_options"
+            [[ "$if_options" != '' ]] && run_cmd "pvesh set '/nodes/$(hostname)/network/$net' $if_options"
             return 0
         done
 
@@ -1383,7 +1383,7 @@ function deploy_stand_config() {
                 *) echo_warn "[Предупреждение]: обнаружен неизвестный параметр конфигурации '$opt = ${vm_config[$opt]}' ВМ '$elem'. Пропущен"
             esac
         done
-        [[ "$boot_order" != '' ]] && cmd_line+=" --boot order=$boot_order"
+        [[ "$boot_order" != '' ]] && cmd_line+=" --boot 'order=$boot_order'"
 
         run_cmd /noexit "$cmd_line " || { echo_err "Ошибка: не удалось создать ВМ '$elem' стенда '$pool_name'. Выход"; exit 1; }
 
