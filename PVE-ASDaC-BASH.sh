@@ -183,19 +183,19 @@ declare -A config_stand_1_var=(
         config_template = EcoRouterOS
         startup = order=2,up=8,down=1
         network1 = 🖧: ISP-HQ
-        network2 = {bridge="🖧: HQ-Net", slave="🖧: SRV-Net", slave="🖧: CLI-Net"}
+        network2 = 🖧: HQ-Net
     '
     [_HQ-SRV]='Альт Сервер 10.1'
     [HQ-SRV]='
         config_template = Alt-Server_10.1
         startup = order=3,up=8,down=30
-        network1 = {bridge="🖧: SRV-Net", tag=100}
+        network1 = {bridge="🖧: HQ-Net", tag=100}
     '
     [_HQ-CLI]='Альт Рабочая Станция 10.1'
     [HQ-CLI]='
         config_template = Alt-Workstation_10.1
         startup = order=4,up=8,down=30
-        network1 = {bridge="🖧: CLI-Net", tag=200}
+        network1 = {bridge="🖧: HQ-Net", tag=200}
     '
     [_BR-RTR]='EcoRouterOS'
     [BR-RTR]='
@@ -236,20 +236,20 @@ declare -A config_stand_2_var=(
         config_template = EcoRouterOS
         startup = order=2,up=8,down=1
         network1 = 🖧: ISP-HQ
-        network2 = {bridge="🖧: HQ-Net", slave="🖧: SRV-Net", slave="🖧: CLI-Net"}
+        network2 = 🖧: HQ-Net
         boot_disk0 = https://disk.yandex.ru/d/31yfM0_qNhTTkw/HQ-RTR_DE39-2025_M2.qcow2
     '
     [_HQ-SRV]='Альт Сервер 10.1'
     [HQ-SRV]='
         config_template = Alt-Server_10.1
         startup = order=3,up=8,down=30
-        network1 = {bridge="🖧: SRV-Net", tag=100}
+        network1 = {bridge="🖧: HQ-Net", tag=100}
     '
     [_HQ-CLI]='Альт Рабочая Станция 10.1'
     [HQ-CLI]='
         config_template = Alt-Workstation_10.1
         startup = order=4,up=8,down=30
-        network1 = {bridge="🖧: CLI-Net", tag=200}
+        network1 = {bridge="🖧: HQ-Net", tag=200}
     '
     [_BR-RTR]='EcoRouterOS'
     [BR-RTR]='
@@ -312,15 +312,15 @@ function get_val_print() {
 }
 
 function echo_err() {
-    echo "$c_error$@$c_null" >/dev/tty
+    echo "$c_error$@$c_null" >> /dev/tty
 }
 
 function echo_warn() {
-    echo "$c_warning$@$c_null" >/dev/tty
+    echo "$c_warning$@$c_null" >> /dev/tty
 }
 
 function echo_info() {
-    echo "$c_info$@$c_null" >/dev/tty
+    echo "$c_info$@$c_null" >> /dev/tty
 }
 
 function read_question_select() {
@@ -373,8 +373,19 @@ function invert_bool() {
   [[ "$1" == false ]] && echo true || echo false
 }
 
+function indexOf() {
+    [[ "$1" == '' || "$2" == '' ]] && exit
+    local -n ref_search_arr=$1
+    for i in "${!ref_search_arr[@]}"; do
+        if [[ "${ref_search_arr[$i]}" = "$2" ]]; then
+            echo "$i"
+            return
+        fi
+    done
+}
+
 function parse_noborder_table() {
-    [[ "$1" == '' || "$2" == '' ]] && echo exit
+    [[ "$1" == '' || "$2" == '' ]] && exit
     local _cmd="$1 --output-format text --noborder"
     local -n ref_dict_table=$2
     shift && shift
@@ -1120,20 +1131,20 @@ function run_cmd() {
     [[ "$1" == '' ]] && echo_err 'Ошибка: run_cmd нет команды'
 
     local cmd_exec="$@"
-    $opt_dry_run && echo "$c_warningВыполнение команды$c_null: $cmd_exec"
+    $opt_dry_run && echo "$c_warningВыполнение команды$c_null: $cmd_exec" >> /dev/tty
 
     ! $opt_dry_run && {
         local return_cmd=''
         if return_cmd=$( eval $cmd_exec 2>&1 ); then
-            $opt_verbose && echo "$c_greenВыполнена команда$c_null: $c_cyan$cmd_exec$c_null"
+            $opt_verbose && echo "$c_greenВыполнена команда$c_null: $c_cyan$cmd_exec$c_null" >> /dev/tty
         else
             ! $to_exit && {
-                $opt_verbose && echo "$c_yellowВыполнена команда$c_null: $c_cyan$cmd_exec$c_null"
-                echo "${c_red}Error output: $c_warning$return_cmd$c_null"
+                $opt_verbose && echo "$c_yellowВыполнена команда$c_null: $c_cyan$cmd_exec$c_null" >> /dev/tty
+                echo "${c_red}Error output: $c_warning$return_cmd$c_null" >> /dev/tty
                 return 1
             }
             echo_err "Ошибка выполнения команды: $cmd_exec"
-            echo "${c_red}Error output: $c_warning$return_cmd$c_null"
+            echo "${c_red}Error output: $c_warning$return_cmd$c_null" >> /dev/tty
             exit 1
         fi
     }
@@ -1147,69 +1158,96 @@ function deploy_stand_config() {
         [[ "$1" == 'test' ]] && { [[ "$netifs_type" =~ ^(e1000|e1000-82540em|e1000-82544gc|e1000-82545em|e1000e|i82551|i82557b|i82559er|ne2k_isa|ne2k_pci|pcnet|rtl8139|virtio|vmxnet3)$ ]] && return 0; echo_err "Ошибка: указаный в конфигурации модель сетевого интерфейса '$netifs_type' не является корректным [e1000|e1000-82540em|e1000-82544gc|e1000-82545em|e1000e|i82551|i82557b|i82559er|ne2k_isa|ne2k_pci|pcnet|rtl8139|virtio|vmxnet3]"; exit 1; }
 
         [[ ! "$1" =~ ^network([0-9]+)$ ]] && { echo_err "Ошибка: опция конфигурации ВМ network некорректна '$1'"; exit 1; }
-        local if_num=${BASH_REMATCH[1]} if_config="$2" if_desc="$2" create_if=false if_options='' slaves=() slaves_str='' vlan_aware_str=''
-
-        if [[ "$if_config" =~ ^\{\ *bridge\ *=\ *([0-9\.a-z]+|\"((\\\"|[^\"])+)\")\ *(,.*)?\}$ ]]; then
-            if_bridge=${BASH_REMATCH[1]}
-            if_desc="${BASH_REMATCH[2]/\\\"/\"}"
-            if_config="${BASH_REMATCH[4]}"
-            [[ "$if_config" =~ ^.*,\ *state\ *=\ *down\ *($|,.+$) ]] && if_options+=',link_down=1'
-            [[ "$if_config" =~ ^.*,\ *tag\ *=\ *([1-9][0-9]{0,2}|[1-3][0-9]{3}|40([0-8][0-9]|9[0-4]))\ *($|,.+$) ]] && if_options+=",tag=${BASH_REMATCH[1]}" && vlan_aware_str=" --bridge_vlan_aware 'true'"
-            [[ "$if_config" =~ , *slave *= *\"([^\"]+)\" ]] && slaves=("${BASH_REMATCH[@]:1}") && slaves_str=" --slaves '"
-            [[ "$if_desc" == "" ]] && if_config="$if_bridge" && if_desc="{bridge=$if_bridge}" || if_config=""
-        elif [[ "$if_desc" =~ ^\{.*\}$ ]]; then 
-                echo_err "Ошибка: некорректное значение подстановки настройки '$1 = $2' для ВМ '$elem'"
-                exit 1
-        else
-                if_config=""
-        fi
-
+    
         function add_bridge() {
-            if_desc="$1"
+            local iface="$1" if_desc="$2" if_options="$3" special
+            [[ "$4" == "" ]] && not_special=true || not_special=false
             if [[ "$iface" == "" ]]; then
                 create_if=true
                 for i in ${!vmbr_ids[@]}; do
                     [[ -v "Networking[vmbr${vmbr_ids[$i]}]" ]] && continue
-                    echo "$pve_net_ifs" | grep -Fxq -- "vmbr${vmbr_ids[$i]}" || { local set_id=${vmbr_ids[$i]}; unset 'vmbr_ids[$i]'; break; }
+                    echo "$pve_net_ifs" | grep -Fxq -- "vmbr${vmbr_ids[$i]}" || { iface="vmbr${vmbr_ids[$i]}"; unset 'vmbr_ids[$i]'; break; }
                 done
-                iface="vmbr$set_id"
             fi
+
             Networking["$iface"]="$if_desc"
-            cmd_line+=" --net$if_num '${netifs_type:-virtio},bridge=$iface$if_options'"
+            $not_special && cmd_line+=" --net$if_num '${netifs_type:-virtio},bridge=$iface$net_options'"
 
             if_desc=${if_desc/\{0\}/$stand_num}
-            $create_if && ($opt_verbose || $opt_dry_run) && echo "Добавление сети vmbr$set_id : '$if_desc'"
-            $create_if && { run_cmd /noexit "pvesh create '/nodes/$(hostname)/network' --iface '$iface' --type 'bridge' --autostart 'true' --comments '$if_desc'$slaves_str$vlan_aware_str" \
+            $create_if && ($opt_verbose || $opt_dry_run) && echo_info "Добавление сети $iface : '$if_desc'"
+            $create_if && { run_cmd /noexit "pvesh create '/nodes/$(hostname)/network' --iface '$iface' --type 'bridge' --autostart 'true' --comments '$if_desc'$if_options" \
                     || { read -n 1 -p "Интерфейс '$iface' ($if_desc) уже существует! Выход"; exit 1 ;} }
 
-            $create_access_network && ${config_base[access_create]} && { run_cmd /noexit "pveum acl modify '/sdn/zones/localnetwork/$iface' --users '$username' --roles 'PVEAuditor'" || { echo_err "Не удалось создать ACL правило для сетевого интерфейса '$iface' и пользователя '$username'"; exit 1; } }
+            $not_special && $create_access_network && ${config_base[access_create]} && { run_cmd /noexit "pveum acl modify '/sdn/zones/localnetwork/$iface' --users '$username' --roles 'PVEAuditor'" || { echo_err "Не удалось создать ACL правило для сетевого интерфейса '$iface' и пользователя '$username'"; exit 1; } }
             
+            ! $not_special && echo "$iface"
         }
-        for slave in "${slaves[@]}"; do
-            printf '%s\0' "${Networking[@]}" | grep -Fxz -- "$slave" || add_bridge "$slave"
-        done
+
+        function get_host_if() {
+            local iface="$1"
+            if [[ "$iface" == inet ]]; then
+                iface="${config_base[inet_bridge]}"
+            elif [[ "$iface" != "" ]]; then
+                iface="$if_config"
+                echo "$pve_net_ifs" | grep -Fxq -- "$iface" || {
+                    echo_err "Ошибка: указанный статически в конфигурации bridge интерфейс '$iface' не найден"
+                    exit 1
+                }
+            fi
+            echo $iface
+        }
+
+        local if_num=${BASH_REMATCH[1]} if_config="$2" if_desc="$2" create_if=false net_options='' master='' if_options='' iface=''
+
+        if [[ "$if_config" =~ ^\{\ *bridge\ *=\ *([0-9\.a-z]+|\"\ *((\\\"|[^\"])+)\")\ *(,.*)?\}$ ]]; then
+            if_bridge="${BASH_REMATCH[1]/\\\"/\"}"
+            if_desc="${BASH_REMATCH[2]/\\\"/\"}"
+            if_config="${BASH_REMATCH[4]}"
+            [[ "$if_config" =~ ^.*,\ *state\ *=\ *down\ *($|,.+$) ]] && net_options+=',link_down=1'
+            if [[ "$if_config" =~ ^.*,\ *tag\ *=\ *([1-9][0-9]{0,2}|[1-3][0-9]{3}|40([0-8][0-9]|9[0-4]))\ *($|,.+$) ]]; then
+                local tag="${BASH_REMATCH[1]}"
+                if [[ "$if_config" =~ ^.*,\ *master\ *=\ *([0-9\.a-z]+|\"\ *((\\\"|[^\"])+)\")\ *($|,.+$) ]]; then
+                    local master_desc='' master_if=''
+                    master="${BASH_REMATCH[2]/\\\"/\"}"
+                    master_desc="$master"
+                    [[ "$master" == "" ]] && master_desc="${BASH_REMATCH[1]}" && master="{bridge=$master_desc}" && master_if=$( get_host_if "${BASH_REMATCH[1]}" )
+                    master_if=$( indexOf Networking "$master" )
+                    [[ "$master_if" == "" ]] && master_if=$( add_bridge "$master_if" "$master" '' 1 )
+                    if [[ -v "Networking[${master_if}.$tag]" && "${Networking[${master_if}.$tag]}" != "{vlan=$if_bridge}" ]]; then
+                        echo_err "Ошибка конфигурации: повторная попытка создать VLAN интерфейс для связки с другим Bridge"; exit 1
+                    elif [[ ! -v "Networking[$master_if.$tag]" ]]; then
+                        [[ "$if_desc" == "" ]] && if_desc="$if_bridge"
+                        ($opt_verbose || $opt_dry_run) && echo_info "Добавление VLAN $master_if.$tag : '$master_desc => $if_desc'"
+                        run_cmd /noexit "pvesh create '/nodes/$(hostname)/network' --iface '$master_if.$tag' --type 'vlan' --autostart 'true' --comments '$master_desc => $if_desc'" \
+                            || { read -n 1 -p "Интерфейс '$iface' ($if_desc) уже существует! Выход"; exit 1 ;}
+                        Networking["${master_if}.$tag"]="{vlan=$if_bridge}"
+                    fi
+                    if_options=" --slaves '$master_if.$tag'"
+                else
+                    if_options=" --bridge_vlan_aware 'true'"
+                    net_options+=",tag=$tag"
+                fi
+            elif [[ "$if_config" =~ ^.*,\ *master\ *=\ *([0-9\.a-z]+|\"((\\\"|[^\"])+)\")\ *($|,.+$) ]]; then
+                echo_err "Ошибка конфигурации: интерфейс '$2': объявлен master интерфейс, но не объявлен vlan tag"; exit 1
+            fi
+            [[ "$if_desc" == "" ]] && if_config="$if_bridge" && if_desc="{bridge=$if_bridge}" || if_config=""
+        elif [[ "$if_desc" =~ ^\{.*\}$ ]]; then 
+            echo_err "Ошибка: некорректное значение подстановки настройки '$1 = $2' для ВМ '$elem'"
+            exit 1
+        else
+            if_config=""
+        fi
 
         for net in "${!Networking[@]}"; do
-            [[ "$slaves_str" != "" ]] && printf '%s\0' "${slaves[@]}" | grep -Fxz -- "${Networking["$net"]}" && slaves_str+="$net "
             [[ "${Networking["$net"]}" != "$if_desc" ]] && continue
-            cmd_line+=" --net$if_num '${netifs_type:-virtio},bridge=$net$if_options'"
-            [[ "$vlan_aware_str" != '' ]] && run_cmd "pvesh set '/nodes/$(hostname)/network' --iface '$iface'$vlan_aware_str"
+            cmd_line+=" --net$if_num '${netifs_type:-virtio},bridge=$net$net_options'"
+            [[ "$if_options" != '' ]] && run_cmd "pvesh set '/nodes/$(hostname)/network' --iface '$net'$if_options"
             return 0
         done
-        [[ "$slaves_str" != "" ]] && slaves_str="${slaves_str::-1}'"
 
-        local iface=''
-        if [[ "$if_config" == inet ]]; then
-            iface="${config_base[inet_bridge]}"
-        elif [[ "$if_config" != "" ]]; then
-            iface="$if_config"
-            echo "$pve_net_ifs" | grep -Fxq -- "$iface" || {
-                echo_err "Ошибка: указанный статически в конфигурации bridge интерфейс '$iface' не найден"
-                exit 1
-            }
-        fi
+        iface=$( get_host_if "$if_config" )
         
-        add_bridge $iface $if_desc
+        add_bridge "$iface" "$if_desc" "$if_options"
         return 0
 
     }
