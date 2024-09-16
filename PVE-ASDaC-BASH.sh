@@ -1246,7 +1246,7 @@ function deploy_stand_config() {
         for net in "${!Networking[@]}"; do
             [[ "${Networking["$net"]}" != "$if_desc" ]] && continue
             cmd_line+=" --net$if_num '${netifs_type:-virtio},bridge=$net$net_options'"
-            [[ "$if_options" != '' ]] && run_cmd "pvesh set '/nodes/$(hostname)/network/$net' $if_options"
+            [[ "$if_options" != '' ]] && run_cmd "pvesh set '/nodes/$(hostname)/network/$net' --type 'bridge'$if_options"
             return 0
         done
 
