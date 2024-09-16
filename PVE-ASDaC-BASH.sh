@@ -1611,20 +1611,20 @@ function manage_stands() {
     done
 
     echo $'\nУправление конфигурацией:'
-    echo '  1. Включение учетных записей'
-    echo '  2. Отключение учетных записей'
-    echo '  3. Установка паролей для учетных записей'
-    echo '  4. Создать снапшот с начальным состоянием ВМ: "Start"'
-    echo '  5. Откатить виртуальные машины до начального снапшота: "Start"'
-    echo '  6. Удалить снапшот: "Start"'
-    echo '  7. Создать снапшот ВМ с результатом выполнения: "End"'
-    echo '  8. Откатить виртуальные машины до снапшота: "End"'
-    echo '  9. Удалить снапшот: "End"'
+    echo '  1.  Включение учетных записей'
+    echo '  2.  Отключение учетных записей'
+    echo '  3.  Установка паролей для учетных записей'
+    echo '  4.  Создать снапшот с начальным состоянием ВМ: "Start"'
+    echo '  5.  Откатить виртуальные машины до начального снапшота: "Start"'
+    echo '  6.  Удалить снапшот: "Start"'
+    echo '  7.  Создать снапшот ВМ с результатом выполнения: "End"'
+    echo '  8.  Откатить виртуальные машины до снапшота: "End"'
+    echo '  9.  Удалить снапшот: "End"'
     echo '  10. Удаление стендов'
-    local switch=$(read_question_select $'\nВыберите действие' '^([1-9]{1,2}|)$' 1 10)
+    local switch=$( read_question_select $'\nВыберите действие' '^([0-9]{1,2}|)$' 1 10 )
 
-    [[ "$switch" = '' ]] && switch=$(read_question_select $'\nВыберите действие' '^([1-5]|)$' ) && [[ "$switch" = '' ]] && return 0
-    if [[ $switch =~ [1-3] ]]; then
+    [[ "$switch" = '' ]] && switch=$( read_question_select $'\nВыберите действие' '^([0-9]{1,2}|)$' 1 10 ) && [[ "$switch" = '' ]] && return 0
+    if [[ $switch =~ ^[1-3]$ ]]; then
         local user_name enable state usr_range='' usr_count=$(echo -n "${user_list[$group_name]}" | grep -c '^') usr_list=${user_list[$group_name]}
 
         [[ "$usr_count" == 0 ]] && echo_err "Ошибка: пользователи стендов '$group_name' не найдены. Выход" && exit 1
@@ -1654,7 +1654,7 @@ function manage_stands() {
         for ((i=1; i<=$(echo -n "${user_list[$group_name]}" | grep -c '^'); i++)); do
             user_name=$(echo "${user_list[$group_name]}" | sed -n "${i}p" )
             [[ $switch != 3 ]] && {
-                [[ $switch == 1 ]] && { enable=true;state="$c_lgreenвключен"; }; [[ $switch == 2 ]] && { enable=false; state="$c_lredвыключен"; }
+                [[ $switch == 1 ]] && { enable=true;state="${c_lgreen}включен"; }; [[ $switch == 2 ]] && { enable=false; state="${c_lred}выключен"; }
                 run_cmd /noexit "pveum user modify '$user_name' --enable '$enable'" || { echo_err "Ошибка: не удалось изменить enable для пользователя '$user_name'"; }
                 echo "$user_name : $state$c_null";
                 continue
@@ -1727,7 +1727,7 @@ function manage_stands() {
 
     local regex='\s*\"{opt_name}\"\s*:\s*(\K[0-9]+|\"\K(?(?=\\").{2}|[^"])+)'
 
-    if [[ $switch -ge 4 || $switch -le 9 ]]; then
+    if [[ $switch -ge 4 && $switch -le 9 ]]; then
         read_question $'\nВы действительно хотите продолжить?' || exit 0
         local vmid pool_info vmid_list vmname_list status name cmd_str
         for ((i=1; i<=$( echo -n "${pool_list[$group_name]}" | grep -c '^' ); i++)); do
@@ -1749,7 +1749,7 @@ function manage_stands() {
                     8) cmd_str="qm rollback '$vmid' 'End' 2>&1";;
                     9) cmd_str="qm delsnapshot '$vmid' 'End' 2>&1";;
                 esac
-                status=$( run_cmd /noexit "qm rollback '$vmid' 'Start' 2>&1" ) && {
+                status=$( run_cmd /noexit "$cmd_str" ) && {
                     echo "[${c_green}Выполнено$c_null]: стенд ${c_value}$pool_name$c_null машина ${c_lgreen}$name$c_null (${c_lcyan}$vmid$c_null)"
                     continue
                 }
@@ -1798,24 +1798,29 @@ function manage_stands() {
                     ifname=$( echo "$vm_netifs" | sed -n "${k}p" )
                     echo "$deny_ifaces" | grep -Pq '(?<=^| )'$ifname'(?=$| )' && continue
                     run_cmd /noexit "( pvesh delete '/nodes/$(hostname)/network/$ifname'       2>&1;echo) | grep -Pq '(^$|interface does not exist$)'" \
+                        && echo "[${c_green}Выполнено$c_null]: стенд ${c_value}$pool_name$c_null: удален сетевой интерфейс ${c_lgreen}$ifname$c_null" \
                         || { echo_err "Ошибка: не удалось удалить сетевой интерфейс '$ifname'"; exit 1; }
                     deny_ifaces+=" $ifname"
                     restart_network=true
                 done
 
                 run_cmd /noexit "( qm destroy '$vmid' --skiplock 'true' --purge 'true' 2>&1;echo) | grep -Pq '(^$|does not exist$)'" \
+                    && echo "[${c_green}Выполнено$c_null]: стенд ${c_value}$pool_name$c_null: удалена машина ${c_lgreen}$name$c_null (${c_lcyan}$vmid$c_null)" \
                     || { echo_err "Ошибка: не удалось удалить ВМ '$vmid' стенда '$pool_name'"; exit 1; }
             done
 
             run_cmd /noexit "( pveum pool modify '$pool_name' --delete 'true' --storage '"$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/storage}" )"' 2>&1;echo) | grep -Pq '(^$|is not a pool member$)'" \
                 || { echo_err "Ошибка: не удалось удалить привязку хранилищ от пула стенда '$pool_name'"; exit 1; }
             run_cmd /noexit "( pveum pool delete '$pool_name' 2>&1;echo) | grep -Pq '(^$|does not exist$)'" \
+                    && echo "[${c_green}Выполнено$c_null]: стенд ${c_value}$pool_name$c_null: пул удален" \
                     || { echo_err "Ошибка: не удалось удалить пул стенда '$pool_name'"; exit 1; }
         done
 
         for ((i=1; i<=$( echo -n "${user_list[$group_name]}" | grep -c '^' ); i++)); do
             user_name=$( echo "${user_list[$group_name]}" | sed -n "${i}p" )
-            run_cmd /noexit "pveum user delete '$user_name'" || { echo_err "Ошибка: не удалось удалить пользователя '$user_name' стенда '$pool_name'"; exit 1; }
+            run_cmd /noexit "pveum user delete '$user_name'" \
+                && echo "[${c_green}Выполнено$c_null]: пользователь ${c_value}$user_name$c_null удален" \
+                || { echo_err "Ошибка: не удалось удалить пользователя '$user_name' стенда '$pool_name'"; exit 1; }
         done
 
         local roles_list_after list_roles
@@ -1823,16 +1828,16 @@ function manage_stands() {
         for role in $( echo "${acl_list[roleid]}" | sort -u ); do
             echo "$roles_list_after" | grep -Fxq "$role" || {
                 [[ "$list_roles" == '' ]] && { list_roles=$( pveum role list --output-format yaml | grep -v - | grep -Po '^\s*(roleid|special)\s*:\s*\K.*' ) || exit 1; }
-                echo "$list_roles" | grep -Pzq '(^|\n)'$role'\n0' && run_cmd "pveum role delete '$role'"
+                echo "$list_roles" | grep -Pzq '(^|\n)'$role'\n0' && run_cmd "pveum role delete '$role'" && echo "[${c_green}Выполнено$c_null]: роль ${c_value}$role$c_null удалена"
             }
         done
 
-        [[ "$del_all" == true ]] && run_cmd "pveum group delete '$group_name'"
+        [[ "$del_all" == true ]] && run_cmd "pveum group delete '$group_name'" && echo "[${c_green}Выполнено$c_null]: группа стенда ${c_value}$group_name$c_null удалена"
 
-        $restart_network && run_cmd "pvesh set '/nodes/$(hostname)/network'"
+        $restart_network && run_cmd "pvesh set '/nodes/$(hostname)/network'" && echo "[${c_green}Выполнено$c_null]: рестарт сети"
     fi
 
-    echo $'\n'"$c_lgreenНастройка завершена.$c_null Выход"
+    echo $'\n'"$c_lgreenНастройка завершена.$c_null"
 }
 
 
