@@ -183,7 +183,7 @@ declare -A config_stand_1_var=(
         config_template = EcoRouterOS
         startup = order=2,up=8,down=1
         network1 = 🖧: ISP-HQ
-        network2 = 🖧: HQ-Net
+        network2 = {bridge="🖧: HQ-Net", trunks=100;200;999 }
     '
     [_HQ-SRV]='Альт Сервер 10.1'
     [HQ-SRV]='
@@ -236,7 +236,7 @@ declare -A config_stand_2_var=(
         config_template = EcoRouterOS
         startup = order=2,up=8,down=1
         network1 = 🖧: ISP-HQ
-        network2 = 🖧: HQ-Net
+        network2 = {bridge="🖧: HQ-Net", trunks=100;200;999 }
         boot_disk0 = https://disk.yandex.ru/d/31yfM0_qNhTTkw/HQ-RTR_DE39-2025_M2.qcow2
     '
     [_HQ-SRV]='Альт Сервер 10.1'
@@ -1204,6 +1204,7 @@ function deploy_stand_config() {
             if_desc="${BASH_REMATCH[2]/\\\"/\"}"
             if_config="${BASH_REMATCH[4]}"
             [[ "$if_config" =~ ^.*,\ *state\ *=\ *down\ *($|,.+$) ]] && net_options+=',link_down=1'
+            [[ "$if_config" =~ ^.*,\ *trunks\ *=\ *([0-9\;]+)\ *($|,.+$) ]] && net_options+=",trunks=${BASH_REMATCH[1]}"
             if [[ "$if_config" =~ ^.*,\ *tag\ *=\ *([1-9][0-9]{0,2}|[1-3][0-9]{3}|40([0-8][0-9]|9[0-4]))\ *($|,.+$) ]]; then
                 local tag="${BASH_REMATCH[1]}"
                 if [[ "$if_config" =~ ^.*,\ *master\ *=\ *([0-9\.a-z]+|\"\ *((\\\"|[^\"])+)\")\ *($|,.+$) ]]; then
