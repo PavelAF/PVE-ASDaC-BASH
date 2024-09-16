@@ -229,7 +229,7 @@ declare -A config_stand_2_var=(
         network1 = { bridge=inet }
         network2 = 🖧: ISP-HQ
         network3 = 🖧: ISP-BR
-        boot_disk0 = https://disk.yandex.ru/d/31yfM0_qNhTTkw/ISP_DE39-2025_M2.qcow2
+        boot_disk0 = https://disk.yandex.ru/d/31yfM0_qNhTTkw/DE39-2025_M2/ISP_DE39-2025_M2.qcow2
     '
     [_HQ-RTR]='EcoRouterOS'
     [HQ-RTR]='
@@ -237,19 +237,24 @@ declare -A config_stand_2_var=(
         startup = order=2,up=8,down=1
         network1 = 🖧: ISP-HQ
         network2 = {bridge="🖧: HQ-Net", trunks=100;200;999 }
-        boot_disk0 = https://disk.yandex.ru/d/31yfM0_qNhTTkw/HQ-RTR_DE39-2025_M2.qcow2
+        boot_disk0 = https://disk.yandex.ru/d/31yfM0_qNhTTkw/DE39-2025_M2/HQ-RTR_DE39-2025_M2.qcow2
     '
     [_HQ-SRV]='Альт Сервер 10.1'
     [HQ-SRV]='
         config_template = Alt-Server_10.1
         startup = order=3,up=8,down=30
         network1 = {bridge="🖧: HQ-Net", tag=100}
+        disk1 = 1GB
+        disk2 = 1GB
+        disk3 = 1GB
+        boot_disk0 = https://disk.yandex.ru/d/31yfM0_qNhTTkw/DE39-2025_M2/HQ-SRV_DE39-2025_M2.qcow2
     '
     [_HQ-CLI]='Альт Рабочая Станция 10.1'
     [HQ-CLI]='
         config_template = Alt-Workstation_10.1
         startup = order=4,up=8,down=30
         network1 = {bridge="🖧: HQ-Net", tag=200}
+        boot_disk0 = https://disk.yandex.ru/d/31yfM0_qNhTTkw/DE39-2025_M2/HQ-CLI_DE39-2025_M2.qcow2
     '
     [_BR-RTR]='EcoRouterOS'
     [BR-RTR]='
@@ -257,13 +262,14 @@ declare -A config_stand_2_var=(
         startup = order=2,up=8,down=1
         network1 = 🖧: ISP-BR
         network2 = 🖧: BR-Net
-        boot_disk0 = https://disk.yandex.ru/d/31yfM0_qNhTTkw/BR-RTR_DE39-2025_M2.qcow2
+        boot_disk0 = https://disk.yandex.ru/d/31yfM0_qNhTTkw/DE39-2025_M2/BR-RTR_DE39-2025_M2.qcow2
     '
     [_BR-SRV]='Альт Сервер 10.1'
     [BR-SRV]='
         config_template = Alt-Server_10.1
         startup = order=3,up=8,down=30
         network1 = 🖧: BR-Net
+        boot_disk0 = https://disk.yandex.ru/d/31yfM0_qNhTTkw/DE39-2025_M2/BR-SRV_DE39-2025_M2.qcow2
     '
 )
 ########################## -= Конец конфигурации =- ##########################
@@ -1204,8 +1210,9 @@ function deploy_stand_config() {
             if_desc="${BASH_REMATCH[2]/\\\"/\"}"
             if_config="${BASH_REMATCH[4]}"
             [[ "$if_config" =~ ^.*,\ *state\ *=\ *down\ *($|,.+$) ]] && net_options+=',link_down=1'
-            [[ "$if_config" =~ ^.*,\ *trunks\ *=\ *([0-9\;]*[0-9])\ *($|,.+$) ]] && net_options+=",trunks=${BASH_REMATCH[1]}"
-            if [[ "$if_config" =~ ^.*,\ *tag\ *=\ *([1-9][0-9]{0,2}|[1-3][0-9]{3}|40([0-8][0-9]|9[0-4]))\ *($|,.+$) ]]; then
+            [[ "$if_config" =~ ^.*,\ *trunks\ *=\ *([0-9\;]*[0-9])\ *($|,.+$) ]] && net_options+=",trunks=${BASH_REMATCH[1]}" && if_options=" --bridge_vlan_aware 'true'"
+            [[ "$if_config" =~ ^.*,\ *tag\ *=\ *([1-9][0-9]{0,2}|[1-3][0-9]{3}|40([0-8][0-9]|9[0-4]))\ *($|,.+$) ]] && net_options+=",tag=${BASH_REMATCH[1]}" && if_options=" --bridge_vlan_aware 'true'"
+            if [[ "$if_config" =~ ^.*,\ *vtag\ *=\ *([1-9][0-9]{0,2}|[1-3][0-9]{3}|40([0-8][0-9]|9[0-4]))\ *($|,.+$) ]]; then
                 local tag="${BASH_REMATCH[1]}"
                 if [[ "$if_config" =~ ^.*,\ *master\ *=\ *([0-9\.a-z]+|\"\ *((\\\"|[^\"])+)\")\ *($|,.+$) ]]; then
                     local master_desc='' master_if=''
@@ -1223,10 +1230,7 @@ function deploy_stand_config() {
                             || { read -n 1 -p "Интерфейс '$iface' ($if_desc) уже существует! Выход"; exit 1 ;}
                         Networking["${master_if}.$tag"]="{vlan=$if_bridge}"
                     fi
-                    if_options=" --slaves '$master_if.$tag'"
-                else
-                    if_options=" --bridge_vlan_aware 'true'"
-                    net_options+=",tag=$tag"
+                    if_options+=" --slaves '$master_if.$tag'"
                 fi
             elif [[ "$if_config" =~ ^.*,\ *master\ *=\ *([0-9\.a-z]+|\"((\\\"|[^\"])+)\")\ *($|,.+$) ]]; then
                 echo_err "Ошибка конфигурации: интерфейс '$2': объявлен master интерфейс, но не объявлен vlan tag"; exit 1
