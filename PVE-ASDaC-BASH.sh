@@ -1204,7 +1204,7 @@ function deploy_stand_config() {
             if_desc="${BASH_REMATCH[2]/\\\"/\"}"
             if_config="${BASH_REMATCH[4]}"
             [[ "$if_config" =~ ^.*,\ *state\ *=\ *down\ *($|,.+$) ]] && net_options+=',link_down=1'
-            [[ "$if_config" =~ ^.*,\ *trunks\ *=\ *([0-9\;]+)\ *($|,.+$) ]] && net_options+=",trunks=${BASH_REMATCH[1]}"
+            [[ "$if_config" =~ ^.*,\ *trunks\ *=\ *([0-9\;]*[0-9])\ *($|,.+$) ]] && net_options+=",trunks=${BASH_REMATCH[1]}"
             if [[ "$if_config" =~ ^.*,\ *tag\ *=\ *([1-9][0-9]{0,2}|[1-3][0-9]{3}|40([0-8][0-9]|9[0-4]))\ *($|,.+$) ]]; then
                 local tag="${BASH_REMATCH[1]}"
                 if [[ "$if_config" =~ ^.*,\ *master\ *=\ *([0-9\.a-z]+|\"\ *((\\\"|[^\"])+)\")\ *($|,.+$) ]]; then
