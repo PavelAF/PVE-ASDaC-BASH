@@ -376,42 +376,57 @@ function isdict_var_check() {
 }
 
 function invert_bool() {
-  [[ "$1" == false ]] && echo true || echo false
+  [[ "$1" == false ]] && echo -n true || echo -n false
 }
 
 function indexOf() {
-    [[ "$1" == '' || "$2" == '' ]] && exit
+    [[ "$1" == '' || "$2" == '' ]] && exit 1
     local -n ref_search_arr=$1
     for i in "${!ref_search_arr[@]}"; do
         if [[ "${ref_search_arr[$i]}" = "$2" ]]; then
-            echo "$i"
+            echo -n "$i"
             return
         fi
     done
 }
 
+function indexOfLine() {
+    [[ "$1" == '' || "$2" == '' ]] && exit 1
+    echo -n "$1" | awk -v str="$2" '$0==str{printf NR;exit}'
+}
+
+function get_table_val() {
+    [[ "$1" == '' || "$2" == ''  || "$3" == '' ]] && exit 1
+    local -n ref_search_arr=$1
+    local var="${2%=*}" value="${2#*=}" index
+    ! [[ -v ref_search_arr[$var] && -v ref_search_arr[$3] ]] && return 1
+    index=$( echo -n "${ref_search_arr[$var]}" | awk -v str="$value" '$0==str{printf NR;exit}' )
+    [[ "$index" -le 0 ]] && return 1
+    echo -n "${ref_search_arr[$3]}" | sed -n "${index}p"
+}
+
 function parse_noborder_table() {
-    [[ "$1" == '' || "$2" == '' ]] && exit
+    [[ "$1" == '' || "$2" == '' ]] && exit 1
     local _cmd="$1 --output-format text --noborder"
     local -n ref_dict_table=$2
     shift && shift
     local _table=$(eval "$_cmd") || { echo "Ошибка: не удалось выполнить команду $_cmd"; exit 1; }
-
+	
     local _index=0 _header='' _name='' _column='' i=0
-    while [[ "$(echo $_table)" != '' ]]; do
+    while [[ "$(echo -n $_table)" != '' ]]; do
+		
         _header=$(echo "$_table" | sed -n '1p')
-        _index=$(echo "$_header" | grep -Pio '^[a-z\_]+\ *' | wc -m)
+        _index=$(echo "$_header" | grep -Po '^\S+\ *' | wc -m)
         [[ "$_index" == 0 ]] && break
-        _name=$(echo "$_header" | grep -Pio '^[a-z\_]+')
-        if echo "$_header" | grep -Piq '^[a-z\_]+(?=\ +[a-z\_])';
+        _name=$(echo "$_header" | grep -Po '^\S+')
+        if echo "$_header" | grep -Piq '^\S+(?=\ +\S)';
         then
             ((_index-=2))
-            _column=$( echo -n "$_table" | sed -n '1!p' | grep -Po '^.{'$_index'}' | sed 's/ *$//'; echo -n "x")
+            _column=$( echo -n "$_table" | sed -n '1!p' | grep -Po '^.{'$_index'}' | sed 's/ *$//'; printf x)
             _column="${_column::-2}"
-            _table=$( echo -n "$_table" | sed 's/^.\{'$((++_index))'\}//'; echo -n "x")
-            _table="${_table::-1}"
+            _table=$( echo -n "$_table" | sed 's/^.\{'$((++_index))'\}//')
         else
-            _column=$( echo -n "$_table" | sed -n '1!p' | sed 's/ *$//'; echo -n "x")
+            _column=$( echo -n "$_table" | sed -n '1!p' | sed 's/ *$//'; printf x)
             _column="${_column::-1}"
             _table=''
         fi
@@ -1120,7 +1135,7 @@ function get_dict_value() {
     while [[ "$1" != '' ]]; do
         [[ "$1" =~ ^[a-zA-Z\_][0-9a-zA-Z\_]{0,32}(\[[a-zA-Z\_][[0-9a-zA-Z\_]{0,32}\])?\=[a-zA-Z\_]+$ ]] || { echo_err "Ошибка get_dict_value: некорректый аргумент '$1'"; exit 1; }
         local -n ref_var="${1%=*}"
-        opt_name="${1#*=}"
+        local opt_name="${1#*=}"
         for opt in ${!dict[@]}; do
             [[ "$opt" == "$opt_name" ]] && ref_var=${dict[$opt]} && break
         done
@@ -1166,7 +1181,7 @@ function deploy_stand_config() {
         [[ ! "$1" =~ ^network([0-9]+)$ ]] && { echo_err "Ошибка: опция конфигурации ВМ network некорректна '$1'"; exit 1; }
     
         function add_bridge() {
-            local iface="$1" if_desc="$2" if_options="$3" special
+            local iface="$1" if_desc="$2" special
             [[ "$4" == "" ]] && not_special=true || not_special=false
             if [[ "$iface" == "" ]]; then
                 create_if=true
@@ -1181,7 +1196,7 @@ function deploy_stand_config() {
 
             if_desc=${if_desc/\{0\}/$stand_num}
             $create_if && ($opt_verbose || $opt_dry_run) && echo_info "Добавление сети $iface : '$if_desc'"
-            $create_if && { run_cmd /noexit "pvesh create '/nodes/$(hostname)/network' --iface '$iface' --type 'bridge' --autostart 'true' --comments '$if_desc'$if_options" \
+            $create_if && { run_cmd /noexit "pvesh create '/nodes/$(hostname)/network' --iface '$iface' --type 'bridge' --autostart 'true' --comments '$if_desc' --bridge_vlan_aware '$vlan_aware' --slaves '$vlan_slave'" \
                     || { read -n 1 -p "Интерфейс '$iface' ($if_desc) уже существует! Выход"; exit 1 ;} }
 
             $not_special && $create_access_network && ${config_base[access_create]} && { run_cmd /noexit "pveum acl modify '/sdn/zones/localnetwork/$iface' --users '$username' --roles 'PVEAuditor'" || { echo_err "Не удалось создать ACL правило для сетевого интерфейса '$iface' и пользователя '$username'"; exit 1; } }
@@ -1203,15 +1218,15 @@ function deploy_stand_config() {
             echo $iface
         }
 
-        local if_num=${BASH_REMATCH[1]} if_config="$2" if_desc="$2" create_if=false net_options='' master='' if_options='' iface=''
+        local if_num=${BASH_REMATCH[1]} if_config="$2" if_desc="$2" create_if=false net_options='' master='' iface='' vlan_aware='false' vlan_slave=''
 
         if [[ "$if_config" =~ ^\{\ *bridge\ *=\ *([0-9\.a-z]+|\"\ *((\\\"|[^\"])+)\")\ *(,.*)?\}$ ]]; then
             if_bridge="${BASH_REMATCH[1]/\\\"/\"}"
             if_desc="${BASH_REMATCH[2]/\\\"/\"}"
             if_config="${BASH_REMATCH[4]}"
             [[ "$if_config" =~ ^.*,\ *state\ *=\ *down\ *($|,.+$) ]] && net_options+=',link_down=1'
-            [[ "$if_config" =~ ^.*,\ *trunks\ *=\ *([0-9\;]*[0-9])\ *($|,.+$) ]] && net_options+=",trunks=${BASH_REMATCH[1]}" && if_options=" --bridge_vlan_aware 'true'"
-            [[ "$if_config" =~ ^.*,\ *tag\ *=\ *([1-9][0-9]{0,2}|[1-3][0-9]{3}|40([0-8][0-9]|9[0-4]))\ *($|,.+$) ]] && net_options+=",tag=${BASH_REMATCH[1]}" && if_options=" --bridge_vlan_aware 'true'"
+            [[ "$if_config" =~ ^.*,\ *trunks\ *=\ *([0-9\;]*[0-9])\ *($|,.+$) ]] && net_options+=",trunks=${BASH_REMATCH[1]}" && vlan_aware='true'
+            [[ "$if_config" =~ ^.*,\ *tag\ *=\ *([1-9][0-9]{0,2}|[1-3][0-9]{3}|40([0-8][0-9]|9[0-4]))\ *($|,.+$) ]] && net_options+=",tag=${BASH_REMATCH[1]}" && vlan_aware='true'
             if [[ "$if_config" =~ ^.*,\ *vtag\ *=\ *([1-9][0-9]{0,2}|[1-3][0-9]{3}|40([0-8][0-9]|9[0-4]))\ *($|,.+$) ]]; then
                 local tag="${BASH_REMATCH[1]}"
                 if [[ "$if_config" =~ ^.*,\ *master\ *=\ *([0-9\.a-z]+|\"\ *((\\\"|[^\"])+)\")\ *($|,.+$) ]]; then
@@ -1220,7 +1235,7 @@ function deploy_stand_config() {
                     master_desc="$master"
                     [[ "$master" == "" ]] && master_desc="${BASH_REMATCH[1]}" && master="{bridge=$master_desc}" && master_if=$( get_host_if "${BASH_REMATCH[1]}" )
                     master_if=$( indexOf Networking "$master" )
-                    [[ "$master_if" == "" ]] && master_if=$( add_bridge "$master_if" "$master" '' 1 )
+                    [[ "$master_if" == "" ]] && master_if=$( add_bridge "$master_if" "$master" 1 )
                     if [[ -v "Networking[${master_if}.$tag]" && "${Networking[${master_if}.$tag]}" != "{vlan=$if_bridge}" ]]; then
                         echo_err "Ошибка конфигурации: повторная попытка создать VLAN интерфейс для связки с другим Bridge"; exit 1
                     elif [[ ! -v "Networking[$master_if.$tag]" ]]; then
@@ -1230,7 +1245,7 @@ function deploy_stand_config() {
                             || { read -n 1 -p "Интерфейс '$iface' ($if_desc) уже существует! Выход"; exit 1 ;}
                         Networking["${master_if}.$tag"]="{vlan=$if_bridge}"
                     fi
-                    if_options+=" --slaves '$master_if.$tag'"
+                    vlan_slave="$master_if.$tag"
                 fi
             elif [[ "$if_config" =~ ^.*,\ *master\ *=\ *([0-9\.a-z]+|\"((\\\"|[^\"])+)\")\ *($|,.+$) ]]; then
                 echo_err "Ошибка конфигурации: интерфейс '$2': объявлен master интерфейс, но не объявлен vlan tag"; exit 1
@@ -1246,13 +1261,22 @@ function deploy_stand_config() {
         for net in "${!Networking[@]}"; do
             [[ "${Networking["$net"]}" != "$if_desc" ]] && continue
             cmd_line+=" --net$if_num '${netifs_type:-virtio},bridge=$net$net_options'"
-            [[ "$if_options" != '' ]] && run_cmd "pvesh set '/nodes/$(hostname)/network/$net' --type 'bridge'$if_options"
+            [[ "$vlan_slave" != '' || "$vlan_aware" == true ]] && ! [[ "$vlan_slave" != '' && "$vlan_aware" == true ]] && {
+                local port_info = $( pvesh get "/nodes/$(hostname)/network/$net" --output-format yaml )
+                local if_options=''
+                if [[ "$vlan_slave" != '' ]]; then
+                    echo "$port_info" | grep -Pq $'^bridge_vlan_aware: 1$' && if_options="--bridge_vlan_aware 'true'"
+                else
+                    if_options="--slaves '$( echo "$port_info" | grep -Po $'^bridge_ports: \K[^\']+$' )'" || if_options=''
+                fi
+                [[ "$if_options" != '' ]] && run_cmd "pvesh set '/nodes/$(hostname)/network/$net' --type 'bridge' $if_options"
+            }
             return 0
         done
 
         iface=$( get_host_if "$if_config" )
         
-        add_bridge "$iface" "$if_desc" "$if_options"
+        add_bridge "$iface" "$if_desc"
         return 0
 
     }
@@ -1545,8 +1569,9 @@ function install_stands() {
 
     deploy_access_passwd
 
-    echo $'\n'"$c_greenУстановка закочена.$c_null Выход" && exit 0
-
+    echo $'\n'"${c_green}Установка закочена.$c_null Выход" && exit 0
+    
+    configure_imgdir clear
 }
 
 #       pvesh set /cluster/options --tag-style 'color-map=alt_server:ffcc14;alt_workstation:ac58e4,ordering=config,shape=none'
@@ -1768,19 +1793,27 @@ function manage_stands() {
         read_question $'\nВы действительно хотите продолжить?' || exit 0
 
         local -A ifaces_info
-        local pool_info vmid_list vmname_list vmid vm_netifs ifname deny_ifaces bridge_ports k restart_network=false
-        parse_noborder_table 'pvesh get /nodes/$(hostname)/network' ifaces_info iface bridge_ports address address6 || { echo_err "Ошибка: не удалось получить информацию об сетевых интерфейсах"; exit 1; }
+        local pool_info vmid_list vmname_list vmid vm_netifs ifname depend_if if_desc deny_ifaces bridge_ports k restart_network=false
+        parse_noborder_table 'pvesh get /nodes/$(hostname)/network' ifaces_info iface type bridge_ports address address6 bridge_vlan_aware comments vlan-raw-device
 
         for ((i=1; i<=$( echo -n "${ifaces_info[iface]}" | grep -c '^' ); i++)); do
             bridge_ports=$( echo "${ifaces_info[bridge_ports]}" | sed -n "${i}p" )
             ifname=$( echo "${ifaces_info[iface]}" | sed -n "${i}p" )
-            [[ "$bridge_ports" != '' || "$( echo "${ifaces_info[address]}" | sed -n "${i}p" )" != '' \
+            [[ "$bridge_ports" != '' && "$( get_table_val ifaces_info "iface=$bridge_ports" vlan-raw-device )" == '' || "$( echo "${ifaces_info[address]}" | sed -n "${i}p" )" != '' \
                 || "$( echo "${ifaces_info[address6]}" | sed -n "${i}p" )" != '' ]] && {
                     deny_ifaces+=" $ifname $bridge_ports"
             }
         done
         echo
-        unset ifaces_info bridge_ports
+        unset bridge_ports
+        function delete_if {
+            [[ "$1" == '' || "$2" == '' ]] && exit 1
+            local desc; [[ "$3" != '' ]] && desc=" ($3)"
+            run_cmd /noexit "( pvesh delete '/nodes/$(hostname)/network/$2'       2>&1;echo) | grep -Pq '(^$|interface does not exist$)'" \
+                        && echo "[${c_green}Выполнено$c_null]: стенд ${c_value}$1$c_null: удален сетевой интерфейс ${c_lgreen}$2$c_null$desc" \
+                        || { echo_err "Ошибка: не удалось удалить сетевой интерфейс '$2'"; exit 1; }
+            deny_ifaces+=" $2"
+        }
         for ((i=1; i<=$( echo -n "${pool_list[$group_name]}" | grep -c '^' ); i++)); do
             echo
             pool_name=$( echo "${pool_list[$group_name]}" | sed -n "${i}p" )
@@ -1795,12 +1828,12 @@ function manage_stands() {
                 vm_netifs=$( echo "$vm_netifs" | grep -Po '\s*\"net[0-9]+\"\s*:\s*(\".*?bridge=\K\w+)' )
 
                 for ((k=1; k<=$( echo -n "$vm_netifs" | grep -c '^' ); k++)); do
-                    ifname=$( echo "$vm_netifs" | sed -n "${k}p" )
+                    ifname="$( echo "$vm_netifs" | sed -n "${k}p" )"
                     echo "$deny_ifaces" | grep -Pq '(?<=^| )'$ifname'(?=$| )' && continue
-                    run_cmd /noexit "( pvesh delete '/nodes/$(hostname)/network/$ifname'       2>&1;echo) | grep -Pq '(^$|interface does not exist$)'" \
-                        && echo "[${c_green}Выполнено$c_null]: стенд ${c_value}$pool_name$c_null: удален сетевой интерфейс ${c_lgreen}$ifname$c_null" \
-                        || { echo_err "Ошибка: не удалось удалить сетевой интерфейс '$ifname'"; exit 1; }
-                    deny_ifaces+=" $ifname"
+                    if_desc="$( get_table_val ifaces_info "iface=$ifname" comments )"
+                    depend_if=$( get_table_val ifaces_info "vlan-raw-device=$ifname" iface )
+                    [[ "$depend_if" != '' ]] && ! echo "$deny_ifaces" | grep -Pq '(?<=^| )'$ifname'(?=$| )' && delete_if "$pool_name" "$depend_if"
+                    delete_if "$pool_name" "$ifname" "$if_desc"
                     restart_network=true
                 done
 
