@@ -383,7 +383,7 @@ function indexOf() {
     [[ "$1" == '' || "$2" == '' ]] && exit 1
     local -n ref_search_arr=$1
     for i in "${!ref_search_arr[@]}"; do
-        if [[ "${ref_search_arr[$i]}" = "$2" ]]; then
+        if [[ "${ref_search_arr[$i]}" == "$2" ]]; then
             echo -n "$i"
             return
         fi
@@ -1648,7 +1648,7 @@ function manage_stands() {
     echo '  10. Удаление стендов'
     local switch=$( read_question_select $'\nВыберите действие' '^([0-9]{1,2}|)$' 1 10 )
 
-    [[ "$switch" = '' ]] && switch=$( read_question_select $'\nВыберите действие' '^([0-9]{1,2}|)$' 1 10 ) && [[ "$switch" = '' ]] && return 0
+    [[ "$switch" == '' ]] && switch=$( read_question_select $'\nВыберите действие' '^([0-9]{1,2}|)$' 1 10 ) && [[ "$switch" == '' ]] && return 0
     if [[ $switch =~ ^[1-3]$ ]]; then
         local user_name enable state usr_range='' usr_count=$(echo -n "${user_list[$group_name]}" | grep -c '^') usr_list=${user_list[$group_name]}
 
