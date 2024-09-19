@@ -1261,7 +1261,7 @@ function deploy_stand_config() {
         for net in "${!Networking[@]}"; do
             [[ "${Networking["$net"]}" != "$if_desc" ]] && continue
             cmd_line+=" --net$if_num '${netifs_type:-virtio},bridge=$net$net_options'"
-            [[ "$vlan_slave" != '' || "$vlan_aware" == true ]] && ! [[ "$vlan_slave" != '' && "$vlan_aware" == true ]] && {
+            ! $opt_dry_run && [[ "$vlan_slave" != '' || "$vlan_aware" == true ]] && ! [[ "$vlan_slave" != '' && "$vlan_aware" == true ]] && {
                 local port_info=$( pvesh get "/nodes/$(hostname)/network/$net" --output-format yaml )
                 local if_options=''
                 if [[ "$vlan_slave" != '' ]]; then
