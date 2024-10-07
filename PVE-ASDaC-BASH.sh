@@ -98,6 +98,7 @@ declare -A config_templates=(
         cores = 1
         memory = 1024
         boot_disk0 = https://disk.yandex.ru/d/31yfM0_qNhTTkw/Alt-p11_Jeos-systemd.qcow2
+	access_roles = Competitor
     '
     [_Alt-Server_10.1]='Базовый шаблон для Альт Сервер 10.1'
     [Alt-Server_10.1]='
