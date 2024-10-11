@@ -1829,6 +1829,7 @@ function manage_stands() {
                         || { echo_err "Ошибка: не удалось удалить сетевой интерфейс '$2'"; exit 1; }
             deny_ifaces+=" $2"
         }
+	local vm_nodes=''
         for ((i=1; i<=$( echo -n "${pool_list[$group_name]}" | grep -c '^' ); i++)); do
             echo
             pool_name=$( echo "${pool_list[$group_name]}" | sed -n "${i}p" )
@@ -1837,6 +1838,7 @@ function manage_stands() {
             vmname_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/name}" )
             vm_node_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/node}" )
             vm_status_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/status}" )
+	    vm_nodes=$( echo "$vm_nodes"$'\n'"$vm_node_list" | sort -u )
 
             for ((j=1; j<=$( echo -n "$vmid_list" | grep -c '^' ); j++)); do
                 vmid=$( echo "$vmid_list" | sed -n "${j}p" )
