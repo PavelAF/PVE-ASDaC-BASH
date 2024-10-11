@@ -1887,7 +1887,12 @@ function manage_stands() {
 
         [[ "$del_all" == true ]] && run_cmd "pveum group delete '$group_name'" && echo "[${c_green}Выполнено$c_null]: группа стенда ${c_value}$group_name$c_null удалена"
 
-        $restart_network && run_cmd "pvesh set '/nodes/$(hostname)/network'" && echo "[${c_green}Выполнено$c_null]: рестарт сети"
+        $restart_network && {
+            for pve_host in $vm_nodes; do
+                run_cmd "pvesh set '/nodes/$pve_host/network'"
+                echo "[${c_green}Выполнено$c_null]: рестарт сети хоста '$pve_host'"
+            done
+        }
     fi
 
     echo $'\n'"$c_lgreenНастройка завершена.$c_null"
