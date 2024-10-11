@@ -98,6 +98,7 @@ declare -A config_templates=(
         cores = 1
         memory = 1024
         boot_disk0 = https://disk.yandex.ru/d/31yfM0_qNhTTkw/Alt-p11_Jeos-systemd.qcow2
+	access_roles = Competitor
     '
     [_Alt-Server_10.1]='Базовый шаблон для Альт Сервер 10.1'
     [Alt-Server_10.1]='
@@ -383,7 +384,7 @@ function indexOf() {
     [[ "$1" == '' || "$2" == '' ]] && exit 1
     local -n ref_search_arr=$1
     for i in "${!ref_search_arr[@]}"; do
-        if [[ "${ref_search_arr[$i]}" = "$2" ]]; then
+        if [[ "${ref_search_arr[$i]}" == "$2" ]]; then
             echo -n "$i"
             return
         fi
@@ -1196,7 +1197,7 @@ function deploy_stand_config() {
 
             if_desc=${if_desc/\{0\}/$stand_num}
             $create_if && ($opt_verbose || $opt_dry_run) && echo_info "Добавление сети $iface : '$if_desc'"
-            $create_if && { run_cmd /noexit "pvesh create '/nodes/$(hostname)/network' --iface '$iface' --type 'bridge' --autostart 'true' --comments '$if_desc' --bridge_vlan_aware '$vlan_aware' --slaves '$vlan_slave'" \
+            $create_if && { run_cmd /noexit "pvesh create '/nodes/$(hostname)/network' --iface '$iface' --type 'bridge' --autostart 'true' --comments '$if_desc'$vlan_aware --slaves '$vlan_slave'" \
                     || { read -n 1 -p "Интерфейс '$iface' ($if_desc) уже существует! Выход"; exit 1 ;} }
 
             $not_special && $create_access_network && ${config_base[access_create]} && { run_cmd /noexit "pveum acl modify '/sdn/zones/localnetwork/$iface' --users '$username' --roles 'PVEAuditor'" || { echo_err "Не удалось создать ACL правило для сетевого интерфейса '$iface' и пользователя '$username'"; exit 1; } }
@@ -1218,15 +1219,15 @@ function deploy_stand_config() {
             echo $iface
         }
 
-        local if_num=${BASH_REMATCH[1]} if_config="$2" if_desc="$2" create_if=false net_options='' master='' iface='' vlan_aware='false' vlan_slave=''
+        local if_num=${BASH_REMATCH[1]} if_config="$2" if_desc="$2" create_if=false net_options='' master='' iface='' vlan_aware='' vlan_slave=''
 
         if [[ "$if_config" =~ ^\{\ *bridge\ *=\ *([0-9\.a-z]+|\"\ *((\\\"|[^\"])+)\")\ *(,.*)?\}$ ]]; then
             if_bridge="${BASH_REMATCH[1]/\\\"/\"}"
             if_desc="${BASH_REMATCH[2]/\\\"/\"}"
             if_config="${BASH_REMATCH[4]}"
             [[ "$if_config" =~ ^.*,\ *state\ *=\ *down\ *($|,.+$) ]] && net_options+=',link_down=1'
-            [[ "$if_config" =~ ^.*,\ *trunks\ *=\ *([0-9\;]*[0-9])\ *($|,.+$) ]] && net_options+=",trunks=${BASH_REMATCH[1]}" && vlan_aware='true'
-            [[ "$if_config" =~ ^.*,\ *tag\ *=\ *([1-9][0-9]{0,2}|[1-3][0-9]{3}|40([0-8][0-9]|9[0-4]))\ *($|,.+$) ]] && net_options+=",tag=${BASH_REMATCH[1]}" && vlan_aware='true'
+            [[ "$if_config" =~ ^.*,\ *trunks\ *=\ *([0-9\;]*[0-9])\ *($|,.+$) ]] && net_options+=",trunks=${BASH_REMATCH[1]}" && vlan_aware=" --bridge_vlan_aware 'true'"
+            [[ "$if_config" =~ ^.*,\ *tag\ *=\ *([1-9][0-9]{0,2}|[1-3][0-9]{3}|40([0-8][0-9]|9[0-4]))\ *($|,.+$) ]] && net_options+=",tag=${BASH_REMATCH[1]}" && vlan_aware=" --bridge_vlan_aware 'true'"
             if [[ "$if_config" =~ ^.*,\ *vtag\ *=\ *([1-9][0-9]{0,2}|[1-3][0-9]{3}|40([0-8][0-9]|9[0-4]))\ *($|,.+$) ]]; then
                 local tag="${BASH_REMATCH[1]}"
                 if [[ "$if_config" =~ ^.*,\ *master\ *=\ *([0-9\.a-z]+|\"\ *((\\\"|[^\"])+)\")\ *($|,.+$) ]]; then
@@ -1261,8 +1262,8 @@ function deploy_stand_config() {
         for net in "${!Networking[@]}"; do
             [[ "${Networking["$net"]}" != "$if_desc" ]] && continue
             cmd_line+=" --net$if_num '${netifs_type:-virtio},bridge=$net$net_options'"
-            [[ "$vlan_slave" != '' || "$vlan_aware" == true ]] && ! [[ "$vlan_slave" != '' && "$vlan_aware" == true ]] && {
-                local port_info = $( pvesh get "/nodes/$(hostname)/network/$net" --output-format yaml )
+            ! $opt_dry_run && [[ "$vlan_slave" != '' || "$vlan_aware" != '' ]] && ! [[ "$vlan_slave" != '' && "$vlan_aware" != '' ]] && {
+                local port_info=$( pvesh get "/nodes/$(hostname)/network/$net" --output-format yaml )
                 local if_options=''
                 if [[ "$vlan_slave" != '' ]]; then
                     echo "$port_info" | grep -Pq $'^bridge_vlan_aware: 1$' && if_options="--bridge_vlan_aware 'true'"
@@ -1639,16 +1640,18 @@ function manage_stands() {
     echo '  1.  Включение учетных записей'
     echo '  2.  Отключение учетных записей'
     echo '  3.  Установка паролей для учетных записей'
-    echo '  4.  Создать снапшот с начальным состоянием ВМ: "Start"'
-    echo '  5.  Откатить виртуальные машины до начального снапшота: "Start"'
-    echo '  6.  Удалить снапшот: "Start"'
-    echo '  7.  Создать снапшот ВМ с результатом выполнения: "End"'
-    echo '  8.  Откатить виртуальные машины до снапшота: "End"'
-    echo '  9.  Удалить снапшот: "End"'
-    echo '  10. Удаление стендов'
-    local switch=$( read_question_select $'\nВыберите действие' '^([0-9]{1,2}|)$' 1 10 )
+    echo '  4.  Включить виртуальные машины'
+    echo '  5.  Выключить виртуальные машины'
+    echo '  6.  Создать снапшот с начальным состоянием ВМ: "Start"'
+    echo '  7.  Откатить виртуальные машины до начального снапшота: "Start"'
+    echo '  8.  Удалить снапшот: "Start"'
+    echo '  9.  Создать снапшот ВМ с результатом выполнения: "End"'
+    echo '  10. Откатить виртуальные машины до снапшота: "End"'
+    echo '  11. Удалить снапшот: "End"'
+    echo '  12. Удаление стендов'
+    local switch=$( read_question_select $'\nВыберите действие' '^([0-9]{1,2}|)$' 1 12 )
 
-    [[ "$switch" = '' ]] && switch=$( read_question_select $'\nВыберите действие' '^([0-9]{1,2}|)$' 1 10 ) && [[ "$switch" = '' ]] && return 0
+    [[ "$switch" == '' ]] && switch=$( read_question_select $'\nВыберите действие' '^([0-9]{1,2}|)$' 1 12 ) && [[ "$switch" == '' ]] && return 0
     if [[ $switch =~ ^[1-3]$ ]]; then
         local user_name enable state usr_range='' usr_count=$(echo -n "${user_list[$group_name]}" | grep -c '^') usr_list=${user_list[$group_name]}
 
@@ -1752,29 +1755,41 @@ function manage_stands() {
 
     local regex='\s*\"{opt_name}\"\s*:\s*(\K[0-9]+|\"\K(?(?=\\").{2}|[^"])+)'
 
-    if [[ $switch -ge 4 && $switch -le 9 ]]; then
+    local pool_info vmid_list vmname_list vmid vm_node_list='' vm_status_list='' vm_node='' vm_status=''
+
+    if [[ $switch -ge 4 && $switch -le 11 ]]; then
         read_question $'\nВы действительно хотите продолжить?' || exit 0
-        local vmid pool_info vmid_list vmname_list status name cmd_str
+        local status name cmd_str vm_poweroff=false vm_poweroff_answer=true
+        case $switch in
+                    4) cmd_str="create /nodes/{node}/qemu/{vmid}/status/start";;
+                    5) cmd_str="create /nodes/{node}/qemu/{vmid}/status/stop";;
+                    6) cmd_str="create /nodes/{node}/qemu/{vmid}/snapshot --snapname 'Start' --description 'Снапшот начального состояния ВМ'";;
+                    7) cmd_str="create /nodes/{node}/qemu/{vmid}/snapshot/Start/rollback";;
+                    8) cmd_str="delete /nodes/{node}/qemu/{vmid}/snapshot/Start";;
+                    9) cmd_str="create /nodes/{node}/qemu/{vmid}/snapshot --snapname 'End' --description 'Снапшот ВМ с завершенным состоянием выполнения задания участником'";;
+                    10) cmd_str="create /nodes/{node}/qemu/{vmid}/snapshot/End/rollback";;
+                    11) cmd_str="delete /nodes/{node}/qemu/{vmid}/snapshot/End";;
+        esac
         for ((i=1; i<=$( echo -n "${pool_list[$group_name]}" | grep -c '^' ); i++)); do
             echo
             pool_name=$( echo "${pool_list[$group_name]}" | sed -n "${i}p" )
             pool_info=$( pvesh get "/pools/$pool_name" --output-format json-pretty ) || { echo_err "Ошибка: не удалось получить информацию об стенде '$pool_name'"; exit 1; }
             vmid_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/vmid}" )
             vmname_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/name}" )
+            vm_node_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/node}" )
+            vm_status_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/status}" )
 
             for ((j=1; j<=$( echo -n "$vmid_list" | grep -c '^' ); j++)); do
                 vmid=$( echo "$vmid_list" | sed -n "${j}p" )
                 name=$( echo "$vmname_list" | sed -n "${j}p" )
-
-                case $switch in
-                    4) cmd_str="qm snapshot '$vmid' 'Start' --description 'Снапшот начального состояния ВМ' 2>&1";;
-                    5) cmd_str="qm rollback '$vmid' 'Start' 2>&1";;
-                    6) cmd_str="qm delsnapshot '$vmid' 'Start' 2>&1";;
-                    7) cmd_str="qm snapshot '$vmid' 'End' --description 'Снапшот ВМ с завершенным состоянием выполнения задания участником' 2>&1";;
-                    8) cmd_str="qm rollback '$vmid' 'End' 2>&1";;
-                    9) cmd_str="qm delsnapshot '$vmid' 'End' 2>&1";;
-                esac
-                status=$( run_cmd /noexit "$cmd_str" ) && {
+                vm_node=$( echo "$vm_node_list" | sed -n "${j}p" )
+                vm_status=$( echo "$vm_status_list" | sed -n "${j}p" )
+                
+                [[ "$switch" == 6 || "$switch" == 9 ]] && [[ vm_status == running ]] && {
+                    $vm_poweroff_answer && vm_poweroff=$( read_question "ВМ $name ($vmid) стенда $pool_name включена. При создании снапшота рекомендуется выключить ВМ. "$'\n'"Выключать виртуальные машины перед созданием снапшота" && echo true || echo false)
+                    $vm_poweroff && run_cmd "pvesh create /nodes/$vm_node/stopall --vms '$vmid' --timeout '30' --force-stop 'true'"
+                }
+                status=$( run_cmd /noexit "pvesh $(echo "$cmd_str" | sed "s/{node}/$vm_node/;s/{vmid}/$vmid/") 2>&1" ) && {
                     echo "[${c_green}Выполнено$c_null]: стенд ${c_value}$pool_name$c_null машина ${c_lgreen}$name$c_null (${c_lcyan}$vmid$c_null)"
                     continue
                 }
@@ -1787,14 +1802,14 @@ function manage_stands() {
         done
     fi
 
-    if [[ $switch == 10 ]]; then
+    if [[ $switch == 12 ]]; then
 
         echo -n $'Выбранные пользователи: '; get_val_print "$(echo ${user_list[$group_name]} )"
         read_question $'\nВы действительно хотите продолжить?' || exit 0
 
         local -A ifaces_info
-        local pool_info vmid_list vmname_list vmid vm_netifs ifname depend_if if_desc deny_ifaces bridge_ports k restart_network=false
-        parse_noborder_table 'pvesh get /nodes/$(hostname)/network' ifaces_info iface type bridge_ports address address6 bridge_vlan_aware comments vlan-raw-device
+        local vm_netifs ifname depend_if if_desc deny_ifaces bridge_ports k restart_network=false
+        parse_noborder_table "pvesh get /nodes/${config_base[pve_node]}/network" ifaces_info iface type bridge_ports address address6 bridge_vlan_aware comments vlan-raw-device
 
         for ((i=1; i<=$( echo -n "${ifaces_info[iface]}" | grep -c '^' ); i++)); do
             bridge_ports=$( echo "${ifaces_info[bridge_ports]}" | sed -n "${i}p" )
@@ -1809,7 +1824,7 @@ function manage_stands() {
         function delete_if {
             [[ "$1" == '' || "$2" == '' ]] && exit 1
             local desc; [[ "$3" != '' ]] && desc=" ($3)"
-            run_cmd /noexit "( pvesh delete '/nodes/$(hostname)/network/$2'       2>&1;echo) | grep -Pq '(^$|interface does not exist$)'" \
+            run_cmd /noexit "( pvesh delete '/nodes/$vm_node/network/$2'       2>&1;echo) | grep -Pq '(^$|interface does not exist$)'" \
                         && echo "[${c_green}Выполнено$c_null]: стенд ${c_value}$1$c_null: удален сетевой интерфейс ${c_lgreen}$2$c_null$desc" \
                         || { echo_err "Ошибка: не удалось удалить сетевой интерфейс '$2'"; exit 1; }
             deny_ifaces+=" $2"
@@ -1820,11 +1835,16 @@ function manage_stands() {
             pool_info=$( pvesh get "/pools/$pool_name" --output-format json-pretty ) || { echo_err "Ошибка: не удалось получить информацию об стенде '$pool_name'"; exit 1; }
             vmid_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/vmid}" )
             vmname_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/name}" )
+            vm_node_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/node}" )
+            vm_status_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/status}" )
 
             for ((j=1; j<=$( echo -n "$vmid_list" | grep -c '^' ); j++)); do
                 vmid=$( echo "$vmid_list" | sed -n "${j}p" )
                 name=$( echo "$vmname_list" | sed -n "${j}p" )
-                vm_netifs=$( pvesh get /nodes/$(hostname)/qemu/$vmid/config --output-format json-pretty ) || { echo_err "Ошибка: не удалось получить информацию об ВМ стенда '$pool_name'"; exit 1; }
+                vm_node=$( echo "$vm_node_list" | sed -n "${j}p" )
+                vm_status=$( echo "$vm_status_list" | sed -n "${j}p" )
+
+                vm_netifs=$( pvesh get /nodes/$vm_node/qemu/$vmid/config --output-format json-pretty ) || { echo_err "Ошибка: не удалось получить информацию об ВМ стенда '$pool_name'"; exit 1; }
                 vm_netifs=$( echo "$vm_netifs" | grep -Po '\s*\"net[0-9]+\"\s*:\s*(\".*?bridge=\K\w+)' )
 
                 for ((k=1; k<=$( echo -n "$vm_netifs" | grep -c '^' ); k++)); do
@@ -1836,8 +1856,8 @@ function manage_stands() {
                     delete_if "$pool_name" "$ifname" "$if_desc"
                     restart_network=true
                 done
-
-                run_cmd /noexit "( qm destroy '$vmid' --skiplock 'true' --purge 'true' 2>&1;echo) | grep -Pq '(^$|does not exist$)'" \
+                [[ $vm_status == running ]] && run_cmd "pvesh create /nodes/$vm_node/qemu/$vmid/status/stop --skiplock 'true' --timeout '0'"
+                run_cmd /noexit "( pvesh delete /nodes/$vm_node/qemu/$vmid --skiplock 'true' --purge 'true' 2>&1;echo) | grep -Pq '(^$|does not exist$)'" \
                     && echo "[${c_green}Выполнено$c_null]: стенд ${c_value}$pool_name$c_null: удалена машина ${c_lgreen}$name$c_null (${c_lcyan}$vmid$c_null)" \
                     || { echo_err "Ошибка: не удалось удалить ВМ '$vmid' стенда '$pool_name'"; exit 1; }
             done
