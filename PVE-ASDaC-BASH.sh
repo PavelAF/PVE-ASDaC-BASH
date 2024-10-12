@@ -726,7 +726,7 @@ function configure_standnum() {
     [[ "$is_show_config" == 'false' ]] && { is_show_config=true; show_config; }
     echo $'\nВведите номера инсталляций стендов. Напр., 1-5 развернет стенды под номерами 1, 2, 3, 4, 5 (всего 5)'
     set_standnum $( read_question_select 'Номера стендов (прим: 1,2,5-10)' '^([1-9][0-9]{0,2}((\-|\.\.)[1-9][0-9]{0,2})?([\,](?!$\Z)|(?![0-9])))+$' )
-    echo "$c_lgreenПодождите, идет проверка конфигурации...$c_null" >>/dev/tty
+    echo $'\n'"$c_lgreenПодождите, идет проверка конфигурации...$c_null" >>/dev/tty
 }
 
 function set_varnum() {
