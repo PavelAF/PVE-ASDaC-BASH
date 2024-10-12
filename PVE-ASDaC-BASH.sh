@@ -280,43 +280,6 @@ declare -A config_stand_2_var=(
     '
 )
 
-_config_stand_3_var='Стенды: изучение GIT'
-declare -A config_stand_3_var=(
-    [_stand_config]='
-        pool_name = GIT-A-{0}
-        access_user_name = Student-A{0}
-        local_template_pool = test_pool_template_1
-    '
-
-    [_ISP]='Альт JeOS'
-    [ISP]='
-        network1 = { bridge=inet }
-        network2 = 🖧: ISP-HQ
-        network3 = 🖧: ISP-BR
-    '
-    [_HQ-RTR]='EcoRouterOS'
-    [HQ-RTR]='
-        network1 = 🖧: ISP-HQ
-        network2 = {bridge="🖧: HQ-Net", trunks=100;200;999 }
-    '
-    [_HQ-SRV]='Альт Сервер 10.1'
-    [HQ-SRV]='
-        network1 = {bridge="🖧: HQ-Net", tag=100}
-    '
-    [_HQ-CLI]='Альт Рабочая Станция 10.1'
-    [HQ-CLI]='
-        network1 = {bridge="🖧: HQ-Net", tag=200}
-    '
-    [_BR-RTR]='EcoRouterOS'
-    [BR-RTR]='
-        network1 = 🖧: ISP-BR
-        network2 = 🖧: BR-Net
-    '
-    [_BR-SRV]='Альт Сервер 10.1'
-    [BR-SRV]='
-        network1 = 🖧: BR-Net
-    '
-)
 ########################## -= Конец конфигурации =- ##########################
 
 
@@ -1893,9 +1856,9 @@ function manage_stands() {
             vmname_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/name}" )
             vm_node_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/node}" )
             vm_status_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/status}" )
-            vm_nodes=$( echo "$vm_nodes"$'\n'"$vm_node_list" | sort -u )
+            vm_nodes=$( echo "$vm_nodes"$'\n'"$vm_node_list" | awk '!seen[$0]++ && NF' )
             [[ ! -v "ifaces_info_$(echo -n "$vm_nodes" | grep -c '^')" ]] \
-                && local -A "ifaces_info_$(echo -n "$vm_nodes" | grep -c '^')" "deny_ifaces_$(echo -n "$vm_nodes" | grep -c '^')" && make_node_ifs_info
+                && local -A "ifaces_info_$(echo -n "$vm_nodes" | grep -c '^')" && local "deny_ifaces_$(echo -n "$vm_nodes" | grep -c '^')" && make_node_ifs_info
 
 
             for ((j=1; j<=$( echo -n "$vmid_list" | grep -c '^' ); j++)); do
