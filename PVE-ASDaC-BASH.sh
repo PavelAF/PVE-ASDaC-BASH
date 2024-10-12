@@ -571,7 +571,8 @@ function show_config() {
         if [[ "${#opt_stand_nums[@]}" != 0 && "$1" != var && "$opt_sel_var" != 0 ]]; then
             echo -n $'\n'"Номера стендов: $c_value"
             printf '%s\n' "${opt_stand_nums[@]}" | awk 'NR==1{d="";first=last=$1;next} $1 == last+1 {last=$1;next} {d="-";if (first==last-1)d=",";if (first!=last) printf first d; printf last","; first=last=$1} END{d="-";if (first==last-1)d=",";if (first!=last)printf first d; printf last"\n"}'
-            echo "Всего стендов к развертыванию: $(get_val_print "${#opt_stand_nums[@]}" )"
+	    echo -n "$c_null"
+	    echo "Всего стендов к развертыванию: $(get_val_print "${#opt_stand_nums[@]}" )"
             echo "Кол-во создаваемых виртуальных машин: $(get_val_print "$(( ${#opt_stand_nums[@]} * $(eval "printf '%s\n' \${!config_stand_${opt_sel_var}_var[@]}" | grep -Pv '^_' | wc -l) ))" )"
         fi
     fi
@@ -725,6 +726,7 @@ function configure_standnum() {
     [[ "$is_show_config" == 'false' ]] && { is_show_config=true; show_config; }
     echo $'\nВведите номера инсталляций стендов. Напр., 1-5 развернет стенды под номерами 1, 2, 3, 4, 5 (всего 5)'
     set_standnum $( read_question_select 'Номера стендов (прим: 1,2,5-10)' '^([1-9][0-9]{0,2}((\-|\.\.)[1-9][0-9]{0,2})?([\,](?!$\Z)|(?![0-9])))+$' )
+    echo "$c_lgreenПодождите, идет проверка конфигурации...$c_null" >>/dev/tty
 }
 
 function set_varnum() {
@@ -1945,7 +1947,7 @@ silent_mode=$opt_silent_install || $opt_silent_control
 
 
 
-echo "$c_lgreenПодождите, идет проверка конфигурации...$c_null" >/dev/tty
+echo "$c_lgreenПодождите, идет проверка конфигурации...$c_null" >>/dev/tty
 check_config
 
 if $opt_show_help; then show_help; show_config; exit; fi
