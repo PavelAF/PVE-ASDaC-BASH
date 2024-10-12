@@ -21,7 +21,7 @@ sh='PVE-ASDaC-BASH.sh';curl -sOL "https://raw.githubusercontent.com/PavelAF/PVE-
 
 После нажатия <kbd>Enter</kbd> скрипт запустится
 
-<img src="screenshots/5.png"/>
+<img src="screenshots/6.png"/>
 
 При запуске скрипта в терминале выведется конфигурация развертывания и выбор опций развертывания
 
