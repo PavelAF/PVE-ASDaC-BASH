@@ -1533,7 +1533,7 @@ function install_stands() {
             esac
             [[ $opt == access_create ]] && ! ${config_base[access_create]} && $val && \
                 { configure_username set-install exit false || configure_username set set-install exit false || continue; }
-            echo test
+
             config_base[$opt]="$val"
         done
         show_config
