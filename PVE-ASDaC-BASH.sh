@@ -484,8 +484,8 @@ function show_config() {
             for var in inet_bridge storage pool_name pool_desc take_snapshots access_create $( ${config_base[access_create]} && echo access_{user_{name,desc,enable},pass_{length,chars},auth_{pve,pam}_desc} ); do
                 printf '%4s' $((++i)); echo ". ${config_base[_$var]:-$var}: $( get_val_print "${config_base[$var]}" "$var" )"
             done
-            printf '%4s' $((++i)); echo "$_opt_dry_run: $( get_val_print $opt_dry_run )"
-            printf '%4s' $((++i)); echo "$_opt_verbose: $( get_val_print $opt_verbose )"
+            printf '%4s' $((++i)); echo ". $_opt_dry_run: $( get_val_print $opt_dry_run )"
+            printf '%4s' $((++i)); echo ". $_opt_verbose: $( get_val_print $opt_verbose )"
             return 0
     }
     [[ "$1" == passwd-change ]] && {
