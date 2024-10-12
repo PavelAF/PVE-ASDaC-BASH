@@ -39,6 +39,12 @@ declare -A config_base=(
     [_take_snapshots]='Создавать снапшоты ВМ (снимки, для сброса стендов)'
     [take_snapshots]=true
 
+    [_create_templates_pool]='Создать шаблонный пул для развертки ВМ'
+    [create_templates_pool]=false
+
+    [_create_linked_clones]='Создавать ВМ как связанные клоны шаблона'
+    [create_linked_clones]=false
+
     [_access_create]='Создавать пользователей, группы, роли для разграничения доступа'
     [access_create]=true
 
@@ -273,6 +279,44 @@ declare -A config_stand_2_var=(
         boot_disk0 = https://disk.yandex.ru/d/31yfM0_qNhTTkw/DE39-2025_M2/BR-SRV_DE39-2025_M2.qcow2
     '
 )
+
+_config_stand_3_var='Стенды: изучение GIT'
+declare -A config_stand_3_var=(
+    [_stand_config]='
+        pool_name = GIT-A-{0}
+        access_user_name = Student-A{0}
+        local_template_pool = test_pool_template_1
+    '
+
+    [_ISP]='Альт JeOS'
+    [ISP]='
+        network1 = { bridge=inet }
+        network2 = 🖧: ISP-HQ
+        network3 = 🖧: ISP-BR
+    '
+    [_HQ-RTR]='EcoRouterOS'
+    [HQ-RTR]='
+        network1 = 🖧: ISP-HQ
+        network2 = {bridge="🖧: HQ-Net", trunks=100;200;999 }
+    '
+    [_HQ-SRV]='Альт Сервер 10.1'
+    [HQ-SRV]='
+        network1 = {bridge="🖧: HQ-Net", tag=100}
+    '
+    [_HQ-CLI]='Альт Рабочая Станция 10.1'
+    [HQ-CLI]='
+        network1 = {bridge="🖧: HQ-Net", tag=200}
+    '
+    [_BR-RTR]='EcoRouterOS'
+    [BR-RTR]='
+        network1 = 🖧: ISP-BR
+        network2 = 🖧: BR-Net
+    '
+    [_BR-SRV]='Альт Сервер 10.1'
+    [BR-SRV]='
+        network1 = 🖧: BR-Net
+    '
+)
 ########################## -= Конец конфигурации =- ##########################
 
 
@@ -331,9 +375,10 @@ function echo_info() {
 }
 
 function read_question_select() {
-    local read; until read -p "$1: $c_value" -e -i "$5" read; echo -n $c_null >/dev/tty
-        [[ "$2" == '' || $(echo "$read" | grep -Pc "$2" ) == 1 ]] && { ! isdigit_check "$read" || [[ "$3" == '' || "$read" -ge "$3" ]] && [[ "$4" == '' || "$read" -le "$4" ]]; }
-    do true; done; echo "$read";
+    local read enter=-1; [[ "$6" != "" ]] && enter=$6
+    until read -p "$1: $c_value" -e -i "$5" read; echo -n $c_null >/dev/tty; ((enter--));
+        [[ "$enter" == 0 ]] || [[ "$2" == '' || $(echo "$read" | grep -Pc "$2" ) == 1 ]] && { ! isdigit_check "$read" || [[ "$3" == '' || "$read" -ge "$3" ]] && [[ "$4" == '' || "$read" -le "$4" ]]; }
+    do true; done; [[ "$enter" != 0 ]] && echo "$read";
 }
 
 function read_question() { local read _ret=false; until read -n 1 -p "$1 [y|д|1]: $c_value" read; echo $c_null >/dev/tty; [[ "$read" =~ ^[yд1l]$ ]] && return 0 || { [[ "$read" != '' || "$_ret" == true ]] && return 1; _ret=true; false; }; do true; done; }
@@ -480,12 +525,12 @@ function show_config() {
     local i=0
     [[ "$1" != opt_verbose ]] && echo
     [[ "$1" == install-change ]] && {
-            echo $'Список параметров конфигурации:\n  0. Выйти из режима изменения настроек'
+            echo $'Список параметров конфигурации:\n   0. Выйти из режима изменения настроек'
             for var in inet_bridge storage pool_name pool_desc take_snapshots access_create $( ${config_base[access_create]} && echo access_{user_{name,desc,enable},pass_{length,chars},auth_{pve,pam}_desc} ); do
-                echo "  $((++i)). ${config_base[_$var]:-$var}: $( get_val_print "${config_base[$var]}" "$var" )"
+                printf '%4s' $((++i)); echo ". ${config_base[_$var]:-$var}: $( get_val_print "${config_base[$var]}" "$var" )"
             done
-            echo "  $((++i)). $_opt_dry_run: $( get_val_print $opt_dry_run )"
-            echo "  $((++i)). $_opt_verbose: $( get_val_print $opt_verbose )"
+            printf '%4s' $((++i)); echo ". $_opt_dry_run: $( get_val_print $opt_dry_run )"
+            printf '%4s' $((++i)); echo ". $_opt_verbose: $( get_val_print $opt_verbose )"
             return 0
     }
     [[ "$1" == passwd-change ]] && {
@@ -527,12 +572,12 @@ function show_config() {
         if [[ "$1" != var ]]; then
             echo $'#>------------------ Осовные параметры конфигурации -------------------<#\n'
             for var in inet_bridge storage $( [[ $opt_sel_var != 0 && "${config_base[pool_name]}" != '' ]] && echo pool_name ) take_snapshots access_create; do
-                echo "$((++i)). ${config_base[_$var]:-$var}: $(get_val_print "${config_base[$var]}" "$var" )"
+                echo "  $((++i)). ${config_base[_$var]:-$var}: $(get_val_print "${config_base[$var]}" "$var" )"
             done
 
             if ${config_base[access_create]}; then
                 for var in $( [[ "${config_base[access_user_name]}" == '' ]] && echo def_access_user_name || echo access_user_name ) access_user_enable access_pass_length access_pass_chars; do
-                    echo "$((++i)). ${config_base[_$var]:-$var}: $(get_val_print "${config_base[$var]}" "$var" )"
+                    printf '%3s' $((++i)); echo ". ${config_base[_$var]:-$var}: $(get_val_print "${config_base[$var]}" "$var" )"
                 done
             fi
         fi
@@ -570,7 +615,7 @@ function show_config() {
 
         if [[ "${#opt_stand_nums[@]}" != 0 && "$1" != var && "$opt_sel_var" != 0 ]]; then
             echo -n $'\n'"Номера стендов: $c_value"
-            printf '%s\n' "${opt_stand_nums[@]}" | awk 'BEGIN{d="-"}NR==1{first=$1;last=$1;next} $1 == last+1 {last=$1;next} {d="-";if (first==last-1)d=",";printf first d last",";first=$1;last=first} END{if (first==last-1)d=",";if (first!=last)printf first d; printf last"\n"}'
+            printf '%s\n' "${opt_stand_nums[@]}" | awk 'NR==1{d="";first=last=$1;next} $1 == last+1 {last=$1;next} {d="-";if (first==last-1)d=",";if (first!=last) printf first d; printf last","; first=last=$1} END{d="-";if (first==last-1)d=",";if (first!=last)printf first d; printf last"\n"}'
             echo -n "$c_null"
             echo "Всего стендов к развертыванию: $(get_val_print "${#opt_stand_nums[@]}" )"
             echo "Кол-во создаваемых виртуальных машин: $(get_val_print "$(( ${#opt_stand_nums[@]} * $(eval "printf '%s\n' \${!config_stand_${opt_sel_var}_var[@]}" | grep -Pv '^_' | wc -l) ))" )"
@@ -726,6 +771,7 @@ function configure_standnum() {
     [[ "$is_show_config" == 'false' ]] && { is_show_config=true; show_config; }
     echo $'\nВведите номера инсталляций стендов. Напр., 1-5 развернет стенды под номерами 1, 2, 3, 4, 5 (всего 5)'
     set_standnum $( read_question_select 'Номера стендов (прим: 1,2,5-10)' '^([1-9][0-9]{0,2}((\-|\.\.)[1-9][0-9]{0,2})?([\,](?!$\Z)|(?![0-9])))+$' )
+    echo $'\n'"$c_lgreenПодождите, идет проверка конфигурации...$c_null" >>/dev/tty
 }
 
 function set_varnum() {
@@ -851,6 +897,7 @@ function configure_vmid() {
     local node vmid_str=''
     for node in $nodes; do
         vmid_str="$( echo "$vmid_str"; pvesh get /nodes/$node/qemu --noborder | awk 'NR>1{print $2}' | sort )"
+        vmid_str="$( echo "$vmid_str"; pvesh get /nodes/$node/lxc --noborder | awk 'NR>1{print $2}' | sort )"
     done
 
     local -a vmid_list
@@ -1533,7 +1580,7 @@ function install_stands() {
             esac
             [[ $opt == access_create ]] && ! ${config_base[access_create]} && $val && \
                 { configure_username set-install exit false || configure_username set set-install exit false || continue; }
-            echo test
+
             config_base[$opt]="$val"
         done
         show_config
@@ -1570,9 +1617,10 @@ function install_stands() {
 
     deploy_access_passwd
 
-    echo $'\n'"${c_green}Установка закочена.$c_null Выход" && exit 0
+    echo $'\n'"${c_green}Установка закочена.$c_null Выход"
     
     configure_imgdir clear
+    exit 0
 }
 
 #       pvesh set /cluster/options --tag-style 'color-map=alt_server:ffcc14;alt_workstation:ac58e4,ordering=config,shape=none'
@@ -1626,7 +1674,8 @@ function manage_stands() {
     for item in ${!print_list[@]}; do
         echo "  $((++i)). ${print_list[$item]}"
     done
-    [[ $i -gt 1 ]] && i=$( read_question_select 'Выберите номер конфигурации' '^[0-9]+$' 1 $i )
+    [[ $i -gt 1 ]] && i=$( read_question_select 'Выберите номер конфигурации' '^[0-9]+$' 1 $i '' 2 )
+    [[ "$i" == '' ]] && return 0
     local j=0
     group_name=''
     for item in ${!print_list[@]}; do
@@ -1637,15 +1686,15 @@ function manage_stands() {
     done
 
     echo $'\nУправление конфигурацией:'
-    echo '  1.  Включение учетных записей'
-    echo '  2.  Отключение учетных записей'
-    echo '  3.  Установка паролей для учетных записей'
-    echo '  4.  Включить виртуальные машины'
-    echo '  5.  Выключить виртуальные машины'
-    echo '  6.  Создать снапшот с начальным состоянием ВМ: "Start"'
-    echo '  7.  Откатить виртуальные машины до начального снапшота: "Start"'
-    echo '  8.  Удалить снапшот: "Start"'
-    echo '  9.  Создать снапшот ВМ с результатом выполнения: "End"'
+    echo '   1. Включение учетных записей'
+    echo '   2. Отключение учетных записей'
+    echo '   3. Установка паролей для учетных записей'
+    echo '   4. Включить виртуальные машины'
+    echo '   5. Выключить виртуальные машины'
+    echo '   6. Создать снапшот с начальным состоянием ВМ: "Start"'
+    echo '   7. Откатить виртуальные машины до начального снапшота: "Start"'
+    echo '   8. Удалить снапшот: "Start"'
+    echo '   9. Создать снапшот ВМ с результатом выполнения: "End"'
     echo '  10. Откатить виртуальные машины до снапшота: "End"'
     echo '  11. Удалить снапшот: "End"'
     echo '  12. Удаление стендов'
@@ -1709,6 +1758,7 @@ function manage_stands() {
             done
             deploy_access_passwd set
         fi
+        opt_stand_nums=()
         echo $'\n'"$c_greenНастройка завершена.$c_null Выход" && return 0
     fi
 
@@ -1807,29 +1857,34 @@ function manage_stands() {
         echo -n $'Выбранные пользователи: '; get_val_print "$(echo ${user_list[$group_name]} )"
         read_question $'\nВы действительно хотите продолжить?' || exit 0
 
-        local -A ifaces_info
-        local vm_netifs ifname depend_if if_desc deny_ifaces bridge_ports k restart_network=false
-        parse_noborder_table "pvesh get /nodes/${config_base[pve_node]}/network" ifaces_info iface type bridge_ports address address6 bridge_vlan_aware comments vlan-raw-device
+        function make_node_ifs_info {
+            local -n ifaces_info="ifaces_info_$(echo -n "$vm_nodes" | grep -c '^')"
+            local -n deny_ifaces="deny_ifaces_$(echo -n "$vm_nodes" | grep -c '^')"
+            local bridge_ports vm_node=$( echo "$vm_nodes" | sed -n "$(echo -n "$vm_nodes" | grep -c '^')p" )
 
-        for ((i=1; i<=$( echo -n "${ifaces_info[iface]}" | grep -c '^' ); i++)); do
-            bridge_ports=$( echo "${ifaces_info[bridge_ports]}" | sed -n "${i}p" )
-            ifname=$( echo "${ifaces_info[iface]}" | sed -n "${i}p" )
-            [[ "$bridge_ports" != '' && "$( get_table_val ifaces_info "iface=$bridge_ports" vlan-raw-device )" == '' || "$( echo "${ifaces_info[address]}" | sed -n "${i}p" )" != '' \
-                || "$( echo "${ifaces_info[address6]}" | sed -n "${i}p" )" != '' ]] && {
-                    deny_ifaces+=" $ifname $bridge_ports"
-            }
-        done
+            parse_noborder_table "pvesh get /nodes/$vm_node/network" ifaces_info iface type bridge_ports address address6 bridge_vlan_aware comments vlan-raw-device
+
+            for ((i=1; i<=$( echo -n "${ifaces_info[iface]}" | grep -c '^' ); i++)); do
+                bridge_ports=$( echo "${ifaces_info[bridge_ports]}" | sed -n "${i}p" )
+                ifname=$( echo "${ifaces_info[iface]}" | sed -n "${i}p" )
+                [[ "$bridge_ports" != '' && "$( get_table_val ifaces_info "iface=$bridge_ports" vlan-raw-device )" == '' || "$( echo "${ifaces_info[address]}" | sed -n "${i}p" )" != '' \
+                    || "$( echo "${ifaces_info[address6]}" | sed -n "${i}p" )" != '' ]] && {
+                        deny_ifaces+=" $ifname $bridge_ports"
+                }
+            done
+        }
         echo
-        unset bridge_ports
+
         function delete_if {
             [[ "$1" == '' || "$2" == '' ]] && exit 1
             local desc; [[ "$3" != '' ]] && desc=" ($3)"
             run_cmd /noexit "( pvesh delete '/nodes/$vm_node/network/$2'       2>&1;echo) | grep -Pq '(^$|interface does not exist$)'" \
                         && echo "[${c_green}Выполнено$c_null]: стенд ${c_value}$1$c_null: удален сетевой интерфейс ${c_lgreen}$2$c_null$desc" \
                         || { echo_err "Ошибка: не удалось удалить сетевой интерфейс '$2'"; exit 1; }
-            deny_ifaces+=" $2"
+            eval "deny_ifaces_$(echo -n "$vm_nodes" | grep -c '^')+=' $2'"
         }
-	local vm_nodes=''
+
+        local ifname vm_nodes='' vm_netifs depend_if if_desc k restart_network=false 
         for ((i=1; i<=$( echo -n "${pool_list[$group_name]}" | grep -c '^' ); i++)); do
             echo
             pool_name=$( echo "${pool_list[$group_name]}" | sed -n "${i}p" )
@@ -1838,13 +1893,19 @@ function manage_stands() {
             vmname_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/name}" )
             vm_node_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/node}" )
             vm_status_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/status}" )
-	    vm_nodes=$( echo "$vm_nodes"$'\n'"$vm_node_list" | sort -u )
+            vm_nodes=$( echo "$vm_nodes"$'\n'"$vm_node_list" | sort -u )
+            [[ ! -v "ifaces_info_$(echo -n "$vm_nodes" | grep -c '^')" ]] \
+                && local -A "ifaces_info_$(echo -n "$vm_nodes" | grep -c '^')" "deny_ifaces_$(echo -n "$vm_nodes" | grep -c '^')" && make_node_ifs_info
+
 
             for ((j=1; j<=$( echo -n "$vmid_list" | grep -c '^' ); j++)); do
                 vmid=$( echo "$vmid_list" | sed -n "${j}p" )
                 name=$( echo "$vmname_list" | sed -n "${j}p" )
                 vm_node=$( echo "$vm_node_list" | sed -n "${j}p" )
                 vm_status=$( echo "$vm_status_list" | sed -n "${j}p" )
+
+                local -n ifaces_info="ifaces_info_$(echo "$vm_nodes" | awk -v s="$vm_node" '$0=s{print NR;exit}')"
+                local -n deny_ifaces="deny_ifaces_$(echo "$vm_nodes" | awk -v s="$vm_node" '$0=s{print NR;exit}')"
 
                 vm_netifs=$( pvesh get /nodes/$vm_node/qemu/$vmid/config --output-format json-pretty ) || { echo_err "Ошибка: не удалось получить информацию об ВМ стенда '$pool_name'"; exit 1; }
                 vm_netifs=$( echo "$vm_netifs" | grep -Po '\s*\"net[0-9]+\"\s*:\s*(\".*?bridge=\K\w+)' )
@@ -1863,9 +1924,9 @@ function manage_stands() {
                     && echo "[${c_green}Выполнено$c_null]: стенд ${c_value}$pool_name$c_null: удалена машина ${c_lgreen}$name$c_null (${c_lcyan}$vmid$c_null)" \
                     || { echo_err "Ошибка: не удалось удалить ВМ '$vmid' стенда '$pool_name'"; exit 1; }
             done
-
-            run_cmd /noexit "( pveum pool modify '$pool_name' --delete 'true' --storage '"$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/storage}" )"' 2>&1;echo) | grep -Pq '(^$|is not a pool member$)'" \
-                || { echo_err "Ошибка: не удалось удалить привязку хранилищ от пула стенда '$pool_name'"; exit 1; }
+            local storages=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/storage}" )
+            [[ "$storages" != '' ]] && { run_cmd /noexit "( pveum pool modify '$pool_name' --delete 'true' --storage '$storages' 2>&1;echo) | grep -Pq '(^$|is not a pool member$)'" \
+                || { echo_err "Ошибка: не удалось удалить привязку хранилищ от пула стенда '$pool_name'"; exit 1; } }
             run_cmd /noexit "( pveum pool delete '$pool_name' 2>&1;echo) | grep -Pq '(^$|does not exist$)'" \
                     && echo "[${c_green}Выполнено$c_null]: стенд ${c_value}$pool_name$c_null: пул удален" \
                     || { echo_err "Ошибка: не удалось удалить пул стенда '$pool_name'"; exit 1; }
@@ -1972,7 +2033,7 @@ silent_mode=$opt_silent_install || $opt_silent_control
 
 
 
-echo "$c_lgreenПодождите, идет проверка конфигурации...$c_null" >/dev/tty
+echo "$c_lgreenПодождите, идет проверка конфигурации...$c_null" >>/dev/tty
 check_config
 
 if $opt_show_help; then show_help; show_config; exit; fi
