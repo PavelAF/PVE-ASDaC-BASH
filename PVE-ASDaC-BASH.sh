@@ -480,12 +480,12 @@ function show_config() {
     local i=0
     [[ "$1" != opt_verbose ]] && echo
     [[ "$1" == install-change ]] && {
-            echo $'Список параметров конфигурации:\n  0. Выйти из режима изменения настроек'
+            echo $'Список параметров конфигурации:\n   0. Выйти из режима изменения настроек'
             for var in inet_bridge storage pool_name pool_desc take_snapshots access_create $( ${config_base[access_create]} && echo access_{user_{name,desc,enable},pass_{length,chars},auth_{pve,pam}_desc} ); do
-                echo "  $((++i)). ${config_base[_$var]:-$var}: $( get_val_print "${config_base[$var]}" "$var" )"
+                printf '%4s' $((++i)); echo ". ${config_base[_$var]:-$var}: $( get_val_print "${config_base[$var]}" "$var" )"
             done
-            echo "  $((++i)). $_opt_dry_run: $( get_val_print $opt_dry_run )"
-            echo "  $((++i)). $_opt_verbose: $( get_val_print $opt_verbose )"
+            printf '%4s' $((++i)); echo "$_opt_dry_run: $( get_val_print $opt_dry_run )"
+            printf '%4s' $((++i)); echo "$_opt_verbose: $( get_val_print $opt_verbose )"
             return 0
     }
     [[ "$1" == passwd-change ]] && {
@@ -527,12 +527,12 @@ function show_config() {
         if [[ "$1" != var ]]; then
             echo $'#>------------------ Осовные параметры конфигурации -------------------<#\n'
             for var in inet_bridge storage $( [[ $opt_sel_var != 0 && "${config_base[pool_name]}" != '' ]] && echo pool_name ) take_snapshots access_create; do
-                echo "$((++i)). ${config_base[_$var]:-$var}: $(get_val_print "${config_base[$var]}" "$var" )"
+                echo "  $((++i)). ${config_base[_$var]:-$var}: $(get_val_print "${config_base[$var]}" "$var" )"
             done
 
             if ${config_base[access_create]}; then
                 for var in $( [[ "${config_base[access_user_name]}" == '' ]] && echo def_access_user_name || echo access_user_name ) access_user_enable access_pass_length access_pass_chars; do
-                    echo "$((++i)). ${config_base[_$var]:-$var}: $(get_val_print "${config_base[$var]}" "$var" )"
+                    printf '%3s' $((++i)); echo ". ${config_base[_$var]:-$var}: $(get_val_print "${config_base[$var]}" "$var" )"
                 done
             fi
         fi
