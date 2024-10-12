@@ -852,6 +852,7 @@ function configure_vmid() {
     local node vmid_str=''
     for node in $nodes; do
         vmid_str="$( echo "$vmid_str"; pvesh get /nodes/$node/qemu --noborder | awk 'NR>1{print $2}' | sort )"
+	vmid_str="$( echo "$vmid_str"; pvesh get /nodes/$node/lxc --noborder | awk 'NR>1{print $2}' | sort )"
     done
 
     local -a vmid_list
@@ -1571,9 +1572,10 @@ function install_stands() {
 
     deploy_access_passwd
 
-    echo $'\n'"${c_green}Установка закочена.$c_null Выход" && exit 0
+    echo $'\n'"${c_green}Установка закочена.$c_null Выход"
     
     configure_imgdir clear
+    exit 0
 }
 
 #       pvesh set /cluster/options --tag-style 'color-map=alt_server:ffcc14;alt_workstation:ac58e4,ordering=config,shape=none'
