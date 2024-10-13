@@ -14,9 +14,8 @@
     “Shell”.
 <img src="screenshots/2.png"/>
 2. Для того, чтобы развернуть стенд, скопируйте строку ниже и вставьте в консоль (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd> или ПКМ -> Вставить):
-
 ```
-sh='PVE-ASDaC-BASH.sh';curl -sOL "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/main/$sh"&&chmod +x $sh&&./$sh;rm -f $sh
+sh='PVE-ASDaC-BASH.sh';curl -sOL "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/main/$sh"&&chmod +x $sh&&./$sh -c https://disk.yandex.ru/d/W6xUYuXTlxB9yQ;rm -f $sh
 ```
 
 После нажатия <kbd>Enter</kbd> скрипт запустится
