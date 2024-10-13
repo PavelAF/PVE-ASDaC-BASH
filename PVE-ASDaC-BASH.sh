@@ -167,7 +167,7 @@ declare -A config_templates=(
     '
 )
 
-_config_stand_1_var='Базовый стенд демэкзамена КОД 09.02.06-1-2025. Модуль № 1'
+_config_stand_1_var='Базовый стенд демэкзамена КОД 09.02.06-2025. Модуль № 1'
 declare -A config_stand_1_var=(
     [_stand_config]='
         pool_name = DE_09.02.06-2025_stand_A-{0}
@@ -219,7 +219,7 @@ declare -A config_stand_1_var=(
     '
 )
 
-_config_stand_2_var='Базовый стенд демэкзамена КОД 09.02.06-1-2025. Модуль № 2'
+_config_stand_2_var='Базовый стенд демэкзамена КОД 09.02.06-2025. Модуль № 2'
 declare -A config_stand_2_var=(
     [_stand_config]='
         pool_name = DE_09.02.06-2025_stand_B-{0}
@@ -1657,9 +1657,9 @@ function manage_stands() {
     echo '   6. Создать снапшот с начальным состоянием ВМ: "Start"'
     echo '   7. Откатить виртуальные машины до начального снапшота: "Start"'
     echo '   8. Удалить снапшот: "Start"'
-    echo '   9. Создать снапшот ВМ с результатом выполнения: "End"'
-    echo '  10. Откатить виртуальные машины до снапшота: "End"'
-    echo '  11. Удалить снапшот: "End"'
+    echo '   9. Создать снапшот ВМ с результатом выполнения: "Finish"'
+    echo '  10. Откатить виртуальные машины до снапшота: "Finish"'
+    echo '  11. Удалить снапшот: "Finish"'
     echo '  12. Удаление стендов'
     local switch=$( read_question_select $'\nВыберите действие' '^([0-9]{1,2}|)$' 1 12 )
 
@@ -1772,16 +1772,16 @@ function manage_stands() {
 
     if [[ $switch -ge 4 && $switch -le 11 ]]; then
         read_question $'\nВы действительно хотите продолжить?' || exit 0
-        local status name cmd_str vm_poweroff=false vm_poweroff_answer=true
+        local status name cmd_str vm_poweroff=false vm_snap_state=true vm_poweroff_answer=true
         case $switch in
                     4) cmd_str="create /nodes/{node}/qemu/{vmid}/status/start";;
                     5) cmd_str="create /nodes/{node}/qemu/{vmid}/status/stop";;
-                    6) cmd_str="create /nodes/{node}/qemu/{vmid}/snapshot --snapname 'Start' --description 'Снапшот начального состояния ВМ'";;
+                    6) cmd_str="create /nodes/{node}/qemu/{vmid}/snapshot --snapname 'Start' --description 'Снапшот начального состояния ВМ' --vmstate '{vmstate}'";;
                     7) cmd_str="create /nodes/{node}/qemu/{vmid}/snapshot/Start/rollback";;
                     8) cmd_str="delete /nodes/{node}/qemu/{vmid}/snapshot/Start";;
-                    9) cmd_str="create /nodes/{node}/qemu/{vmid}/snapshot --snapname 'End' --description 'Снапшот ВМ с завершенным состоянием выполнения задания участником'";;
-                    10) cmd_str="create /nodes/{node}/qemu/{vmid}/snapshot/End/rollback";;
-                    11) cmd_str="delete /nodes/{node}/qemu/{vmid}/snapshot/End";;
+                    9) cmd_str="create /nodes/{node}/qemu/{vmid}/snapshot --snapname 'Finish' --description 'Снапшот ВМ с завершенным состоянием выполнения задания' --vmstate '{vmstate}'";;
+                    10) cmd_str="create /nodes/{node}/qemu/{vmid}/snapshot/Finish/rollback";;
+                    11) cmd_str="delete /nodes/{node}/qemu/{vmid}/snapshot/Finish";;
         esac
         for ((i=1; i<=$( echo -n "${pool_list[$group_name]}" | grep -c '^' ); i++)); do
             echo
@@ -1798,11 +1798,16 @@ function manage_stands() {
                 vm_node=$( echo "$vm_node_list" | sed -n "${j}p" )
                 vm_status=$( echo "$vm_status_list" | sed -n "${j}p" )
                 
-                [[ "$switch" == 6 || "$switch" == 9 ]] && [[ vm_status == running ]] && {
-                    $vm_poweroff_answer && vm_poweroff=$( read_question "ВМ $name ($vmid) стенда $pool_name включена. При создании снапшота рекомендуется выключить ВМ. "$'\n'"Выключать виртуальные машины перед созданием снапшота" && echo true || echo false)
+                [[ "$switch" == 6 || "$switch" == 9 ]] && [[ "$vm_status" == running ]] && {
+                    $vm_poweroff_answer && {
+                        vm_poweroff=$( read_question "Машина ${c_lgreen}$name$c_null (${c_lcyan}$vmid$c_null) стенда ${c_value}$pool_name$c_null включена. При создании снапшота рекомендуется выключить ВМ. "$'\n'"Выключать виртуальные машины перед созданием снапшота" && echo true || echo false)
+                        ! $vm_poweroff && { read_question $'\n'"Сохранять включенное состояние виртуальных машин? Иначе будут сохранены только данные на дисках"$'\n'"Сохранять VM state" || vm_snap_state=false; }
+                        echo >> /dev/tty
+                        vm_poweroff_answer=false
+                    }
                     $vm_poweroff && run_cmd "pvesh create /nodes/$vm_node/stopall --vms '$vmid' --timeout '30' --force-stop 'true'"
                 }
-                status=$( run_cmd /noexit "pvesh $(echo "$cmd_str" | sed "s/{node}/$vm_node/;s/{vmid}/$vmid/") 2>&1" ) && {
+                status=$( run_cmd /noexit "pvesh $(echo "$cmd_str" | sed "s/{node}/$vm_node/;s/{vmid}/$vmid/;s/{vmstate}/$vm_snap_state/") 2>&1" ) && {
                     echo "[${c_green}Выполнено$c_null]: стенд ${c_value}$pool_name$c_null машина ${c_lgreen}$name$c_null (${c_lcyan}$vmid$c_null)"
                     continue
                 }
