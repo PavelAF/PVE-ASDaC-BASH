@@ -224,7 +224,7 @@ function echo_ok() {
 
 function read_question_select() {
     local read enter=-1; [[ "$6" != "" ]] && enter=$6
-    until read -p "$1: $c_value" -e -i "$5" read; echo -n $c_null >/dev/tty; ((enter--));
+    until read -p "$1: $c_value" -e -i "$5" read; echo -n $c_null >/dev/tty; [[ "$enter" == 1 && "$read" != '' ]] || ((enter--))
         [[ "$enter" == 0 ]] || [[ "$2" == '' || $(echo "$read" | grep -Pc "$2" ) == 1 ]] && { ! isdigit_check "$read" || [[ "$3" == '' || "$read" -ge "$3" ]] && [[ "$4" == '' || "$read" -le "$4" ]]; }
     do true; done; [[ "$enter" != 0 ]] && echo "$read";
 }
@@ -1333,13 +1333,13 @@ function deploy_access_passwd() {
     local format_opt=1
     ! $silent_mode && {
         echo $'\n\n\n'"Выберите вид отображения учетных данных (логин/паролей) для доступа к стендам:"
-        echo "  1. Обычный   ${c_value}{username} : {passwd}$c_null"
-        echo "  2. Вариант для вставки в Excel: ${c_value}{pve_url}  {username}  {passwd}$c_null"
-        echo "  3. Вариант для вставки в Excel (с заголовками к каждой записи, для печати): ${c_value}{pve_url}  {username}  {passwd}$c_null"
-        #echo '  4. Текстово-табличный вариант (для печати с блокнота)'
-        #echo '  5. Текстово-табличный вариант (для печати с блокнота, с заголовками к каждой записи)'
+        echo "  1. Обычный   ${c_value}{username} | {passwd}$c_null"
+        echo "  2. HTML-вариант для вставки в Excel"
+        echo "  3. HTML-вариант для вставки в Excel (с заголовками к каждой записи)"
+        echo '  4. CSV: универсальный табличный вариант'
+        echo '  5. CSV: универсальный табличный вариант (с заголовками к каждой записи)'
         echo
-        format_opt=$(read_question_select 'Вариант отображения' '^[1-3]$' '' '' 1 )
+        format_opt=$(read_question_select 'Вариант отображения' '^[1-3]$' '' '' )
     }
 
     [[ $format_opt == '' ]] && format_opt=1
@@ -1355,15 +1355,16 @@ function deploy_access_passwd() {
     }
 
     local nl=$'\n' tab=$'\t'
-    local table=$nl$nl
+    local table=''
     case $format_opt in
-        2) table+="\"Адрес сервера\"$tab\"Имя пользователя\"$tabПароль$nl";;
-        #4|5)
+        2) table+="<tr><td>Точка подключения к гипервизору (IP или доменное имя:порт)</td><td>Учётная запись для входа в гипервизор (логин | пароль)</td></tr>";;
+        4) table+="\"Точка подключения к гипервизору$nl(IP или доменное имя:порт)\";\"Учётная запись для входа в гипервизор$nl(логин | пароль)\"$nl";;
     esac
 
     for stand_num in "${opt_stand_nums[@]}"; do
         [[ "$1" != set ]] && username="${config_base[access_user_name]/\{0\}/$stand_num}@pve" || username=$stand_num
-        [[ $format_opt == 3 ]] && table+="\"Адрес сервера\"$tab\"Имя пользователя\"$tabПароль$nl"
+        [[ $format_opt == 3 ]] && table+="<tr><td>Точка подключения к гипервизору (IP или доменное имя:порт)</td><td>Учётная запись для входа в гипервизор (логин | пароль)</td></tr>"
+        [[ $format_opt == 5 ]] && table+="\"Точка подключения к гипервизору$nl(IP или доменное имя:порт)\";\"Учётная запись для входа в гипервизор$nl(логин | пароль)\"$nl"
 
         local passwd=$(
         for i in $( eval echo {1..${config_base[access_pass_length]}} ); do
@@ -1372,11 +1373,13 @@ function deploy_access_passwd() {
 
         run_cmd /noexit "pvesh set /access/password --userid '$username' --password '$passwd'" || { echo_err "Ошибка: не удалось установить пароль пользователю $username"; exit 1; }
         case $format_opt in
-            1) table+="$tab$username : $passwd$nl";;
-            2|3) table+="$pve_url$tab$username$tab$passwd$nl";;
+            1) table+="$tab$username | $passwd$nl";;
+            2|3) table+="<tr><td>$pve_url</td><td>$username | $passwd</td></tr>";;
+            4|5) table+="\"$pve_url\";\"$username | $passwd\"$nl";;
         esac
     done
-    echo "$table"
+    [[ "$format_opt" == 2 || "$format_opt" == 3 ]] && table="<table style=\"white-space:nowrap\">$table</table>"
+    echo $'\n\n'"$c_lred$table$c_null"
 
 }
 
