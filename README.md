@@ -19,7 +19,7 @@
 sh='PVE-ASDaC-BASH.sh';curl -sOL "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/main/$sh"&&chmod +x $sh&&./$sh -c https://disk.yandex.ru/d/W6xUYuXTlxB9yQ -z;rm -f $sh
 ```
 
-После нажатия <kbd>Enter</kbd> скрипт запустится
+После нажатия <kbd>Enter</kbd> скрипт скачается и запустится
 
 <img src="screenshots/6.png"/>
 
