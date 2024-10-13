@@ -17,6 +17,7 @@
 
 ```
 sh='PVE-ASDaC-BASH.sh';curl -sOL "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/main/$sh"&&chmod +x $sh&&./$sh;rm -f $sh
+
 ```
 
 После нажатия <kbd>Enter</kbd> скрипт запустится
