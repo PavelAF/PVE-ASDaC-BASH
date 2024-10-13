@@ -1508,7 +1508,7 @@ function install_stands() {
     show_config
 
     _exit=false
-    ! $silent_mode && read_question 'Хотите изменить другие параметры?' && {
+    ! $silent_mode && read_question 'Хотите изменить параметры?' && {
         local opt_names=( inet_bridge storage pool_name pool_desc take_snapshots access_{create,user_{name,desc,enable},pass_{length,chars},auth_{pve,pam}_desc} dry-run verbose)
         while true; do
             show_config install-change
