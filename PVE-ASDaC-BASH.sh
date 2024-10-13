@@ -1,5 +1,5 @@
 #!/bin/bash
-ex() {((ex_var++)); [[ "$ex_var" == 1 ]] && configure_imgdir clear; echo $'\e[m'; exit; }
+ex() {((ex_var++)); echo -n $'\e[m'; [[ "$ex_var" == 1 ]] && configure_imgdir clear; echo $'\e[m'; exit; }
 trap ex INT
 
 # Запуск:               sh='PVE-ASDaC-BASH.sh';curl -sOLH 'Cache-Control: no-cache' "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/main/$sh"&&chmod +x $sh&&./$sh;rm -f $sh
@@ -93,195 +93,71 @@ declare -A config_access_roles=(
 # config_template - импорт настроек ВМ из ранее описанного шаблона
 _config_templates='Список шаблонов ВМ'
 declare -A config_templates=(
-    [_Alt-JeOS]='Базовый шаблон для Альт p11 JeOS-systemd'
-    [Alt-JeOS]='
-        tags = alt_jeos
+    [_test]='Шаблон ВМ для теста'
+    [test]='
+        startup = order=100,up=100,down=10
+        tags = test
         ostype = l26
         serial0 = socket
         tablet = 0
         scsihw = virtio-scsi-single
         cpu = host
         cores = 1
-        memory = 1024
-        boot_disk0 = https://disk.yandex.ru/d/31yfM0_qNhTTkw/Alt-p11_Jeos-systemd.qcow2
-	access_roles = Competitor
-    '
-    [_Alt-Server_10.1]='Базовый шаблон для Альт Сервер 10.1'
-    [Alt-Server_10.1]='
-        tags = alt_server
-        ostype = l26
-        serial0 = socket
-        agent = 1
-        tablet = 0
-        scsihw = virtio-scsi-single
-        cpu = host
-        cores = 1
-        memory = 2048
-        boot_disk0 = https://disk.yandex.ru/d/31yfM0_qNhTTkw/Alt-Server_10.1.qcow2
-        access_roles = Competitor
-    '
-    [_Alt-Workstation_10.1]='Базовый шаблон для Альт Рабочая Станция 10.1'
-    [Alt-Workstation_10.1]='
-        tags = alt_workstation
-        ostype = l26
-        serial0 = socket
-        agent = 1
-        scsihw = virtio-scsi-single
-        cpu = host
-        cores = 2
-        memory = 3072
-        boot_disk0 = https://disk.yandex.ru/d/31yfM0_qNhTTkw/Alt-Workstation_10.1.qcow2
-        access_roles = Competitor
-    '
-    [_Eltex-vESR]='Базовый шаблон для Eltex vESR'
-    [Eltex-vESR]='
-        tags = eltex-vesr
-        ostype = l26
-        serial0 = socket
-        tablet = 0
         acpi = 0
-        scsihw = virtio-scsi-single
-        cpu = host
-        cores = 4
-        memory = 3072
-        netifs_type = e1000
-        boot_disk0 = https://disk.yandex.ru/d/31yfM0_qNhTTkw/vESR.qcow2
-        access_roles = Competitor
-    '
-    [_EcoRouterOS]='Базовый шаблон для EcoRouterOS'
-    [EcoRouterOS]='
-        tags = ecorouter
-        ostype = l26
-        machine = pc-i440fx-8.0
-        serial0 = socket
-        tablet = 0
-        cpu = host
-        cores = 2
-        memory = 4096
-        rng0 = source=/dev/urandom
+        agent = 1
+        memory = 1024
+        bios = seabios
         disk_type = ide
         netifs_type = vmxnet3
-        network0 = { bridge=inet, state=down }
-        boot_disk0 = https://disk.yandex.ru/d/31yfM0_qNhTTkw/EcoRouter.qcow2
-        access_roles = Competitor
+	    access_roles = Competitor
+        description = test description
+        arch = x86_64
+        args = -no-shutdown
+        vga = serial0
+        kvm = 1
+        rng0 = source=/dev/urandom
+        disk3 = 0.2
+        network0 = { bridge=inet      }
     '
 )
 
-_config_stand_1_var='Базовый стенд демэкзамена КОД 09.02.06-2025. Модуль № 1'
+_config_stand_1_var='Вариант развертывания для тестирования функционала'
 declare -A config_stand_1_var=(
     [_stand_config]='
-        pool_name = DE_09.02.06-2025_stand_A-{0}
-        stands_display_desc = Стенды демэкзамена 09.02.06 Сетевое и системное администрирование. Модуль 1
-        pool_desc = Стенд участника демэкзамена "Сетевое и системное администрирование". Стенд A-{0}
-        access_user_name = Student-A{0}
-        access_user_desc = Учетная запись участника демэкзамена #{0}
+        pool_name = Test_A-{0}
+        stands_display_desc = Поле описания служебной группы стендов тестирования функционала
+        pool_desc = Описание пула стенда тестирования функционала
+        access_user_name = Test-A{0}
+        access_user_desc = Описание учетной записи стенда тестирования функционала #{0}
     '
 
-    [_ISP]='Альт JeOS'
-    [ISP]='
-    	config_template = Alt-JeOS
-        startup = order=1,up=8,down=30
-        network1 = { bridge=inet }
-        network2 = 🖧: ISP-HQ
-        network3 = 🖧: ISP-BR
-    '
-    [_HQ-RTR]='EcoRouterOS'
-    [HQ-RTR]='
-        config_template = EcoRouterOS
-        startup = order=2,up=8,down=1
-        network1 = 🖧: ISP-HQ
-        network2 = {bridge="🖧: HQ-Net", trunks=100;200;999 }
-    '
-    [_HQ-SRV]='Альт Сервер 10.1'
-    [HQ-SRV]='
-        config_template = Alt-Server_10.1
-        startup = order=3,up=8,down=30
-        network1 = {bridge="🖧: HQ-Net", tag=100}
-    '
-    [_HQ-CLI]='Альт Рабочая Станция 10.1'
-    [HQ-CLI]='
-        config_template = Alt-Workstation_10.1
-        startup = order=4,up=8,down=30
-        network1 = {bridge="🖧: HQ-Net", tag=200}
-    '
-    [_BR-RTR]='EcoRouterOS'
-    [BR-RTR]='
-        config_template = EcoRouterOS
-        startup = order=2,up=8,down=1
-        network1 = 🖧: ISP-BR
-        network2 = 🖧: BR-Net
-    '
-    [_BR-SRV]='Альт Сервер 10.1'
-    [BR-SRV]='
-        config_template = Alt-Server_10.1
-        startup = order=3,up=8,down=30
-        network1 = 🖧: BR-Net
-    '
-)
-
-_config_stand_2_var='Базовый стенд демэкзамена КОД 09.02.06-2025. Модуль № 2'
-declare -A config_stand_2_var=(
-    [_stand_config]='
-        pool_name = DE_09.02.06-2025_stand_B-{0}
-        stands_display_desc = Стенды демэкзамена 09.02.06 Сетевое и системное администрирование. Модуль 2
-        pool_desc = Стенд участника демэкзамена "Сетевое и системное администрирование". Стенд B-{0}
-        access_user_name = Student-B{0}
-        access_user_desc = Учетная запись участника демэкзамена B#{0}
+    [_test-vm1]='test-vm'
+    [test-vm1]='
+        description = rewritred description test-vm1
+        disk3 = 0.1
+    	config_template = test
+        startup = order=1,up=5,down=5
+        network0 = {bridge=inet,state=down}
+        network1 =    {     bridge    =    "    🖧: тест                 "    ,     state     =    down    }      
+        network2 =         {      bridge     =      "      🖧: тест  "     , state       =      down     , trunks       =        10;20;30       }          
+        network3 =       {            bridge      =    "         🖧: тест      "        , tags=      10    ,      state             =      down       }      
+        network4 =   🖧: тест  
     '
 
-    [_ISP]='Альт JeOS'
-    [ISP]='
-    	config_template = Alt-JeOS
-        startup = order=1,up=8,down=30
-        network1 = { bridge=inet }
-        network2 = 🖧: ISP-HQ
-        network3 = 🖧: ISP-BR
-        boot_disk0 = https://disk.yandex.ru/d/31yfM0_qNhTTkw/DE39-2025_M2/ISP_DE39-2025_M2.qcow2
-    '
-    [_HQ-RTR]='EcoRouterOS'
-    [HQ-RTR]='
-        config_template = EcoRouterOS
-        startup = order=2,up=8,down=1
-        network1 = 🖧: ISP-HQ
-        network2 = {bridge="🖧: HQ-Net", trunks=100;200;999 }
-        boot_disk0 = https://disk.yandex.ru/d/31yfM0_qNhTTkw/DE39-2025_M2/HQ-RTR_DE39-2025_M2.qcow2
-    '
-    [_HQ-SRV]='Альт Сервер 10.1'
-    [HQ-SRV]='
-        config_template = Alt-Server_10.1
-        startup = order=3,up=8,down=30
-        network1 = {bridge="🖧: HQ-Net", tag=100}
-        disk1 = 1GB
-        disk2 = 1GB
-        disk3 = 1GB
-        boot_disk0 = https://disk.yandex.ru/d/31yfM0_qNhTTkw/DE39-2025_M2/HQ-SRV_DE39-2025_M2.qcow2
-    '
-    [_HQ-CLI]='Альт Рабочая Станция 10.1'
-    [HQ-CLI]='
-        config_template = Alt-Workstation_10.1
-        startup = order=4,up=8,down=30
-        network1 = {bridge="🖧: HQ-Net", tag=200}
-        boot_disk0 = https://disk.yandex.ru/d/31yfM0_qNhTTkw/DE39-2025_M2/HQ-CLI_DE39-2025_M2.qcow2
-    '
-    [_BR-RTR]='EcoRouterOS'
-    [BR-RTR]='
-        config_template = EcoRouterOS
-        startup = order=2,up=8,down=1
-        network1 = 🖧: ISP-BR
-        network2 = 🖧: BR-Net
-        boot_disk0 = https://disk.yandex.ru/d/31yfM0_qNhTTkw/DE39-2025_M2/BR-RTR_DE39-2025_M2.qcow2
-    '
-    [_BR-SRV]='Альт Сервер 10.1'
-    [BR-SRV]='
-        config_template = Alt-Server_10.1
-        startup = order=3,up=8,down=30
-        network1 = 🖧: BR-Net
-        boot_disk0 = https://disk.yandex.ru/d/31yfM0_qNhTTkw/DE39-2025_M2/BR-SRV_DE39-2025_M2.qcow2
+    [_test-vm2]='test-vm'
+    [test-vm2]='
+        description = rewritred description test-vm2
+        disk3 = 0.1
+        disk4 = 0.1
+    	config_template = test
+        startup = order=10,up=10,down=10
+        machine = pc-i440fx-99.99
+        network4 =       🖧: тест      
+        network2 =      {     bridge     =   "         🖧: тест        "     ,       vtag      =      100     ,        master         =      inet       }        
     '
 )
 
 ########################## -= Конец конфигурации =- ##########################
-
 
 
 
@@ -335,6 +211,15 @@ function echo_warn() {
 
 function echo_info() {
     echo "$c_info$@$c_null" >> /dev/tty
+}
+
+function echo_verbose() {
+    ! $opt_verbose && ! $opt_dry_run && return 0
+    echo "[${c_lyellow}Verbose${c_null}] $@" >> /dev/tty
+}
+
+function echo_ok() {
+    echo "[${c_green}Выполнено${c_null}] $@" >> /dev/tty
 }
 
 function read_question_select() {
@@ -453,6 +338,7 @@ function parse_noborder_table() {
 
 function show_help() {
     local t=$'\t'
+    echo
     echo 'Скрипт простого, быстрого развертывания/управления учебными стендами виртуальной ИТ инфраструктуры на базе гипервизора Proxmox VE'
     echo 'Базовые настройки можно изменять при запуске скрипта в основном (интерактивном режиме), так и через аргументы командной строки'
     echo 'Переменные конфигурации можно изменять в самом файле скрипта в разделе "Конфигурация"'
@@ -734,7 +620,7 @@ function configure_standnum() {
     [[ "$is_show_config" == 'false' ]] && { is_show_config=true; show_config; }
     echo $'\nВведите номера инсталляций стендов. Напр., 1-5 развернет стенды под номерами 1, 2, 3, 4, 5 (всего 5)'
     set_standnum $( read_question_select 'Номера стендов (прим: 1,2,5-10)' '^([1-9][0-9]{0,2}((\-|\.\.)[1-9][0-9]{0,2})?([\,](?!$\Z)|(?![0-9])))+$' )
-    echo $'\n'"$c_lgreenПодождите, идет проверка конфигурации...$c_null" >>/dev/tty
+    echo $'\n'"${c_lgreen}Подождите, идет проверка конфигурации...${c_null}" >>/dev/tty
 }
 
 function set_varnum() {
@@ -814,7 +700,7 @@ function configure_wan_vmbr() {
         done
         local switch=$( read_question_select $'\nВыберите номер сетевого интерфейса' '^[0-9]+$' 1 $( echo -n "$bridge_ifs" | grep -c '^' ) )
         config_base[inet_bridge]=$( echo "$bridge_ifs" | awk -v n="$switch" 'NR == n')
-        echo "$c_lgreenПодождите, идет проверка конфигурации...$c_null"
+        echo "${c_lgreen}Подождите, идет проверка конфигурации...${c_null}"
         return 0;
     }
     local check="$(echo "$all_bridge_ifs" | grep -Fxq "${config_base[inet_bridge]}" && echo true || echo false )"
@@ -1086,7 +972,7 @@ function check_config() {
     }
 
     for check_func in configure_{wan_vmbr,vmid,imgdir,poolname,username,storage,roles}; do
-        $opt_verbose && echo "Проверка функционала $check_func"
+        echo_verbose "Проверка функционала $check_func"
         $check_func $1
     done
 
@@ -1102,14 +988,14 @@ function check_config() {
     done
 
     for desc in pool_desc access_user_desc access_auth_pam_desc access_auth_pve_desc; do
-        $opt_verbose && echo "Проверка строки описания на валидность: $desc"
+        echo_verbose "Проверка строки описания на валидность: $desc"
         ! descr_string_check "${config_base[$desc]}" && { echo_err "Ошибка: описание '$desc' некорректно. Выход" && exit 1; }
     done
 
     [[ "${config_base[access_auth_pam_desc]}" != '' && "${config_base[access_auth_pam_desc]}" == "${config_base[access_auth_pve_desc]}" ]] && echo_err 'Ошибка: выводимое имя типов аутентификации не должны быть одинаковыми' && exit 1
 
     for val in take_snapshots access_create access_user_enable; do
-        $opt_verbose && echo "Проверка зачения конфигурации $val на валидость типу bool"
+        echo_verbose "Проверка зачения конфигурации $val на валидость типу bool"
         ! isbool_check "${config_base[$val]}" && echo_err "Ошибка: зачение переменной конфигурации $val должна быть bool и равляться true или false. Выход" && exit 1
     done
 
@@ -1163,7 +1049,7 @@ function run_cmd() {
     [[ "$1" == '' ]] && echo_err 'Ошибка: run_cmd нет команды'
 
     local cmd_exec="$@"
-    $opt_dry_run && echo "$c_warningВыполнение команды$c_null: $cmd_exec" >> /dev/tty
+    $opt_dry_run && echo "[$c_warningВыполнение команды$c_null] $cmd_exec" >> /dev/tty
 
     ! $opt_dry_run && {
         local return_cmd=''
@@ -1206,9 +1092,11 @@ function deploy_stand_config() {
             $not_special && cmd_line+=" --net$if_num '${netifs_type:-virtio},bridge=$iface$net_options'"
 
             if_desc=${if_desc/\{0\}/$stand_num}
-            $create_if && ($opt_verbose || $opt_dry_run) && echo_info "Добавление сети $iface : '$if_desc'"
-            $create_if && { run_cmd /noexit "pvesh create '/nodes/$(hostname)/network' --iface '$iface' --type 'bridge' --autostart 'true' --comments '$if_desc'$vlan_aware --slaves '$vlan_slave'" \
-                    || { read -n 1 -p "Интерфейс '$iface' ($if_desc) уже существует! Выход"; exit 1 ;} }
+            $create_if && {
+                echo_verbose "${c_info}Добавление сети $iface : '$if_desc'${c_null}"
+                run_cmd /noexit "pvesh create '/nodes/$(hostname)/network' --iface '$iface' --type 'bridge' --autostart 'true' --comments '$if_desc'$vlan_aware --slaves '$vlan_slave'" \
+                    || { read -n 1 -p "Интерфейс '$iface' ($if_desc) уже существует! Выход"; exit 1 ;}
+            }
 
             $not_special && $create_access_network && ${config_base[access_create]} && { run_cmd /noexit "pveum acl modify '/sdn/zones/localnetwork/$iface' --users '$username' --roles 'PVEAuditor'" || { echo_err "Не удалось создать ACL правило для сетевого интерфейса '$iface' и пользователя '$username'"; exit 1; } }
             
@@ -1233,7 +1121,7 @@ function deploy_stand_config() {
 
         if [[ "$if_config" =~ ^\{\ *bridge\ *=\ *([0-9\.a-z]+|\"\ *((\\\"|[^\"])+)\")\ *(,.*)?\}$ ]]; then
             if_bridge="${BASH_REMATCH[1]/\\\"/\"}"
-            if_desc="${BASH_REMATCH[2]/\\\"/\"}"
+            if_desc=$( echo "${BASH_REMATCH[2]/\\\"/\"}" | sed 's/[[:space:]]*$//' )
             if_config="${BASH_REMATCH[4]}"
             [[ "$if_config" =~ ^.*,\ *state\ *=\ *down\ *($|,.+$) ]] && net_options+=',link_down=1'
             [[ "$if_config" =~ ^.*,\ *trunks\ *=\ *([0-9\;]*[0-9])\ *($|,.+$) ]] && net_options+=",trunks=${BASH_REMATCH[1]}" && vlan_aware=" --bridge_vlan_aware 'true'"
@@ -1251,7 +1139,7 @@ function deploy_stand_config() {
                         echo_err "Ошибка конфигурации: повторная попытка создать VLAN интерфейс для связки с другим Bridge"; exit 1
                     elif [[ ! -v "Networking[$master_if.$tag]" ]]; then
                         [[ "$if_desc" == "" ]] && if_desc="$if_bridge"
-                        ($opt_verbose || $opt_dry_run) && echo_info "Добавление VLAN $master_if.$tag : '$master_desc => $if_desc'"
+                        echo_verbose "${c_info}Добавление VLAN $master_if.$tag : '$master_desc => $if_desc'${c_null}"
                         run_cmd /noexit "pvesh create '/nodes/$(hostname)/network' --iface '$master_if.$tag' --type 'vlan' --autostart 'true' --comments '$master_desc => $if_desc'" \
                             || { read -n 1 -p "Интерфейс '$iface' ($if_desc) уже существует! Выход"; exit 1 ;}
                         Networking["${master_if}.$tag"]="{vlan=$if_bridge}"
@@ -1350,13 +1238,13 @@ function deploy_stand_config() {
         if ! echo "$machine_list" | grep -Fxq "$type"; then
             if [[ "$type" =~ ^((pc)-i440fx|pc-(q35))-[0-9]+.[0-9]+$ ]]; then
                 type=${BASH_REMATCH[2]:-${BASH_REMATCH[3]}}
-                echo_warn "[Предупреждение]: в конфигурации ВМ '$elem' указанный тип машины '$1' не существует в этой версии PVE/QEMU. Заменен на последнюю доступную версию: 'pc-${type/pc/i440fx}'"
+                echo_warn "[Предупреждение]: в конфигурации ВМ '$elem' указанный тип машины '$1' не существует в этой версии PVE/QEMU. Заменен на последнюю доступную версию pc-${type/pc/i440fx}"
             else
                 echo_err "Ошибка: в конфигурации ВМ '$elem' указан неизвестный тип машины '$1'. Ошибка или старая версия PVE?. Выход"
                 exit 1
             fi
         fi
-        cmd_line+=" -machine '$type'"
+        cmd_line+=" --machine '$type'"
     }
 
     [[ "$1" == '' ]] && echo_err "Внутренняя ошибка скрипта установки стенда" && exit 1
@@ -1425,13 +1313,13 @@ function deploy_stand_config() {
         ${config_base[access_create]} && [[ "${vm_config[access_roles]}" != '' ]] && run_cmd "pveum acl modify '/vms/$vmid' --roles '${vm_config[access_roles]}' --users '$username'"
 
         ${config_base[take_snapshots]} && run_cmd /pipefail "qm snapshot '$vmid' 'Start' --description 'Исходное состояние ВМ' | tail -n2"
-        echo "$c_green[Выполнено]$c_null: $c_lcyanКонфигурирование VM $elem завершено$c_null"
+        echo_ok "${c_lcyan}Конфигурирование VM $elem завершено$c_null"
         ((vmid++))
     done
 
     [[ "${#Networking[@]}" != 0 ]] && run_cmd "pvesh set '/nodes/$(hostname)/network'"
 
-    echo "$c_green[Выполнено]$c_null: $c_lcyanКонфигурирование стенда $stand_num завершено$c_null"
+    echo_ok "${c_lcyan}Конфигурирование стенда $stand_num завершено$c_null"
 }
 
 function deploy_access_passwd() {
@@ -1808,7 +1696,7 @@ function manage_stands() {
                     $vm_poweroff && run_cmd "pvesh create /nodes/$vm_node/stopall --vms '$vmid' --timeout '30' --force-stop 'true'"
                 }
                 status=$( run_cmd /noexit "pvesh $(echo "$cmd_str" | sed "s/{node}/$vm_node/;s/{vmid}/$vmid/;s/{vmstate}/$vm_snap_state/") 2>&1" ) && {
-                    echo "[${c_green}Выполнено$c_null]: стенд ${c_value}$pool_name$c_null машина ${c_lgreen}$name$c_null (${c_lcyan}$vmid$c_null)"
+                    echo_ok "стенд ${c_value}$pool_name$c_null машина ${c_lgreen}$name$c_null (${c_lcyan}$vmid$c_null)"
                     continue
                 }
 
@@ -1847,7 +1735,7 @@ function manage_stands() {
             [[ "$1" == '' || "$2" == '' ]] && exit 1
             local desc; [[ "$3" != '' ]] && desc=" ($3)"
             run_cmd /noexit "( pvesh delete '/nodes/$vm_node/network/$2'       2>&1;echo) | grep -Pq '(^$|interface does not exist$)'" \
-                        && echo "[${c_green}Выполнено$c_null]: стенд ${c_value}$1$c_null: удален сетевой интерфейс ${c_lgreen}$2$c_null$desc" \
+                        && echo_ok "стенд ${c_value}$1$c_null: удален сетевой интерфейс ${c_lgreen}$2$c_null$desc" \
                         || { echo_err "Ошибка: не удалось удалить сетевой интерфейс '$2'"; exit 1; }
             eval "deny_ifaces_$(echo -n "$vm_nodes" | grep -c '^')+=' $2'"
         }
@@ -1889,21 +1777,21 @@ function manage_stands() {
                 done
                 [[ $vm_status == running ]] && run_cmd "pvesh create /nodes/$vm_node/qemu/$vmid/status/stop --skiplock 'true' --timeout '0'"
                 run_cmd /noexit "( pvesh delete /nodes/$vm_node/qemu/$vmid --skiplock 'true' --purge 'true' 2>&1;echo) | grep -Pq '(^$|does not exist$)'" \
-                    && echo "[${c_green}Выполнено$c_null]: стенд ${c_value}$pool_name$c_null: удалена машина ${c_lgreen}$name$c_null (${c_lcyan}$vmid$c_null)" \
+                    && echo_ok "стенд ${c_value}$pool_name$c_null: удалена машина ${c_lgreen}$name$c_null (${c_lcyan}$vmid$c_null)" \
                     || { echo_err "Ошибка: не удалось удалить ВМ '$vmid' стенда '$pool_name'"; exit 1; }
             done
             local storages=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/storage}" )
             [[ "$storages" != '' ]] && { run_cmd /noexit "( pveum pool modify '$pool_name' --delete 'true' --storage '$storages' 2>&1;echo) | grep -Pq '(^$|is not a pool member$)'" \
                 || { echo_err "Ошибка: не удалось удалить привязку хранилищ от пула стенда '$pool_name'"; exit 1; } }
             run_cmd /noexit "( pveum pool delete '$pool_name' 2>&1;echo) | grep -Pq '(^$|does not exist$)'" \
-                    && echo "[${c_green}Выполнено$c_null]: стенд ${c_value}$pool_name$c_null: пул удален" \
+                    && echo_ok "стенд ${c_value}$pool_name$c_null: пул удален" \
                     || { echo_err "Ошибка: не удалось удалить пул стенда '$pool_name'"; exit 1; }
         done
 
         for ((i=1; i<=$( echo -n "${user_list[$group_name]}" | grep -c '^' ); i++)); do
             user_name=$( echo "${user_list[$group_name]}" | sed -n "${i}p" )
             run_cmd /noexit "pveum user delete '$user_name'" \
-                && echo "[${c_green}Выполнено$c_null]: пользователь ${c_value}$user_name$c_null удален" \
+                && echo_ok "пользователь ${c_value}$user_name$c_null удален" \
                 || { echo_err "Ошибка: не удалось удалить пользователя '$user_name' стенда '$pool_name'"; exit 1; }
         done
 
@@ -1912,16 +1800,16 @@ function manage_stands() {
         for role in $( echo "${acl_list[roleid]}" | sort -u ); do
             echo "$roles_list_after" | grep -Fxq "$role" || {
                 [[ "$list_roles" == '' ]] && { list_roles=$( pveum role list --output-format yaml | grep -v - | grep -Po '^\s*(roleid|special)\s*:\s*\K.*' ) || exit 1; }
-                echo "$list_roles" | grep -Pzq '(^|\n)'$role'\n0' && run_cmd "pveum role delete '$role'" && echo "[${c_green}Выполнено$c_null]: роль ${c_value}$role$c_null удалена"
+                echo "$list_roles" | grep -Pzq '(^|\n)'$role'\n0' && run_cmd "pveum role delete '$role'" && echo_ok "роль ${c_value}$role$c_null удалена"
             }
         done
 
-        [[ "$del_all" == true ]] && run_cmd "pveum group delete '$group_name'" && echo "[${c_green}Выполнено$c_null]: группа стенда ${c_value}$group_name$c_null удалена"
+        [[ "$del_all" == true ]] && run_cmd "pveum group delete '$group_name'" && echo_ok "группа стенда ${c_value}$group_name$c_null удалена"
 
         $restart_network && {
             for pve_host in $vm_nodes; do
                 run_cmd "pvesh set '/nodes/$pve_host/network'"
-                echo "[${c_green}Выполнено$c_null]: рестарт сети хоста '$pve_host'"
+                echo_ok "рестарт сети хоста '$pve_host'"
             done
         }
     fi
@@ -1990,7 +1878,7 @@ while [ $# != 0 ]; do
                 -l|--pass-length)       check_arg "$2"; config_base[access_pass_length]="$2"; shift;;
                 -char|--pass-chars)     check_arg "$2"; config_base[access_pass_chars]="$2"; shift;;
                 -sctl|--silent-control) opt_silent_control=true;;
-                *) echo_err "Ошибка: некорректный аргумент: $1. Выход"; exit;;
+                *) echo_err "Ошибка: некорректный аргумент: '$1'"; opt_show_help=true;;
             esac
             shift;;
     esac
@@ -2001,7 +1889,7 @@ silent_mode=$opt_silent_install || $opt_silent_control
 
 
 
-echo "$c_lgreenПодождите, идет проверка конфигурации...$c_null" >>/dev/tty
+echo "${c_lgreen}Подождите, идет проверка конфигурации...${c_null}" >>/dev/tty
 check_config
 
 if $opt_show_help; then show_help; show_config; exit; fi
