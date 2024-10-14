@@ -1,7 +1,7 @@
 #!/bin/bash
 ex() { ((ex_var++)); echo -n $'\e[m' >>/dev/tty; [[ "$ex_var" == 1 ]] && configure_imgdir clear; echo $'\e[m' >>/dev/tty; exit; }
 
-trap ex INT HUP TERM PIPE EXIT QUIT
+trap ex INT
 
 # Запуск:               sh='PVE-ASDaC-BASH.sh';curl -sOLH 'Cache-Control: no-cache' "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/main/$sh"&&chmod +x $sh&&./$sh;rm -f $sh
 
