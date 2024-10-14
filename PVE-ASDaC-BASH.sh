@@ -571,7 +571,7 @@ function get_file() {
         [[ -r "$filename" ]] && [[ "$filesize" == '0' || "$( wc -c "$filename" | awk '{printf $1;exit}' )" == "$filesize" ]] \
         && [[ "$filesize" -gt 655360 && "${#file_sha256}" != 64 || "$( sha256sum "$filename" | awk '{printf $1}' )" == "$file_sha256" ]] || {
             configure_imgdir add-size $max_filesize
-            echo_verbose "Скачивание файла ${c_value}$filename${c_null}"
+            echo_tty "[${c_info}Info${c_null}] Скачивание файла ${c_value}$filename${c_null}"
             echo_verbose "URL: ${c_value}$url${c_null}"
             echo_verbose "SIZE: ${c_value}$filesize${c_null} SHA-256: ${c_value}$file_sha256${c_null}"
             curl --max-filesize $max_filesize -GL "$url" -o "$filename" || { echo_err "Ошибка скачивания файла ${c_value}$filename${c_null} URL: ${c_value}$url${c_null}. Выход"; exit 1; }
@@ -1011,7 +1011,7 @@ function check_config() {
     [[ "${config_base[access_auth_pam_desc]}" != '' && "${config_base[access_auth_pam_desc]}" == "${config_base[access_auth_pve_desc]}" ]] && echo_err 'Ошибка: выводимое имя типов аутентификации не должны быть одинаковыми' && exit 1
 
     for val in take_snapshots access_create access_user_enable run_vm_after_installation create_templates_pool create_linked_clones; do
-        echo_verbose "Проверка зачения конфигурации $val на валидость типу bool"
+        echo_verbose "Проверка значения конфигурации $val на валидость типу bool"
         ! isbool_check "${config_base[$val]}" && echo_err "Ошибка: зачение переменной конфигурации $val должна быть bool и равляться true или false. Выход" && exit 1
     done
 
