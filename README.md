@@ -5,5 +5,5 @@
 
 команда для скачивания и запуска скрипта:
 ```
-sh='PVE-ASDaC-BASH.sh';curl -sOL "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/testing/$sh"&&chmod +x $sh&&./$sh -c https://disk.yandex.ru/d/W6xUYuXTlxB9yQ;rm -f $sh
+sh='PVE-ASDaC-BASH.sh';curl -sOL "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/testing/$sh"&&chmod +x $sh&&./$sh -c https://disk.yandex.ru/d/qOV0kzX8mBMcNw;rm -f $sh
 ```
