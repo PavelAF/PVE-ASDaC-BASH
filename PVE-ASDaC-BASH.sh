@@ -571,9 +571,9 @@ function get_file() {
         [[ -r "$filename" ]] && [[ "$filesize" == '0' || "$( wc -c "$filename" | awk '{printf $1;exit}' )" == "$filesize" ]] \
         && [[ "$filesize" -gt 655360 && "${#file_sha256}" != 64 || "$( sha256sum "$filename" | awk '{printf $1}' )" == "$file_sha256" ]] || {
             configure_imgdir add-size $max_filesize
-            echo_tty "[${c_info}Info${c_null}] Скачивание файла ${c_value}$filename${c_null}"
+            echo_tty "[${c_info}Info${c_null}] Скачивание файла ${c_value}$filename${c_null} Размер: ${c_value}$filesize${c_null}"
             echo_verbose "URL: ${c_value}$url${c_null}"
-            echo_verbose "SIZE: ${c_value}$filesize${c_null} SHA-256: ${c_value}$file_sha256${c_null}"
+            echo_verbose "SHA-256: ${c_value}$file_sha256${c_null}"
             curl --max-filesize $max_filesize -GL "$url" -o "$filename" || { echo_err "Ошибка скачивания файла ${c_value}$filename${c_null} URL: ${c_value}$url${c_null}. Выход"; exit 1; }
             # | iconv -f windows-1251 -t utf-8 > $tempfile
         }
@@ -1936,8 +1936,7 @@ while [ $# != 0 ]; do
         1)  case "${!i}" in
                 -z|--clear-vmconfig)    opt_zero_vms=true; set -- "${@:1:i-1}" "${@:i+1}"; ((i--));;
                 -v|--verbose)           opt_verbose=true; set -- "${@:1:i-1}" "${@:i+1}"; ((i--));;
-            esac
-            ;;
+            esac;;
         2)  if [[ "${!i}" == '-c' || "${!i}" == '--config' ]]; then
             ((i++)); set_configfile "${!i}"; set -- "${@:1:i-2}" "${@:i+1}"; ((i-=2)); fi;;
         *)  case "$1" in
