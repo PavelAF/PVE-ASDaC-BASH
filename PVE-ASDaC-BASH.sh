@@ -1850,7 +1850,7 @@ function manage_stands() {
                     delete_if "$pool_name" "$ifname" "$if_desc"
                     restart_network=true
                 done
-                [[ "$vm_status" == 'running' "$vm_type" == 'qemu' ]] && run_cmd "pvesh create /nodes/$vm_node/$vm_type/$vmid/status/stop --skiplock 'true' --timeout '0'"
+                [[ "$vm_status" == 'running' && "$vm_type" == 'qemu' ]] && run_cmd "pvesh create /nodes/$vm_node/$vm_type/$vmid/status/stop --skiplock 'true' --timeout '0'"
                 vm_cmd_arg="--skiplock 'true' --purge 'true'"
                 [[ "$vm_type" != 'qemu' ]] && vm_cmd_arg="--force 'true'"
                 run_cmd /noexit "( pvesh delete /nodes/$vm_node/$vm_type/$vmid $vm_cmd_arg 2>&1;echo) | grep -Pq '(^$|does not exist$)'" \
