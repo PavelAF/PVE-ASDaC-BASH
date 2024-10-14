@@ -1933,13 +1933,14 @@ i=0
 while [ $# != 0 ]; do
     ((i++))
     case $iteration in
-        1)  case $1 in
-                -z|--clear-vmconfig)    opt_zero_vms=true; set -- "${@:1:i-1}" "${@:i+1}";;
-                -v|--verbose)           opt_verbose=true; set -- "${@:1:i-1}" "${@:i+1}";;
-            esac;;
+        1)  case "${!i}" in
+                -z|--clear-vmconfig)    opt_zero_vms=true; set -- "${@:1:i-1}" "${@:i+1}"; ((i--));;
+                -v|--verbose)           opt_verbose=true; set -- "${@:1:i-1}" "${@:i+1}"; ((i--));;
+            esac
+            ;;
         2)  if [[ "${!i}" == '-c' || "${!i}" == '--config' ]]; then
-            ((i++)); set_configfile "${!i}"; set -- "${@:1:i-2}" "${@:i+1}"; fi;;
-        *)  case $1 in
+            ((i++)); set_configfile "${!i}"; set -- "${@:1:i-2}" "${@:i+1}"; ((i-=2)); fi;;
+        *)  case "$1" in
                 \?|-\?|/\?|-h|/h|--help) opt_show_help=true;;
                 -sh|--show-config) opt_show_config=true
                     [[ "$2" =~ ^[^-].* ]] && conf_files+=("$2") && shift;;
