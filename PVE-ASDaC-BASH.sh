@@ -1373,14 +1373,15 @@ function deploy_access_passwd() {
 
         run_cmd /noexit "pvesh set /access/password --userid '$username' --password '$passwd'" || { echo_err "Ошибка: не удалось установить пароль пользователю $username"; exit 1; }
         case $format_opt in
-            1) table+="$tab$username | $passwd$nl";;
+            1) table+="$username | $passwd$nl";;
             2|3) table+="<tr><td class=\"data\">$pve_url</td><td class=\"data\">$username | $passwd</td></tr>";;
             4|5) table+="\"$pve_url\";\"$username | $passwd\"$nl";;
         esac
     done
     [[ "$format_opt" == 2 || "$format_opt" == 3 ]] && table="<style>.data{font-family:Consolas;text-align:center}br{mso-data-placement:same-cell}</style><table border="1" style=\"white-space:nowrap\">$table</table>"
+    [[ "$format_opt" == 1 || "$format_opt" == 4 || "$format_opt" == 5 ]] && table=${table::-1}
     echo_info $'\n\n#>============== Строка для копирования ==============<#\n'
-    [ -t 1 ] || echo "${c_lred}$table${c_null}"
+    [ -t 1 ] || echo "${c_lred}$table${c_null}" | sed -r 's/\x1B\[([0-9]{1,3}(;[0-9]{1,2};?)?)?[mGK]//g;s/\r//g'
     echo "${c_lred}$table${c_null}" >>/dev/tty
     echo_info $'\n#>=========== Конец строки для копирования ===========<#'
 }
