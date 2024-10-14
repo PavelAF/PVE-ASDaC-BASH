@@ -1325,8 +1325,6 @@ function deploy_stand_config() {
         ((vmid++))
     done
 
-    [[ "${#Networking[@]}" != 0 ]] && run_cmd "pvesh set '/nodes/$(hostname)/network'"
-
     echo_ok "${c_lcyan}Конфигурирование стенда $stand_num завершено${c_null}"
 }
 
@@ -1380,6 +1378,7 @@ function deploy_access_passwd() {
         )
 
         run_cmd /noexit "pvesh set /access/password --userid '$username' --password '$passwd'" || { echo_err "Ошибка: не удалось установить пароль пользователю $username"; exit 1; }
+        username=${username::-4}
         case $format_opt in
             1) table+="$username | $passwd$nl";;
             2|3) table+="<tr><td class=\"data\">$pve_url</td><td class=\"data\">$username | $passwd</td></tr>";;
@@ -1475,6 +1474,9 @@ function install_stands() {
     for stand_num in "${!opt_stand_nums[@]}"; do
         deploy_stand_config ${opt_stand_nums[stand_num]} $stand_num
     done
+
+    run_cmd "pvesh set '/nodes/$(hostname)/network'"
+
     ${config_base[access_create]} && {
         [[ "${config_base[access_auth_pam_desc]}" != '' ]] && run_cmd "pveum realm modify pam --comment '${config_base[access_auth_pam_desc]}'"
         [[ "${config_base[access_auth_pve_desc]}" != '' ]] && run_cmd "pveum realm modify pve --default 'true' --comment '${config_base[access_auth_pve_desc]}'"
