@@ -1,6 +1,7 @@
 #!/bin/bash
-ex() {((ex_var++)); echo -n $'\e[m'; [[ "$ex_var" == 1 ]] && configure_imgdir clear; echo $'\e[m'; exit; }
-trap ex INT
+ex() { ((ex_var++)); echo -n $'\e[m' >>/dev/tty; [[ "$ex_var" == 1 ]] && configure_imgdir clear; echo $'\e[m' >>/dev/tty; exit; }
+
+trap ex INT HUP TERM PIPE EXIT QUIT
 
 # Запуск:               sh='PVE-ASDaC-BASH.sh';curl -sOLH 'Cache-Control: no-cache' "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/main/$sh"&&chmod +x $sh&&./$sh;rm -f $sh
 
@@ -372,7 +373,7 @@ EOL
 
 function show_config() {
     local i=0
-    [[ "$1" != opt_verbose ]] && echo
+    [[ "$1" != opt_verbose ]] && echo >>/dev/tty
     [[ "$1" == install-change ]] && {
             echo $'Список параметров конфигурации:\n   0. Выйти из режима изменения настроек'
             for var in inet_bridge storage pool_name pool_desc take_snapshots access_create $( ${config_base[access_create]} && echo access_{user_{name,desc,enable},pass_{length,chars},auth_{pve,pam}_desc} ); do
@@ -383,9 +384,9 @@ function show_config() {
             return 0
     }
     [[ "$1" == passwd-change ]] && {
-            echo $'Список параметров конфигурации:\n  0. Запустить установку паролей пользователей'
+            echo $'Список параметров конфигурации:\n  0. Запустить установку паролей пользователей' >>/dev/tty
             for var in access_pass_{length,chars}; do
-                echo "  $((++i)). ${config_base[_$var]:-$var}: $( get_val_print "${config_base[$var]}" "$var" )"
+                echo "  $((++i)). ${config_base[_$var]:-$var}: $( get_val_print "${config_base[$var]}" "$var" )" >>/dev/tty
             done
             return 0
     }
@@ -1207,7 +1208,7 @@ function deploy_stand_config() {
     }
 
     function set_role_config() {
-        [[ "$1" == '' ]] && echo_err 'Ошибка: set_role_conf нет аргумента' > /dev/tty && exit 1
+        [[ "$1" == '' ]] && echo_err 'Ошибка: set_role_conf нет аргумента' >> /dev/tty && exit 1
         local roles=$( echo "$1" | sed 's/,/ /g;s/  \+/ /g;s/^ *//g;s/ *$//g' )
         local i role set_role role_exists
         for set_role in $roles; do
@@ -1323,7 +1324,6 @@ function deploy_stand_config() {
 }
 
 function deploy_access_passwd() {
-
     local passwd_chars='0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ":;< ,.?№!@#$%^&*()[]{}-_+=\|/~`абвгдеёжзийклмнопрстуфхцчшщъыьэюяАБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦШЩЪЫЬЭЮЯ'\'
     passwd_chars=$(echo $passwd_chars | grep -Po "[${config_base[access_pass_chars]}]" | tr -d '\n')
 
@@ -1332,13 +1332,13 @@ function deploy_access_passwd() {
 
     local format_opt=1
     ! $silent_mode && {
-        echo $'\n\n\n'"Выберите вид отображения учетных данных (логин/паролей) для доступа к стендам:"
-        echo "  1. Обычный   ${c_value}{username} | {passwd}${c_null}"
-        echo "  2. HTML-вариант для вставки в Excel"
-        echo "  3. HTML-вариант для вставки в Excel (с заголовками к каждой записи)"
-        echo '  4. CSV: универсальный табличный вариант'
-        echo '  5. CSV: универсальный табличный вариант (с заголовками к каждой записи)'
-        echo
+        echo $'\n\n\n'"Выберите вид отображения учетных данных (логин/паролей) для доступа к стендам:" >> /dev/tty
+        echo "  1. Обычный   ${c_value}{username} | {passwd}${c_null}" >> /dev/tty
+        echo "  2. HTML-вариант для вставки в Excel" >> /dev/tty
+        echo "  3. HTML-вариант для вставки в Excel (с заголовками к каждой записи)" >> /dev/tty
+        echo '  4. CSV: универсальный табличный вариант' >> /dev/tty
+        echo '  5. CSV: универсальный табличный вариант (с заголовками к каждой записи)' >> /dev/tty
+        echo >> /dev/tty
         format_opt=$(read_question_select 'Вариант отображения' '^[1-5]$' '' '' )
     }
 
@@ -1379,8 +1379,10 @@ function deploy_access_passwd() {
         esac
     done
     [[ "$format_opt" == 2 || "$format_opt" == 3 ]] && table="<style>.data{font-family:Consolas;text-align:center}br{mso-data-placement:same-cell}</style><table border="1" style=\"white-space:nowrap\">$table</table>"
-    echo $'\n\n'"${c_lred}$table${c_null}"
-
+    echo_info $'\n\n#>============== Строка для копирования ==============<#\n'
+    [ -t 1 ] || echo "${c_lred}$table${c_null}"
+    echo "${c_lred}$table${c_null}" >>/dev/tty
+    echo_info $'\n#>=========== Конец строки для копирования ===========<#'
 }
 
 function install_stands() {
@@ -1523,10 +1525,10 @@ function manage_stands() {
         }
     done
 
-    [[ ${#print_list[@]} != 0 ]] && echo $'\n\nСписок развернутых конфигураций:' || { echo_warn "Ни одной конфигурации не было найдено. Выход"; return 0; }
+    [[ ${#print_list[@]} != 0 ]] && echo $'\n\nСписок развернутых конфигураций:' >>/dev/tty || { echo_warn "Ни одной конфигурации не было найдено. Выход"; return 0; }
     local i=0
     for item in ${!print_list[@]}; do
-        echo "  $((++i)). ${print_list[$item]}"
+        echo "  $((++i)). ${print_list[$item]}" >>/dev/tty
     done
     [[ $i -gt 1 ]] && i=$( read_question_select 'Выберите номер конфигурации' '^[0-9]+$' 1 $i '' 2 )
     [[ "$i" == '' ]] && return 0
@@ -1539,19 +1541,19 @@ function manage_stands() {
         break
     done
 
-    echo $'\nУправление конфигурацией:'
-    echo '   1. Включение учетных записей'
-    echo '   2. Отключение учетных записей'
-    echo '   3. Установка паролей для учетных записей'
-    echo '   4. Включить виртуальные машины'
-    echo '   5. Выключить виртуальные машины'
-    echo '   6. Создать снапшот с начальным состоянием ВМ: "Start"'
-    echo '   7. Откатить виртуальные машины до начального снапшота: "Start"'
-    echo '   8. Удалить снапшот: "Start"'
-    echo '   9. Создать снапшот ВМ с результатом выполнения: "Finish"'
-    echo '  10. Откатить виртуальные машины до снапшота: "Finish"'
-    echo '  11. Удалить снапшот: "Finish"'
-    echo '  12. Удаление стендов'
+    echo $'\nУправление конфигурацией:' >>/dev/tty
+    echo '   1. Включение учетных записей' >>/dev/tty
+    echo '   2. Отключение учетных записей' >>/dev/tty
+    echo '   3. Установка паролей для учетных записей' >>/dev/tty
+    echo '   4. Включить виртуальные машины' >>/dev/tty
+    echo '   5. Выключить виртуальные машины' >>/dev/tty
+    echo '   6. Создать снапшот с начальным состоянием ВМ: "Start"' >>/dev/tty
+    echo '   7. Откатить виртуальные машины до начального снапшота: "Start"' >>/dev/tty
+    echo '   8. Удалить снапшот: "Start"' >>/dev/tty
+    echo '   9. Создать снапшот ВМ с результатом выполнения: "Finish"' >>/dev/tty
+    echo '  10. Откатить виртуальные машины до снапшота: "Finish"' >>/dev/tty
+    echo '  11. Удалить снапшот: "Finish"' >>/dev/tty
+    echo '  12. Удаление стендов' >>/dev/tty
     local switch=$( read_question_select $'\nВыберите действие' '^([0-9]{1,2}|)$' 1 12 )
 
     [[ "$switch" == '' ]] && switch=$( read_question_select $'\nВыберите действие' '^([0-9]{1,2}|)$' 1 12 ) && [[ "$switch" == '' ]] && return 0
@@ -1579,7 +1581,7 @@ function manage_stands() {
             user_list[$group_name]=$usr_list
         fi
 
-        echo -n $'\nВыбранные пользователи: '; get_val_print "$(echo ${user_list[$group_name]} )"
+        echo -n $'\nВыбранные пользователи: ' >>/dev/tty; get_val_print "$(echo ${user_list[$group_name]} )" >>/dev/tty
 
         opt_stand_nums=()
         for ((i=1; i<=$(echo -n "${user_list[$group_name]}" | grep -c '^'); i++)); do
@@ -1613,7 +1615,7 @@ function manage_stands() {
             deploy_access_passwd set
         fi
         opt_stand_nums=()
-        echo $'\n'"${c_green}Настройка завершена.${c_null} Выход" && return 0
+        echo $'\n'"${c_green}Настройка завершена.${c_null} Выход"  >>/dev/tty && return 0
     fi
 
     local stand_range='' stand_count=$(echo -n "${pool_list[$group_name]}" | grep -c '^') stand_list='' usr_list=''
