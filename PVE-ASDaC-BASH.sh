@@ -542,19 +542,18 @@ function get_file() {
 
 
     local max_filesize=${2:-5368709120}
-    local filesize=''
-    local filename=''
+    local filesize='' filename='' file_sha256=''
     isdigit_check "$max_filesize" || { echo_err "Ошибка get_file max_filesize=$max_filesize не число" && exit 1; }
     local force=$( [[ "$3" == force ]] && echo true || echo false )
 
     if [[ "$url" =~ ^https://disk\.yandex\.ru/ ]]; then
-        yadisk_url url filesize=size filename=name
+        yadisk_url url filesize=size filename=name file_sha256=sha256
     elif isurl_check "$url"; then
         filesize=$(get_url_filesize $url)
         filename=$(get_url_filename $url)
     fi
     if isurl_check "$url"; then
-        isdigit_check $filesize && [[ "$filesize" -gt 0 ]] && maxfilesize=$filesize
+        isdigit_check $filesize && [[ "$filesize" -gt 0 ]] && maxfilesize=$filesize || filesize='0'
         if [[ "$filename" == '' ]]; then
             filename="$(mktemp 'ASDaC_noname_downloaded_file.XXXXXXXXXX' -p "${config_base[mk_tmpfs_imgdir]}")"
         else
@@ -569,9 +568,13 @@ function get_file() {
                 exit 1
             fi
         fi
-        [[ -r "$filename" ]] || {
+        [[ -r "$filename" ]] && [[ "$filesize" == '0' || "$( wc -c "$filename" | awk '{printf $1;exit}' )" == "$filesize" ]] \
+        && [[ "$filesize" -gt 655360 && "${#file_sha256}" != 64 || "$( sha256sum "$filename" | awk '{printf $1}' )" == "$file_sha256" ]] || {
             configure_imgdir add-size $max_filesize
-            curl --max-filesize $max_filesize -GL "$url" -o "$filename" || { echo_err "Ошибка скачивания. Выход"; exit 1; }
+            echo_verbose "Скачивание файла ${c_value}$filename${c_null}"
+            echo_verbose "URL: ${c_value}$url${c_null}"
+            echo_verbose "SIZE: ${c_value}$filesize${c_null} SHA-256: ${c_value}$file_sha256${c_null}"
+            curl --max-filesize $max_filesize -GL "$url" -o "$filename" || { echo_err "Ошибка скачивания файла ${c_value}$filename${c_null} URL: ${c_value}$url${c_null}. Выход"; exit 1; }
             # | iconv -f windows-1251 -t utf-8 > $tempfile
         }
         url="$filename"
@@ -1930,14 +1933,16 @@ i=0
 while [ $# != 0 ]; do
     ((i++))
     case $iteration in
-        1)  if [[ "${!i}" == '-z' || "${!i}" == '--clear-vmconfig' ]]; then opt_zero_vms=true; set -- "${@:1:i-1}" "${@:i+1}"; fi;;
+        1)  case $1 in
+                -z|--clear-vmconfig)    opt_zero_vms=true; set -- "${@:1:i-1}" "${@:i+1}";;
+                -v|--verbose)           opt_verbose=true; set -- "${@:1:i-1}" "${@:i+1}";;
+            esac;;
         2)  if [[ "${!i}" == '-c' || "${!i}" == '--config' ]]; then
             ((i++)); set_configfile "${!i}"; set -- "${@:1:i-2}" "${@:i+1}"; fi;;
         *)  case $1 in
                 \?|-\?|/\?|-h|/h|--help) opt_show_help=true;;
                 -sh|--show-config) opt_show_config=true
                     [[ "$2" =~ ^[^-].* ]] && conf_files+=("$2") && shift;;
-                -v|--verbose)           opt_verbose=true;;
                 -n|--stand-num)         check_arg "$2"; set_standnum "$2"; shift;;
                 -var|--set-var-num)     check_arg "$2"; set_varnum "$2"; shift;;
                 -si|--silent-install)   opt_silent_install=true; switch_action=1;;
