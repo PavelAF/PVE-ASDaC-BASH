@@ -182,35 +182,35 @@ c_gray=$'\e[0;37m'
 c_white=$'\e[1;37m'
 
 c_null=$'\e[m'
-c_value=$c_lblue
-c_error=$c_lred
-c_warning=$c_lyellow
-c_info=$c_lcyan
-c_ok=$c_lgreen
+c_value=${c_lblue}
+c_error=${c_lred}
+c_warning=${c_lyellow}
+c_info=${c_lcyan}
+c_ok=${c_lgreen}
 
 function get_val_print() {
-    [[ "$1" == true ]] && echo "$c_lgreenДа$c_null" && return 0
-    [[ "$1" == false ]] && echo "$c_lredНет$c_null" && return 0
+    [[ "$1" == true ]] && echo "${c_lgreen}Да${c_null}" && return 0
+    [[ "$1" == false ]] && echo "${c_lred}Нет${c_null}" && return 0
     if [[ "$2" == storage ]] && ! [[ "$1" =~ ^\{(manual|auto)\}$ ]] && [[ "$sel_storage_space" != '' ]]; then
-        echo "$c_value$1$c_null (свободно $(echo "$sel_storage_space" | awk 'BEGIN{ split("К|М|Г|Т",x,"|") } { for(i=1;$1>=1024&&i<length(x);i++) $1/=1024; print int($1) " " x[i] "Б" }'))"
+        echo "${c_value}$1${c_null} (свободно $(echo "$sel_storage_space" | awk 'BEGIN{ split("К|М|Г|Т",x,"|") } { for(i=1;$1>=1024&&i<length(x);i++) $1/=1024; print int($1) " " x[i] "Б" }'))"
         return 0
     elif [[ "$2" == access_pass_chars ]]; then
-        echo "[$c_value$1$c_null]"
+        echo "[${c_value}$1${c_null}]"
         return 0
     fi
-    echo "$c_value$1$c_null"
+    echo "${c_value}$1${c_null}"
 }
 
 function echo_err() {
-    echo "$c_error$@$c_null" >> /dev/tty
+    echo "${c_error}$@${c_null}" >> /dev/tty
 }
 
 function echo_warn() {
-    echo "$c_warning$@$c_null" >> /dev/tty
+    echo "${c_warning}$@${c_null}" >> /dev/tty
 }
 
 function echo_info() {
-    echo "$c_info$@$c_null" >> /dev/tty
+    echo "${c_info}$@${c_null}" >> /dev/tty
 }
 
 function echo_verbose() {
@@ -224,12 +224,12 @@ function echo_ok() {
 
 function read_question_select() {
     local read enter=-1; [[ "$6" != "" ]] && enter=$6
-    until read -p "$1: $c_value" -e -i "$5" read; echo -n $c_null >/dev/tty; [[ "$enter" == 1 && "$read" != '' ]] || ((enter--))
+    until read -p "$1: ${c_value}" -e -i "$5" read; echo -n ${c_null} >/dev/tty; [[ "$enter" == 1 && "$read" != '' ]] || ((enter--))
         [[ "$enter" == 0 ]] || [[ "$2" == '' || $(echo "$read" | grep -Pc "$2" ) == 1 ]] && { ! isdigit_check "$read" || [[ "$3" == '' || "$read" -ge "$3" ]] && [[ "$4" == '' || "$read" -le "$4" ]]; }
     do true; done; echo -n "$read";
 }
 
-function read_question() { local read _ret=false; until read -n 1 -p "$1 [y|д|1]: $c_value" read; echo $c_null >/dev/tty; [[ "$read" =~ ^[yд1l]$ ]] && return 0 || { [[ "$read" != '' || "$_ret" == true ]] && return 1; _ret=true; false; }; do true; done; }
+function read_question() { local read _ret=false; until read -n 1 -p "$1 [y|д|1]: ${c_value}" read; echo ${c_null} >/dev/tty; [[ "$read" =~ ^[yд1l]$ ]] && return 0 || { [[ "$read" != '' || "$_ret" == true ]] && return 1; _ret=true; false; }; do true; done; }
 
 function get_numrange_array() {
     local IFS=,; set -- $1
@@ -463,9 +463,9 @@ function show_config() {
         $no_elem && echo '--- пусто ---'
 
         if [[ "${#opt_stand_nums[@]}" != 0 && "$1" != var && "$opt_sel_var" != 0 ]]; then
-            echo -n $'\n'"Номера стендов: $c_value"
+            echo -n $'\n'"Номера стендов: ${c_value}"
             printf '%s\n' "${opt_stand_nums[@]}" | awk 'NR==1{d="";first=last=$1;next} $1 == last+1 {last=$1;next} {d="-";if (first==last-1)d=",";if (first!=last) printf first d; printf last","; first=last=$1} END{d="-";if (first==last-1)d=",";if (first!=last)printf first d; printf last"\n"}'
-            echo -n "$c_null"
+            echo -n "${c_null}"
             echo "Всего стендов к развертыванию: $(get_val_print "${#opt_stand_nums[@]}" )"
             echo "Кол-во создаваемых виртуальных машин: $(get_val_print "$(( ${#opt_stand_nums[@]} * $(eval "printf '%s\n' \${!config_stand_${opt_sel_var}_var[@]}" | grep -Pv '^_' | wc -l) ))" )"
         fi
@@ -696,7 +696,7 @@ function configure_wan_vmbr() {
             iface=$( echo "$bridge_ifs" | sed -n "${i}p" )
             ip4=$( echo "$ipr4" | grep -Po '^[\.0-9\/]+(?=\ dev\ '$iface')' )
             ip6=$( echo "$ipr6" | grep -Po '^[0-9a-f\:\/]+(?=\ dev\ '$iface'(?=\ |$))' )
-            echo "  ${i}. $c_value$iface$c_null IPv4='$c_value$ip4$c_null' IPv6='$c_value$ip6$c_null' slaves='$c_value"$( echo "$list_links_master" | grep -Po '^[\w\.]+(?=.*?\ master\ '$iface'(\ |$))' )"$c_null'"
+            echo "  ${i}. ${c_value}$iface${c_null} IPv4='${c_value}$ip4${c_null}' IPv6='${c_value}$ip6${c_null}' slaves='${c_value}"$( echo "$list_links_master" | grep -Po '^[\w\.]+(?=.*?\ master\ '$iface'(\ |$))' )"${c_null}'"
         done
         local switch=$( read_question_select $'\nВыберите номер сетевого интерфейса' '^[0-9]+$' 1 $( echo -n "$bridge_ifs" | grep -c '^' ) )
         config_base[inet_bridge]=$( echo "$bridge_ifs" | awk -v n="$switch" 'NR == n')
@@ -1049,20 +1049,20 @@ function run_cmd() {
     [[ "$1" == '' ]] && echo_err 'Ошибка: run_cmd нет команды'
 
     local cmd_exec="$@"
-    $opt_dry_run && echo "[$c_warningВыполнение команды$c_null] $cmd_exec" >> /dev/tty
+    $opt_dry_run && echo "[${c_warning}Выполнение команды${c_null}] $cmd_exec" >> /dev/tty
 
     ! $opt_dry_run && {
         local return_cmd=''
         if return_cmd=$( eval $cmd_exec 2>&1 ); then
-            $opt_verbose && echo "$c_greenВыполнена команда$c_null: $c_cyan$cmd_exec$c_null" >> /dev/tty
+            echo_verbose "${c_cyan}$cmd_exec${c_null}"
         else
             ! $to_exit && {
-                $opt_verbose && echo "$c_yellowВыполнена команда$c_null: $c_cyan$cmd_exec$c_null" >> /dev/tty
-                echo "${c_red}Error output: $c_warning$return_cmd$c_null" >> /dev/tty
+                echo_verbose "${c_info}$cmd_exec${c_null}"
+                echo "${c_red}Error output: ${c_warning}$return_cmd${c_null}" >> /dev/tty
                 return 1
             }
             echo_err "Ошибка выполнения команды: $cmd_exec"
-            echo "${c_red}Error output: $c_warning$return_cmd$c_null" >> /dev/tty
+            echo "${c_red}Error output: ${c_warning}$return_cmd${c_null}" >> /dev/tty
             exit 1
         fi
     }
@@ -1313,13 +1313,13 @@ function deploy_stand_config() {
         ${config_base[access_create]} && [[ "${vm_config[access_roles]}" != '' ]] && run_cmd "pveum acl modify '/vms/$vmid' --roles '${vm_config[access_roles]}' --users '$username'"
 
         ${config_base[take_snapshots]} && run_cmd /pipefail "qm snapshot '$vmid' 'Start' --description 'Исходное состояние ВМ' | tail -n2"
-        echo_ok "${c_lcyan}Конфигурирование VM $elem завершено$c_null"
+        echo_ok "${c_lcyan}Конфигурирование VM $elem завершено${c_null}"
         ((vmid++))
     done
 
     [[ "${#Networking[@]}" != 0 ]] && run_cmd "pvesh set '/nodes/$(hostname)/network'"
 
-    echo_ok "${c_lcyan}Конфигурирование стенда $stand_num завершено$c_null"
+    echo_ok "${c_lcyan}Конфигурирование стенда $stand_num завершено${c_null}"
 }
 
 function deploy_access_passwd() {
@@ -1333,7 +1333,7 @@ function deploy_access_passwd() {
     local format_opt=1
     ! $silent_mode && {
         echo $'\n\n\n'"Выберите вид отображения учетных данных (логин/паролей) для доступа к стендам:"
-        echo "  1. Обычный   ${c_value}{username} | {passwd}$c_null"
+        echo "  1. Обычный   ${c_value}{username} | {passwd}${c_null}"
         echo "  2. HTML-вариант для вставки в Excel"
         echo "  3. HTML-вариант для вставки в Excel (с заголовками к каждой записи)"
         echo '  4. CSV: универсальный табличный вариант'
@@ -1379,7 +1379,7 @@ function deploy_access_passwd() {
         esac
     done
     [[ "$format_opt" == 2 || "$format_opt" == 3 ]] && table="<style>.data{font-family:Consolas;text-align:center}br{mso-data-placement:same-cell}</style><table border="1" style=\"white-space:nowrap\">$table</table>"
-    echo $'\n\n'"$c_lred$table$c_null"
+    echo $'\n\n'"${c_lred}$table${c_null}"
 
 }
 
@@ -1471,7 +1471,7 @@ function install_stands() {
 
     deploy_access_passwd
 
-    echo $'\n'"${c_green}Установка закочена.$c_null Выход"
+    echo $'\n'"${c_green}Установка закочена.${c_null} Выход"
     
     configure_imgdir clear
     exit 0
@@ -1518,7 +1518,7 @@ function manage_stands() {
         [[ -v "print_list[$group_name]" ]] && {
             comment=$(echo "${group_list[comment]}" | sed -n "${i}p")
             users=$(echo "${group_list[users]}" | sed -n "${i}p")
-            print_list["$group_name"]="$c_lgreen$group_name$c_null : $comment"
+            print_list["$group_name"]="${c_lgreen}$group_name${c_null} : $comment"
             user_list["$group_name"]=$( echo "$users" | tr -s ',' '\n' | sort -u )
         }
     done
@@ -1587,7 +1587,7 @@ function manage_stands() {
             [[ $switch != 3 ]] && {
                 [[ $switch == 1 ]] && { enable=true;state="${c_lgreen}включен"; }; [[ $switch == 2 ]] && { enable=false; state="${c_lred}выключен"; }
                 run_cmd /noexit "pveum user modify '$user_name' --enable '$enable'" || { echo_err "Ошибка: не удалось изменить enable для пользователя '$user_name'"; }
-                echo "$user_name : $state$c_null";
+                echo "$user_name : $state${c_null}";
                 continue
             }
             opt_stand_nums+=( "$user_name" )
@@ -1613,7 +1613,7 @@ function manage_stands() {
             deploy_access_passwd set
         fi
         opt_stand_nums=()
-        echo $'\n'"$c_greenНастройка завершена.$c_null Выход" && return 0
+        echo $'\n'"${c_green}Настройка завершена.${c_null} Выход" && return 0
     fi
 
     local stand_range='' stand_count=$(echo -n "${pool_list[$group_name]}" | grep -c '^') stand_list='' usr_list=''
@@ -1691,7 +1691,7 @@ function manage_stands() {
                 
                 [[ "$switch" == 6 || "$switch" == 9 ]] && [[ "$vm_status" == running ]] && {
                     $vm_poweroff_answer && {
-                        vm_poweroff=$( read_question "Машина ${c_lgreen}$name$c_null (${c_lcyan}$vmid$c_null) стенда ${c_value}$pool_name$c_null включена. При создании снапшота рекомендуется выключить ВМ. "$'\n'"Выключать виртуальные машины перед созданием снапшота" && echo true || echo false)
+                        vm_poweroff=$( read_question "Машина ${c_lgreen}$name${c_null} (${c_lcyan}$vmid${c_null}) стенда ${c_value}$pool_name${c_null} включена. При создании снапшота рекомендуется выключить ВМ. "$'\n'"Выключать виртуальные машины перед созданием снапшота" && echo true || echo false)
                         ! $vm_poweroff && { read_question $'\n'"Сохранять включенное состояние виртуальных машин? Иначе будут сохранены только данные на дисках"$'\n'"Сохранять VM state" || vm_snap_state=false; }
                         echo >> /dev/tty
                         vm_poweroff_answer=false
@@ -1699,7 +1699,7 @@ function manage_stands() {
                     $vm_poweroff && run_cmd "pvesh create /nodes/$vm_node/stopall --vms '$vmid' --timeout '30' --force-stop 'true'"
                 }
                 status=$( run_cmd /noexit "pvesh $(echo "$cmd_str" | sed "s/{node}/$vm_node/;s/{vmid}/$vmid/;s/{vmstate}/$vm_snap_state/") 2>&1" ) && {
-                    echo_ok "стенд ${c_value}$pool_name$c_null машина ${c_lgreen}$name$c_null (${c_lcyan}$vmid$c_null)"
+                    echo_ok "стенд ${c_value}$pool_name${c_null} машина ${c_lgreen}$name${c_null} (${c_lcyan}$vmid${c_null})"
                     continue
                 }
 
@@ -1738,7 +1738,7 @@ function manage_stands() {
             [[ "$1" == '' || "$2" == '' ]] && exit 1
             local desc; [[ "$3" != '' ]] && desc=" ($3)"
             run_cmd /noexit "( pvesh delete '/nodes/$vm_node/network/$2'       2>&1;echo) | grep -Pq '(^$|interface does not exist$)'" \
-                        && echo_ok "стенд ${c_value}$1$c_null: удален сетевой интерфейс ${c_lgreen}$2$c_null$desc" \
+                        && echo_ok "стенд ${c_value}$1${c_null}: удален сетевой интерфейс ${c_lgreen}$2${c_null}$desc" \
                         || { echo_err "Ошибка: не удалось удалить сетевой интерфейс '$2'"; exit 1; }
             eval "deny_ifaces_$(echo -n "$vm_nodes" | grep -c '^')+=' $2'"
         }
@@ -1780,21 +1780,21 @@ function manage_stands() {
                 done
                 [[ $vm_status == running ]] && run_cmd "pvesh create /nodes/$vm_node/qemu/$vmid/status/stop --skiplock 'true' --timeout '0'"
                 run_cmd /noexit "( pvesh delete /nodes/$vm_node/qemu/$vmid --skiplock 'true' --purge 'true' 2>&1;echo) | grep -Pq '(^$|does not exist$)'" \
-                    && echo_ok "стенд ${c_value}$pool_name$c_null: удалена машина ${c_lgreen}$name$c_null (${c_lcyan}$vmid$c_null)" \
+                    && echo_ok "стенд ${c_value}$pool_name${c_null}: удалена машина ${c_lgreen}$name${c_null} (${c_lcyan}$vmid${c_null})" \
                     || { echo_err "Ошибка: не удалось удалить ВМ '$vmid' стенда '$pool_name'"; exit 1; }
             done
             local storages=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/storage}" )
             [[ "$storages" != '' ]] && { run_cmd /noexit "( pveum pool modify '$pool_name' --delete 'true' --storage '$storages' 2>&1;echo) | grep -Pq '(^$|is not a pool member$)'" \
                 || { echo_err "Ошибка: не удалось удалить привязку хранилищ от пула стенда '$pool_name'"; exit 1; } }
             run_cmd /noexit "( pveum pool delete '$pool_name' 2>&1;echo) | grep -Pq '(^$|does not exist$)'" \
-                    && echo_ok "стенд ${c_value}$pool_name$c_null: пул удален" \
+                    && echo_ok "стенд ${c_value}$pool_name${c_null}: пул удален" \
                     || { echo_err "Ошибка: не удалось удалить пул стенда '$pool_name'"; exit 1; }
         done
 
         for ((i=1; i<=$( echo -n "${user_list[$group_name]}" | grep -c '^' ); i++)); do
             user_name=$( echo "${user_list[$group_name]}" | sed -n "${i}p" )
             run_cmd /noexit "pveum user delete '$user_name'" \
-                && echo_ok "пользователь ${c_value}$user_name$c_null удален" \
+                && echo_ok "пользователь ${c_value}$user_name${c_null} удален" \
                 || { echo_err "Ошибка: не удалось удалить пользователя '$user_name' стенда '$pool_name'"; exit 1; }
         done
 
@@ -1803,11 +1803,11 @@ function manage_stands() {
         for role in $( echo "${acl_list[roleid]}" | sort -u ); do
             echo "$roles_list_after" | grep -Fxq "$role" || {
                 [[ "$list_roles" == '' ]] && { list_roles=$( pveum role list --output-format yaml | grep -v - | grep -Po '^\s*(roleid|special)\s*:\s*\K.*' ) || exit 1; }
-                echo "$list_roles" | grep -Pzq '(^|\n)'$role'\n0' && run_cmd "pveum role delete '$role'" && echo_ok "роль ${c_value}$role$c_null удалена"
+                echo "$list_roles" | grep -Pzq '(^|\n)'$role'\n0' && run_cmd "pveum role delete '$role'" && echo_ok "роль ${c_value}$role${c_null} удалена"
             }
         done
 
-        [[ "$del_all" == true ]] && run_cmd "pveum group delete '$group_name'" && echo_ok "группа стенда ${c_value}$group_name$c_null удалена"
+        [[ "$del_all" == true ]] && run_cmd "pveum group delete '$group_name'" && echo_ok "группа стенда ${c_value}$group_name${c_null} удалена"
 
         $restart_network && {
             for pve_host in $vm_nodes; do
@@ -1817,7 +1817,7 @@ function manage_stands() {
         }
     fi
 
-    echo $'\n'"$c_lgreenНастройка завершена.$c_null"
+    echo $'\n'"${c_lgreen}Настройка завершена.${c_null}"
 }
 
 
