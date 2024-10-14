@@ -1355,15 +1355,15 @@ function deploy_access_passwd() {
     }
 
     local nl=$'\n' tab=$'\t'
-    local table=''
+    local table='' header_html="<tr><th>Точка подключения к гипервизору <br>(IP или доменное имя:порт)</th><th>Учётная запись для входа в гипервизор <br>(логин | пароль)</th></tr>"
     case $format_opt in
-        2) table+="<tr><th>Точка подключения к гипервизору (IP или доменное имя:порт)</th><th>Учётная запись для входа в гипервизор (логин | пароль)</th></tr>";;
+        2) table+=$header_html;;
         4) table+="\"Точка подключения к гипервизору$nl(IP или доменное имя:порт)\";\"Учётная запись для входа в гипервизор$nl(логин | пароль)\"$nl";;
     esac
 
     for stand_num in "${opt_stand_nums[@]}"; do
         [[ "$1" != set ]] && username="${config_base[access_user_name]/\{0\}/$stand_num}@pve" || username=$stand_num
-        [[ $format_opt == 3 ]] && table+="<tr><th>Точка подключения к гипервизору (IP или доменное имя:порт)</th><th>Учётная запись для входа в гипервизор (логин | пароль)</th></tr>"
+        [[ $format_opt == 3 ]] && table+="$header_html"
         [[ $format_opt == 5 ]] && table+="\"Точка подключения к гипервизору$nl(IP или доменное имя:порт)\";\"Учётная запись для входа в гипервизор$nl(логин | пароль)\"$nl"
 
         local passwd=$(
@@ -1374,11 +1374,11 @@ function deploy_access_passwd() {
         run_cmd /noexit "pvesh set /access/password --userid '$username' --password '$passwd'" || { echo_err "Ошибка: не удалось установить пароль пользователю $username"; exit 1; }
         case $format_opt in
             1) table+="$tab$username | $passwd$nl";;
-            2|3) table+="<tr class=\"data\"><td>$pve_url</td><td>$username | $passwd</td></tr>";;
+            2|3) table+="<tr><td class=\"data\">$pve_url</td><td class=\"data\">$username | $passwd</td></tr>";;
             4|5) table+="\"$pve_url\";\"$username | $passwd\"$nl";;
         esac
     done
-    [[ "$format_opt" == 2 || "$format_opt" == 3 ]] && table="<style>.data{font-family:Consolas;text-align:center}</style><table border="1" style=\"white-space:nowrap\">$table</table>"
+    [[ "$format_opt" == 2 || "$format_opt" == 3 ]] && table="<style>.data{font-family:Consolas;text-align:center}br{mso-data-placement:same-cell}</style><table border="1" style=\"white-space:nowrap\">$table</table>"
     echo $'\n\n'"$c_lred$table$c_null"
 
 }
