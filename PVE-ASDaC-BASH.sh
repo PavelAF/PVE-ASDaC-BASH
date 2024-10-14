@@ -415,8 +415,7 @@ function show_config() {
                 if [[ ! "$conf" =~ ^config_stand_[1-9][0-9]{0,3}_var$ ]]; then echo -e "\n# $description"
                 else echo -e "\n_$conf='$description'"; fi
             for var in $(eval echo "\${!$conf[@]}"); do
-                [[ "$var" =~ ^_ ]] && continue
-                #[[ "$var" =~ ^_(?!stand_config) ]] && continue
+                [[ "$var" =~ ^_ ]] && [[ ! "$var" =~ ^_stand_config$ ]] && continue
                 description="$(eval echo "\${$conf[_$var]}")"
                 [[ "$description" != "" && "$1" == detailed ]] && \
                     if [[ ! "$conf" =~ ^config_(stand_[1-9][0-9]{0,3}_var|templates)$ ]]; then echo -e "\n# $description"
