@@ -40,6 +40,9 @@ declare -A config_base=(
     [_take_snapshots]='Создавать снапшоты ВМ (снимки, для сброса стендов)'
     [take_snapshots]=true
 
+    [_run_vm_after_installation]='Запустить виртуальные машины после развертки стендов'
+    [run_vm_after_installation]=false
+
     [_create_templates_pool]='Создать шаблонный пул для развертки ВМ'
     [create_templates_pool]=false
 
@@ -76,6 +79,7 @@ _config_access_roles='Список ролей прав доступа'
 declare -A config_access_roles=(
     [Competitor]='Pool.Audit VM.Audit VM.Console VM.PowerMgmt VM.Snapshot.Rollback VM.Config.Network'
     [Competitor_ISP]='VM.Audit VM.Console VM.PowerMgmt VM.Snapshot.Rollback'
+    [test]='VM.Audit     VM.Console   ,   VM.PowerMgmt,VM.Snapshot.Rollback;VM.Snapshot.Rollback'
 )
 
 # Конфигурация шаблонов для создаваемых виртуальных машин. Особые параметры:
@@ -118,7 +122,7 @@ declare -A config_templates=(
         kvm = 1
         rng0 = source=/dev/urandom
         disk3 = 0.2
-        network0 = { bridge=inet      }
+        network0 = {bridge=inet}
     '
 )
 
@@ -138,7 +142,7 @@ declare -A config_stand_1_var=(
         disk3 = 0.1
     	config_template = test
         startup = order=1,up=5,down=5
-        network0 = {bridge=inet,state=down}
+        network0 =   {   bridge=inet   ,  state   =  down  }   
         network1 =    {     bridge    =    "    🖧: тест                 "    ,     state     =    down    }      
         network2 =         {      bridge     =      "      🖧: тест  "     , state       =      down     , trunks       =        10;20;30       }          
         network3 =       {            bridge      =    "         🖧: тест      "        , tags=      10    ,      state             =      down       }      
@@ -150,9 +154,9 @@ declare -A config_stand_1_var=(
         description = rewritred description test-vm2
         disk3 = 0.1
         disk4 = 0.1
-    	config_template = test
-        startup = order=10,up=10,down=10
-        machine = pc-i440fx-99.99
+    	config_template =    test   
+        startup =   order=10,up=10,down=10    
+        machine =    pc-i440fx-99.99    
         network4 =       🖧: тест      
         network2 =      {     bridge     =   "         🖧: тест        "     ,       vtag      =      100     ,        master         =      inet       }        
     '
@@ -364,6 +368,7 @@ function show_help() {
         -vmid, --start-vm-id [integer]$t${config_base[_start_vmid]}
         -vmbr, --wan-bridge [string]$t${config_base[_inet_bridge]}
         -snap, --take-snapshots [boolean]$t${config_base[_take_snapshots]}
+        -inst-start-vms, --run-vm-after-installation [boolean]$t${config_base[_run_vm_after_installation]}
         -dir, --mk-tmpfs-dir [boolean]$t${config_base[_mk_tmpfs_imgdir]}
         -norm, --no-clear-tmpfs$t$_opt_rm_tmpfs
         -pn, --pool-name [string]$t${config_base[_pool_name]}
@@ -384,7 +389,7 @@ function show_config() {
     [[ "$1" != opt_verbose ]] && echo
     [[ "$1" == install-change ]] && {
             echo $'Список параметров конфигурации:\n   0. Выйти из режима изменения настроек'
-            for var in inet_bridge storage pool_name pool_desc take_snapshots access_create $( ${config_base[access_create]} && echo access_{user_{name,desc,enable},pass_{length,chars},auth_{pve,pam}_desc} ); do
+            for var in inet_bridge storage pool_name pool_desc take_snapshots run_vm_after_installation access_create $( ${config_base[access_create]} && echo access_{user_{name,desc,enable},pass_{length,chars},auth_{pve,pam}_desc} ); do
                 printf '%4s' $((++i)); echo ". ${config_base[_$var]:-$var}: $( get_val_print "${config_base[$var]}" "$var" )"
             done
             printf '%4s' $((++i)); echo ". $_opt_dry_run: $( get_val_print $opt_dry_run )"
@@ -410,8 +415,7 @@ function show_config() {
                 if [[ ! "$conf" =~ ^config_stand_[1-9][0-9]{0,3}_var$ ]]; then echo -e "\n# $description"
                 else echo -e "\n_$conf='$description'"; fi
             for var in $(eval echo "\${!$conf[@]}"); do
-                [[ "$var" =~ ^_ ]] && continue
-                #[[ "$var" =~ ^_(?!stand_config) ]] && continue
+                [[ "$var" =~ ^_ ]] && [[ ! "$var" =~ ^_stand_config$ ]] && continue
                 description="$(eval echo "\${$conf[_$var]}")"
                 [[ "$description" != "" && "$1" == detailed ]] && \
                     if [[ ! "$conf" =~ ^config_(stand_[1-9][0-9]{0,3}_var|templates)$ ]]; then echo -e "\n# $description"
@@ -490,7 +494,7 @@ function del_vmconfig() {
 
 function isurl_check() {
     [[ "$2" != "yadisk" ]] && local other_proto='?|ftp'
-    [[ $(echo "$1" | grep -Pc '(*UCP)\A(https'$other_proto')://[-[:alnum:]\+&@#/%?=~_|!:,.;]*[-[:alnum:]\+&@#/%=~_|]\Z' ) == 1 ]] && return 0
+    [[ $(echo "$1" | grep -Pci '(*UCP)\A(https'$other_proto')://[-[:alnum:]\+&@#/%?=~_|!:,.;]*[-[:alnum:]\+&@#/%=~_|]\Z' ) == 1 ]] && return 0
     return 1
 }
 
@@ -531,6 +535,7 @@ function get_file() {
     [[ "$1" == '' ]] && exit 1
 
     local -n url="$1"
+    local base_url="$url"
     local md5=$(echo $url | md5sum)
     md5="h${md5::-3}"
 
@@ -538,19 +543,18 @@ function get_file() {
 
 
     local max_filesize=${2:-5368709120}
-    local filesize=''
-    local filename=''
+    local filesize='' filename='' file_sha256=''
     isdigit_check "$max_filesize" || { echo_err "Ошибка get_file max_filesize=$max_filesize не число" && exit 1; }
     local force=$( [[ "$3" == force ]] && echo true || echo false )
 
     if [[ "$url" =~ ^https://disk\.yandex\.ru/ ]]; then
-        yadisk_url url filesize=size filename=name
+        yadisk_url url filesize=size filename=name file_sha256=sha256
     elif isurl_check "$url"; then
         filesize=$(get_url_filesize $url)
         filename=$(get_url_filename $url)
     fi
     if isurl_check "$url"; then
-        isdigit_check $filesize && [[ "$filesize" -gt 0 ]] && maxfilesize=$filesize
+        isdigit_check $filesize && [[ "$filesize" -gt 0 ]] && maxfilesize=$filesize || filesize='0'
         if [[ "$filename" == '' ]]; then
             filename="$(mktemp 'ASDaC_noname_downloaded_file.XXXXXXXXXX' -p "${config_base[mk_tmpfs_imgdir]}")"
         else
@@ -565,9 +569,13 @@ function get_file() {
                 exit 1
             fi
         fi
-        [[ -r "$filename" ]] || {
+        [[ -r "$filename" ]] && [[ "$filesize" == '0' || "$( wc -c "$filename" | awk '{printf $1;exit}' )" == "$filesize" ]] \
+        && [[ "$filesize" -gt 655360 && "${#file_sha256}" != 64 || "$( sha256sum "$filename" | awk '{printf $1}' )" == "$file_sha256" ]] || {
             configure_imgdir add-size $max_filesize
-            curl --max-filesize $max_filesize -GL "$url" -o "$filename" || { echo_err "Ошибка скачивания. Выход"; exit 1; }
+            echo_tty "[${c_info}Info${c_null}] Скачивание файла ${c_value}$filename${c_null} Размер: ${c_value}$( echo "$filesize" | awk 'BEGIN{split("Б|КБ|МБ|ГБ|ТБ",x,"|")}{for(i=1;$1>=1024&&i<length(x);i++)$1/=1024;printf("%3.1f %s", $1, x[i]) }' )${c_null} URL: ${c_value}$base_url${c_null}"
+            [[ "$base_url" != "$url" ]] && echo_verbose "Download URL: ${c_value}$url${c_null}"
+            echo_verbose "SIZE: ${c_value}$filesize${c_null} SHA-256: ${c_value}$file_sha256${c_null}"
+            curl --max-filesize $max_filesize -GL "$url" -o "$filename" || { echo_err "Ошибка скачивания файла ${c_value}$filename${c_null} URL: ${c_value}$url${c_null}. Выход"; exit 1; }
             # | iconv -f windows-1251 -t utf-8 > $tempfile
         }
         url="$filename"
@@ -943,13 +951,14 @@ function configure_roles() {
 
     for role in ${!config_access_roles[@]}; do
         ! [[ "$role" =~ ^[a-zA-Z\_][\-a-zA-Z\_]*$ && "$(echo -n "$role" | wc -m)" -le 32 ]] && echo_err "Ошибка: имя роли '$role' некорректное. Выход" && exit 1
-        config_access_roles["$role"]=$( echo "${config_access_roles[$role]}" | sed 's/,\| /\n/g;s/\n\n//g' | sort )
+        config_access_roles["$role"]=$( echo "${config_access_roles[$role]}" | sed 's/,\| \|\;/\n/g;s/\n\n//g' | sort )
         for priv in ${config_access_roles[$role]}; do
             printf '%s\n' "$list_privs" | grep -Fxq -- "$priv" && continue || {
                 echo_err "Ошибка: название привилегии '$priv' в роли '$role' некорректа. Выход"
                 exit 1
             }
         done
+        config_access_roles["$role"]=$( echo -n "${config_access_roles[$role]}" | sort -u  )
         config_access_roles["$role"]=$( echo -n "${config_access_roles[$role]}" | tr '\n' ','  )
     done
 }
@@ -1002,8 +1011,8 @@ function check_config() {
 
     [[ "${config_base[access_auth_pam_desc]}" != '' && "${config_base[access_auth_pam_desc]}" == "${config_base[access_auth_pve_desc]}" ]] && echo_err 'Ошибка: выводимое имя типов аутентификации не должны быть одинаковыми' && exit 1
 
-    for val in take_snapshots access_create access_user_enable; do
-        echo_verbose "Проверка зачения конфигурации $val на валидость типу bool"
+    for val in take_snapshots access_create access_user_enable run_vm_after_installation create_templates_pool create_linked_clones; do
+        echo_verbose "Проверка значения конфигурации $val на валидость типу bool"
         ! isbool_check "${config_base[$val]}" && echo_err "Ошибка: зачение переменной конфигурации $val должна быть bool и равляться true или false. Выход" && exit 1
     done
 
@@ -1062,10 +1071,10 @@ function run_cmd() {
     ! $opt_dry_run && {
         local return_cmd=''
         if return_cmd=$( eval $cmd_exec 2>&1 ); then
-            echo_verbose "${c_cyan}$cmd_exec${c_null}"
+            $opt_verbose && echo_tty "[${c_lgreen}Выполнена команда${c_null}] ${c_cyan}$cmd_exec${c_null}"
         else
             ! $to_exit && {
-                echo_verbose "${c_info}$cmd_exec${c_null}"
+                echo_tty "[${c_warning}Выполнена команда${c_null}] ${c_info}$cmd_exec${c_null}"
                 echo_tty "${c_red}Error output: ${c_warning}$return_cmd${c_null}"
                 return 1
             }
@@ -1321,6 +1330,9 @@ function deploy_stand_config() {
         ${config_base[access_create]} && [[ "${vm_config[access_roles]}" != '' ]] && run_cmd "pveum acl modify '/vms/$vmid' --roles '${vm_config[access_roles]}' --users '$username'"
 
         ${config_base[take_snapshots]} && run_cmd /pipefail "qm snapshot '$vmid' 'Start' --description 'Исходное состояние ВМ' | tail -n2"
+
+        ${config_base[run_vm_after_installation]} && manage_bulk_vm_power --add "$(hostname)" "$vmid"
+
         echo_ok "${c_lcyan}Конфигурирование VM $elem завершено${c_null}"
         ((vmid++))
     done
@@ -1410,15 +1422,15 @@ function install_stands() {
 
     _exit=false
     ! $silent_mode && read_question 'Хотите изменить параметры?' && {
-        local opt_names=( inet_bridge storage pool_name pool_desc take_snapshots access_{create,user_{name,desc,enable},pass_{length,chars},auth_{pve,pam}_desc} dry-run verbose)
+        local opt_names=( inet_bridge storage pool_name pool_desc take_snapshots run_vm_after_installation access_{create,user_{name,desc,enable},pass_{length,chars},auth_{pve,pam}_desc} dry-run verbose)
         while true; do
             echo_tty "$( show_config install-change )"
             echo_tty
-            local switch=$( read_question_select 'Выберите номер настройки для изменения' '^[0-9]*$' 0 $( ${config_base[access_create]} && echo 15 || echo 8 ) )
+            local switch=$( read_question_select 'Выберите номер настройки для изменения' '^[0-9]*$' 0 $( ${config_base[access_create]} && echo 16 || echo 9 ) )
             echo_tty
             [[ "$switch" == 0 ]] && break
             [[ "$switch" == '' ]] && { $_exit && break; _exit=true; continue; }
-            [[ "$switch" -ge 7 && "${config_base[access_create]}" == false ]] && (( switch+=7 ))
+            [[ "$switch" -ge 8 && "${config_base[access_create]}" == false ]] && (( switch+=7 ))
             local opt=$( printf '%s\n' "${opt_names[@]}" | sed "$switch!D" )
             val=''
             case $opt in
@@ -1426,7 +1438,7 @@ function install_stands() {
                 access_user_name) configure_username set install exit false; continue;;
                 storage) config_base[storage]='{manual}'; configure_storage install; continue;;
                 inet_bridge) configure_wan_vmbr manual; continue;;
-                take_snapshots|access_create|access_user_enable) config_base[$opt]=$( invert_bool ${config_base[$opt]} ); continue;;
+                take_snapshots|access_create|access_user_enable|run_vm_after_installation) config_base[$opt]=$( invert_bool ${config_base[$opt]} ); continue;;
                 dry-run) opt_dry_run=$( invert_bool $opt_dry_run ); continue;;
                 verbose) opt_verbose=$( invert_bool $opt_verbose ); continue;;
             esac
@@ -1469,6 +1481,7 @@ function install_stands() {
     local -A roles_list
     parse_noborder_table 'pveum role list' roles_list
 
+    ${config_base[run_vm_after_installation]} && manage_bulk_vm_power --init
     opt_not_tmpfs=false
 
     for stand_num in "${!opt_stand_nums[@]}"; do
@@ -1481,6 +1494,8 @@ function install_stands() {
         [[ "${config_base[access_auth_pam_desc]}" != '' ]] && run_cmd "pveum realm modify pam --comment '${config_base[access_auth_pam_desc]}'"
         [[ "${config_base[access_auth_pve_desc]}" != '' ]] && run_cmd "pveum realm modify pve --default 'true' --comment '${config_base[access_auth_pve_desc]}'"
     }
+
+    ${config_base[run_vm_after_installation]} && manage_bulk_vm_power --start-vms
 
     deploy_access_passwd
 
@@ -1496,6 +1511,34 @@ function install_stands() {
 function check_arg() {
     [[ "$1" == '' || "${1:0:1}" == '-' ]] && echo_err "Ошибка обработки аргуметов: ожидалось значение. Выход" && exit 1
 }
+
+function manage_bulk_vm_power() {
+    [[ "$1" == '' ]] && exit 1
+    [[ -v bulk_vms_power_list ]] || declare -Ag bulk_vms_power_list
+
+    local action=''
+    [[ "$1" == '--add' && "$2" != '' && "$3" != ''  ]] && action='add' && shift
+    [[ "$1" == '--start-vms' ]] && action='startall'
+    [[ "$1" == '--stop-vms' ]] && action='stopall'
+    [[ "$1" == '--init' ]] && { bulk_vms_power_list=(); return; }
+    [[ "$action" == '' ]] && exit 1
+
+    [[ "$action" == add ]] && {
+        local node="$1"; shift
+        bulk_vms_power_list[$node]+=" $@"
+        return 0
+    }
+    
+    local pve_node args act_desc=''
+    [[ "$action" == 'startall' ]] && args=" --force 'true'" && act_desc="${c_lgreen}включение${c_null}" || { act_desc="${c_lred}выключение${c_null}"; isdigit_check "$2" && args=" --timeout '$2'"; }
+    for pve_node in ${!bulk_vms_power_list[@]}; do
+        bulk_vms_power_list[$pve_node]=$( echo "${bulk_vms_power_list[$pve_node]}" | awk 'NF{printf $0}' | sed 's/ \|\;/,/g;s/,\+/,/g' )
+        echo_tty "[${c_lgreen}Задание${c_null}] запущено массовое $act_desc машин на узле '${c_value}$pve_node${c_null}'. ВМIDs: '${c_value}${bulk_vms_power_list[$pve_node]:1}${c_null}'"
+        run_cmd "pvesh create /nodes/$pve_node/$action --vms '${bulk_vms_power_list[$pve_node]:1}'$args"
+        echo_ok "$act_desc машин на узле '${c_value}$pve_node${c_null}'"
+    done
+}
+
 
 
 function manage_stands() {
@@ -1672,20 +1715,20 @@ function manage_stands() {
 
     local regex='\s*\"{opt_name}\"\s*:\s*(\K[0-9]+|\"\K(?(?=\\").{2}|[^"])+)'
 
-    local pool_info vmid_list vmname_list vmid vm_node_list='' vm_status_list='' vm_node='' vm_status=''
+    local vm_cmd_arg='' pool_info vmid_list vmname_list vmid vm_node_list='' vm_status_list=''  vm_type_list='' vm_is_template_list='' vm_node='' vm_status='' vm_type='' vm_is_template=''
+
+    [[ "$switch" == 4 || "$switch" == 5 ]] && manage_bulk_vm_power --init
 
     if [[ $switch -ge 4 && $switch -le 11 ]]; then
         read_question $'\nВы действительно хотите продолжить?' || exit 0
         local status name cmd_str vm_poweroff=false vm_snap_state=true vm_poweroff_answer=true
         case $switch in
-                    4) cmd_str="create /nodes/{node}/qemu/{vmid}/status/start";;
-                    5) cmd_str="create /nodes/{node}/qemu/{vmid}/status/stop";;
-                    6) cmd_str="create /nodes/{node}/qemu/{vmid}/snapshot --snapname 'Start' --description 'Снапшот начального состояния ВМ' --vmstate '{vmstate}'";;
-                    7) cmd_str="create /nodes/{node}/qemu/{vmid}/snapshot/Start/rollback";;
-                    8) cmd_str="delete /nodes/{node}/qemu/{vmid}/snapshot/Start";;
-                    9) cmd_str="create /nodes/{node}/qemu/{vmid}/snapshot --snapname 'Finish' --description 'Снапшот ВМ с завершенным состоянием выполнения задания' --vmstate '{vmstate}'";;
-                    10) cmd_str="create /nodes/{node}/qemu/{vmid}/snapshot/Finish/rollback";;
-                    11) cmd_str="delete /nodes/{node}/qemu/{vmid}/snapshot/Finish";;
+                    6) cmd_str="create /nodes/{node}/{type}/{vmid}/snapshot --snapname 'Start' --description 'Снапшот начального состояния ВМ'{vmstate}";;
+                    7) cmd_str="create /nodes/{node}/{type}/{vmid}/snapshot/Start/rollback";;
+                    8) cmd_str="delete /nodes/{node}/{type}/{vmid}/snapshot/Start";;
+                    9) cmd_str="create /nodes/{node}/{type}/{vmid}/snapshot --snapname 'Finish' --description 'Снапшот ВМ с завершенным состоянием выполнения задания'{vmstate}";;
+                    10) cmd_str="create /nodes/{node}/{type}/{vmid}/snapshot/Finish/rollback";;
+                    11) cmd_str="delete /nodes/{node}/{type}/{vmid}/snapshot/Finish";;
         esac
         for ((i=1; i<=$( echo -n "${pool_list[$group_name]}" | grep -c '^' ); i++)); do
             echo_tty
@@ -1695,13 +1738,23 @@ function manage_stands() {
             vmname_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/name}" )
             vm_node_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/node}" )
             vm_status_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/status}" )
+            vm_type_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/type}" )
+            vm_is_template_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/template}" )
+
 
             for ((j=1; j<=$( echo -n "$vmid_list" | grep -c '^' ); j++)); do
                 vmid=$( echo "$vmid_list" | sed -n "${j}p" )
                 name=$( echo "$vmname_list" | sed -n "${j}p" )
                 vm_node=$( echo "$vm_node_list" | sed -n "${j}p" )
                 vm_status=$( echo "$vm_status_list" | sed -n "${j}p" )
+                vm_type=$( echo "$vm_type_list" | sed -n "${j}p" )
+                is_template=$( echo "$vm_is_template_list" | sed -n "${j}p" )
                 
+                [[ "$is_template" == '1' || "$vm_type" != 'qemu' ]] && continue
+                [[ "$switch" == 4 || "$switch" == 5 ]] && {
+                    manage_bulk_vm_power --add "$vm_node" "$vmid"
+                    continue
+                }
                 [[ "$switch" == 6 || "$switch" == 9 ]] && [[ "$vm_status" == running ]] && {
                     $vm_poweroff_answer && {
                         vm_poweroff=$( read_question "Машина ${c_lgreen}$name${c_null} (${c_lcyan}$vmid${c_null}) стенда ${c_value}$pool_name${c_null} включена. При создании снапшота рекомендуется выключить ВМ. "$'\n'"Выключать виртуальные машины перед созданием снапшота" && echo true || echo false)
@@ -1711,17 +1764,22 @@ function manage_stands() {
                     }
                     $vm_poweroff && run_cmd "pvesh create /nodes/$vm_node/stopall --vms '$vmid' --timeout '30' --force-stop 'true'"
                 }
-                status=$( run_cmd /noexit "pvesh $(echo "$cmd_str" | sed "s/{node}/$vm_node/;s/{vmid}/$vmid/;s/{vmstate}/$vm_snap_state/") 2>&1" ) && {
+                vm_cmd_arg=" --vmstate '$vm_snap_state'"
+                [[ "$vm_type" != 'qemu' ]] && vm_cmd_arg=''
+                status=$( run_cmd /noexit "pvesh $(echo "$cmd_str" | sed "s/{node}/$vm_node/;s/{vmid}/$vmid/;s/{vmstate}/$vm_cmd_arg/;s/{type}/$vm_type/" ) 2>&1" ) && {
                     echo_ok "стенд ${c_value}$pool_name${c_null} машина ${c_lgreen}$name${c_null} (${c_lcyan}$vmid${c_null})"
                     continue
                 }
 
+                echo "$status" | grep -Pq $'^snapshot feature is not available$' && echo_err "Ошибка: ВМ $name ($vmid) стенда $pool_name: хранилище ВМ не поддерживает создание снапшота!" && continue
                 echo "$status" | grep -Pq $'^Configuration file \'[^\']+\' does not exist$' && echo_err "Ошибка: ВМ $name ($vmid) стенда $pool_name не существует!" && continue
                 echo "$status" | grep -P $'^snapshot \'[^\']+\' does not exist$' && echo_err "Ошибка: Снапшот ВМ $name ($vmid) стенда $pool_name не существует!" && continue
                 echo "$status" | grep -P $'^snapshot name \'[^\']+\' already used$' && echo_err "Ошибка: Снапшот ВМ $name ($vmid) стенда $pool_name уже существует!" && continue
                 echo_err "Необработанная ошибка: ВМ $name ($vmid), стенд $pool_name:"$'\n'$status && exit
             done
         done
+        [[ "$switch" == 4 ]] && manage_bulk_vm_power --start-vms
+        [[ "$switch" == 5 ]] && manage_bulk_vm_power --stop-vms
     fi
 
     if [[ $switch == 12 ]]; then
@@ -1765,6 +1823,8 @@ function manage_stands() {
             vmname_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/name}" )
             vm_node_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/node}" )
             vm_status_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/status}" )
+            vm_type_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/type}" )
+            vm_is_template_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/template}" )
             vm_nodes=$( echo "$vm_nodes"$'\n'"$vm_node_list" | awk '!seen[$0]++ && NF' )
             [[ ! -v "ifaces_info_$(echo -n "$vm_nodes" | grep -c '^')" ]] \
                 && local -A "ifaces_info_$(echo -n "$vm_nodes" | grep -c '^')" && local "deny_ifaces_$(echo -n "$vm_nodes" | grep -c '^')" && make_node_ifs_info
@@ -1775,11 +1835,13 @@ function manage_stands() {
                 name=$( echo "$vmname_list" | sed -n "${j}p" )
                 vm_node=$( echo "$vm_node_list" | sed -n "${j}p" )
                 vm_status=$( echo "$vm_status_list" | sed -n "${j}p" )
+                vm_type=$( echo "$vm_type_list" | sed -n "${j}p" )
+                is_template=$( echo "$vm_is_template_list" | sed -n "${j}p" )
 
                 local -n ifaces_info="ifaces_info_$(echo "$vm_nodes" | awk -v s="$vm_node" '$0=s{print NR;exit}')"
                 local -n deny_ifaces="deny_ifaces_$(echo "$vm_nodes" | awk -v s="$vm_node" '$0=s{print NR;exit}')"
 
-                vm_netifs=$( pvesh get /nodes/$vm_node/qemu/$vmid/config --output-format json-pretty ) || { echo_err "Ошибка: не удалось получить информацию об ВМ стенда '$pool_name'"; exit 1; }
+                vm_netifs=$( pvesh get /nodes/$vm_node/$vm_type/$vmid/config --output-format json-pretty ) || { echo_err "Ошибка: не удалось получить информацию об ВМ стенда '$pool_name'"; exit 1; }
                 vm_netifs=$( echo "$vm_netifs" | grep -Po '\s*\"net[0-9]+\"\s*:\s*(\".*?bridge=\K\w+)' )
 
                 for ((k=1; k<=$( echo -n "$vm_netifs" | grep -c '^' ); k++)); do
@@ -1791,8 +1853,10 @@ function manage_stands() {
                     delete_if "$pool_name" "$ifname" "$if_desc"
                     restart_network=true
                 done
-                [[ $vm_status == running ]] && run_cmd "pvesh create /nodes/$vm_node/qemu/$vmid/status/stop --skiplock 'true' --timeout '0'"
-                run_cmd /noexit "( pvesh delete /nodes/$vm_node/qemu/$vmid --skiplock 'true' --purge 'true' 2>&1;echo) | grep -Pq '(^$|does not exist$)'" \
+                [[ "$vm_status" == 'running' && "$vm_type" == 'qemu' ]] && run_cmd "pvesh create /nodes/$vm_node/$vm_type/$vmid/status/stop --skiplock 'true' --timeout '0'"
+                vm_cmd_arg="--skiplock 'true' --purge 'true'"
+                [[ "$vm_type" != 'qemu' ]] && vm_cmd_arg="--force 'true'"
+                run_cmd /noexit "( pvesh delete /nodes/$vm_node/$vm_type/$vmid $vm_cmd_arg 2>&1;echo) | grep -Pq '(^$|does not exist$)'" \
                     && echo_ok "стенд ${c_value}$pool_name${c_null}: удалена машина ${c_lgreen}$name${c_null} (${c_lcyan}$vmid${c_null})" \
                     || { echo_err "Ошибка: не удалось удалить ВМ '$vmid' стенда '$pool_name'"; exit 1; }
             done
@@ -1870,14 +1934,16 @@ i=0
 while [ $# != 0 ]; do
     ((i++))
     case $iteration in
-        1)  if [[ "${!i}" == '-z' || "${!i}" == '--clear-vmconfig' ]]; then opt_zero_vms=true; set -- "${@:1:i-1}" "${@:i+1}"; fi;;
+        1)  case "${!i}" in
+                -z|--clear-vmconfig)    opt_zero_vms=true; set -- "${@:1:i-1}" "${@:i+1}"; ((i--));;
+                -v|--verbose)           opt_verbose=true; set -- "${@:1:i-1}" "${@:i+1}"; ((i--));;
+            esac;;
         2)  if [[ "${!i}" == '-c' || "${!i}" == '--config' ]]; then
-            ((i++)); set_configfile "${!i}"; set -- "${@:1:i-2}" "${@:i+1}"; fi;;
-        *)  case $1 in
+            ((i++)); set_configfile "${!i}"; set -- "${@:1:i-2}" "${@:i+1}"; ((i-=2)); fi;;
+        *)  case "$1" in
                 \?|-\?|/\?|-h|/h|--help) opt_show_help=true;;
                 -sh|--show-config) opt_show_config=true
                     [[ "$2" =~ ^[^-].* ]] && conf_files+=("$2") && shift;;
-                -v|--verbose)           opt_verbose=true;;
                 -n|--stand-num)         check_arg "$2"; set_standnum "$2"; shift;;
                 -var|--set-var-num)     check_arg "$2"; set_varnum "$2"; shift;;
                 -si|--silent-install)   opt_silent_install=true; switch_action=1;;
@@ -1889,6 +1955,7 @@ while [ $# != 0 ]; do
                 -st|--storage)          check_arg "$2"; config_base[storage]="$2"; shift;;
                 -pn|--pool-name)        check_arg "$2"; config_base[pool_name]="$2"; shift;;
                 -snap|--take-snapshots) check_arg "$2"; config_base[take_snapshots]="$2"; shift;;
+                -inst-start-vms|--run-vm-after-installation) check_arg "$2"; config_base[run_vm_after_installation]="$2"; shift;;
                 -acl|--access-create)   check_arg "$2"; config_base[access_create]="$2"; shift;;
                 -u|--user-name)         check_arg "$2"; config_base[access_user_name]="$2"; shift;;
                 -l|--pass-length)       check_arg "$2"; config_base[access_pass_length]="$2"; shift;;
