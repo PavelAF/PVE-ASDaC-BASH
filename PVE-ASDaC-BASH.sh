@@ -573,7 +573,7 @@ function get_file() {
             configure_imgdir add-size $max_filesize
             echo_tty "[${c_info}Info${c_null}] Скачивание файла ${c_value}$filename${c_null} Размер: ${c_value}$( echo "$filesize" | awk 'BEGIN{split("Б|КБ|МБ|ГБ|ТБ",x,"|")}{for(i=1;$1>=1024&&i<length(x);i++)$1/=1024;printf int($1) " " x[i] }' )${c_null}"
             echo_verbose "URL: ${c_value}$url${c_null}"
-            echo_verbose "SiZE: ${c_value}$filesize${c_null} SHA-256: ${c_value}$file_sha256${c_null}"
+            echo_verbose "SIZE: ${c_value}$filesize${c_null} SHA-256: ${c_value}$file_sha256${c_null}"
             curl --max-filesize $max_filesize -GL "$url" -o "$filename" || { echo_err "Ошибка скачивания файла ${c_value}$filename${c_null} URL: ${c_value}$url${c_null}. Выход"; exit 1; }
             # | iconv -f windows-1251 -t utf-8 > $tempfile
         }
