@@ -834,7 +834,7 @@ function check_name() {
     local -n ref_var="$1"
 
     if [[ "$ref_var" =~ ^[\-0-9a-zA-Z\_\.]+(\{0\})?[\-0-9a-zA-Z\_\.]*$ ]] \
-        && [[ "$(echo -n "$ref_var" | wc -m)" -ge 3 && "$(echo -n "$ref_var" | wc -m)" -le 32 ]]; then
+        && [[ "$(echo -n "$ref_var" | wc -m)" -ge 4 && "$(echo -n "$ref_var" | wc -m)" -le 32 ]]; then
         [[ ! "$ref_var" =~ \{0\} ]] && ref_var+='{0}'
         return 0
     else
@@ -858,7 +858,7 @@ function configure_poolname() {
         shift
         [[ "${config_base[pool_name]}" == "$def_value" ]] && return 0
     }
-    check_name 'config_base[pool_name]' ||  { echo_err "Ошибка: шаблон имён пулов некорректный: '${config_base[pool_name]}'. Запрещенные символы или длина больше 32 или меньше 3. Выход"; ${3:-true} && exit 1 || config_base[pool_name]=$def_value && return 1; }
+    check_name 'config_base[pool_name]' ||  { echo_err "Ошибка: шаблон имён пулов некорректный: '${config_base[pool_name]}'. Запрещенные символы или длина больше 32 или меньше 3"; ${3:-true} && exit 1 || config_base[pool_name]=$def_value && return 1; }
 
     [[ "$1" == 'install' ]] && {
         local pool_list pool_name
@@ -1497,7 +1497,7 @@ function install_stands() {
 
     ${config_base[run_vm_after_installation]} && manage_bulk_vm_power --start-vms
 
-    deploy_access_passwd
+    ${config_base[access_create]} && deploy_access_passwd
 
     echo_tty $'\n'"${c_green}Установка закочена.${c_null} Выход"
     
