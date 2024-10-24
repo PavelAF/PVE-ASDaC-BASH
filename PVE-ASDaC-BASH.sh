@@ -1567,7 +1567,7 @@ function manage_stands() {
             && [[ "$(echo "${acl_list[propagate]}" | sed -n "${i}p")" == 0 ]]; then
             print_list["$group_name"]=''
             pool_list["$group_name"]+=" ${BASH_REMATCH[1]} "
-            pool_list["$group_name"]=$( echo "${pool_list[$group_name]}" | tr ' ' '\n' | sed '/^$/d' | sort -u )
+            pool_list["$group_name"]=$( echo "${pool_list[$group_name]}" | tr ' ' '\n' | sed '/^$/d' | sort -uV )
         fi
     done
 
@@ -1577,7 +1577,7 @@ function manage_stands() {
             comment=$(echo "${group_list[comment]}" | sed -n "${i}p")
             users=$(echo "${group_list[users]}" | sed -n "${i}p")
             print_list["$group_name"]="${c_lgreen}$group_name${c_null} : $comment"
-            user_list["$group_name"]=$( echo "$users" | tr -s ',' '\n' | sort -u )
+            user_list["$group_name"]=$( echo "$users" | tr -s ',' '\n' | sort -uV )
         }
     done
 
@@ -1614,7 +1614,7 @@ function manage_stands() {
 
     [[ "$switch" == '' ]] && switch=$( read_question_select $'\nВыберите действие' '^([0-9]{1,2}|)$' 1 12 ) && [[ "$switch" == '' ]] && return 0
     if [[ $switch =~ ^[1-3]$ ]]; then
-        local user_name enable state usr_range='' usr_count=$(echo -n "${user_list[$group_name]}" | grep -c '^') usr_list=${user_list[$group_name]}
+        local user_name enable state usr_range='' usr_count=$(echo -n "${user_list[$group_name]}" | grep -c '^') usr_list=''
 
         [[ "$usr_count" == 0 ]] && echo_err "Ошибка: пользователи стендов '$group_name' не найдены. Выход" && exit 1
         if [[ "$usr_count" -gt 1 ]]; then
@@ -1625,18 +1625,17 @@ function manage_stands() {
             echo_tty $'\nДля выбора всех пользователей нажмите Enter'
             while true; do
                 usr_range=$( read_question_select 'Введите номера выбранных пользователей (прим 1,2-10)' '\A^(([0-9]{1,3}((\-|\.\.)[0-9]{1,3})?([\,](?!$\Z)|(?![0-9])))+|)$\Z' )
-                [[ "$usr_range" == '' ]] && break
+                [[ "$usr_range" == '' ]] && { usr_list=${user_list[$group_name]}; break; }
 
+                usr_list=''
                 local numarr=( $( get_numrange_array "$usr_range") )
-                usr_list=${user_list[$group_name]}
-                for ((i=1; i<=$(echo -n "$usr_list" | grep -c '^'); i++)); do
-                    printf '%s\n' "${numarr[@]}" | grep -Fxq "$i" || { usr_list=$(echo "$usr_list" | sed -n "${i}!p" ); (( i > 0 ? i-- : i )); }
+                for ((i=1; i<=$(echo -n "${user_list[$group_name]}" | grep -c '^'); i++)); do
+                    printf '%s\n' "${numarr[@]}" | grep -Fxq "$i" && { usr_list=$(echo "$usr_list"; echo "${user_list[$group_name]}" | sed -n "${i}p" ); }
                 done
                 [[ "$usr_list" != '' ]] && break || echo_warn "Не выбран ни один пользователь!"
             done
-            user_list[$group_name]=$usr_list
+            user_list[$group_name]=$( echo "$usr_list" | sed /^$/d )
         fi
-
         echo_tty -n $'\nВыбранные пользователи: '; echo_tty "$( get_val_print "$( echo ${user_list[$group_name]} )" )"
 
         opt_stand_nums=()
@@ -1685,30 +1684,32 @@ function manage_stands() {
         echo_tty $'\nДля выбора всех стендов группы нажмите Enter'
         while true; do
             stand_range=$( read_question_select 'Введите номера выбранных стендов (прим 1,2-10)' '\A^(([0-9]{1,3}((\-|\.\.)[0-9]{1,3})?([\,](?!$\Z)|(?![0-9])))+|)$\Z' )
-            stand_list=${pool_list[$group_name]}
-            usr_list=${user_list[$group_name]}
-            [[ "$stand_range" == '' ]] && break
+            stand_list=''
+            usr_list=''
+            [[ "$stand_range" == '' ]] && { stand_list=${pool_list[$group_name]}; usr_list=${user_list[$group_name]}; break; } 
+            
 
-            local numarr=( $( get_numrange_array "$stand_range") )
-            for ((i=1; i<=$(echo -n "$stand_list" | grep -c '^'); i++)); do
-                printf '%s\n' "${numarr[@]}" | grep -Fxq "$i" || {
-                    local stand_name=$(echo "$stand_list" | sed -n "${i}p")
-                    stand_list=$(echo "$stand_list" | sed -n "${i}!p" )
-                    (( i > 0 ? i-- : i ))
+            local numarr=( $( get_numrange_array "$stand_range" ) )
+            for ((i=1; i<=$( echo -n "${pool_list[$group_name]}" | grep -c '^' ); i++)); do
+                printf '%s\n' "${numarr[@]}" | grep -Fxq "$i" && {
+                    local stand_name=$( echo -n "${pool_list[$group_name]}" | sed -n "${i}p" )
+                    stand_list=$( echo "$stand_list"; echo "$stand_name" )
                     local j=1
-                    for ((j=1; j<=$(echo -n "${acl_list[path]}" | grep -c '^'); j++)); do
+                    for ((j=1; j<=$( echo -n "${acl_list[path]}" | grep -c '^' ); j++)); do
                         local path=$( echo "${acl_list[path]}" | sed -n "${j}p" )
                         [[ "$path" == "/pool/$stand_name" && "$( echo "${acl_list[type]}" | sed -n "${j}p" )" == user ]] || continue
                         local user=$( echo "${acl_list[ugid]}" | sed -n "${j}p" )
-                        usr_list=$(echo "$usr_list" | sed '/^'$user'$/d')
+                        usr_list=$( echo "$usr_list"; echo "$user" )
                     done
                 }
             done
             [[ "$stand_list" != '' ]] && break || echo_warn "Не выбран ни один стенд!"
         done
+
+        user_list[$group_name]=$( echo "$usr_list" | sed /^$/d )
+        pool_list[$group_name]=$( echo "$stand_list" | sed /^$/d )
+
         [[ "${pool_list[$group_name]}" == "$stand_list" ]] && local del_all=true
-        user_list[$group_name]=$usr_list
-        pool_list[$group_name]=$stand_list
     else
         local del_all=true
     fi
@@ -1722,7 +1723,7 @@ function manage_stands() {
     [[ "$switch" == 4 || "$switch" == 5 ]] && manage_bulk_vm_power --init
 
     if [[ $switch -ge 4 && $switch -le 11 ]]; then
-        read_question $'\nВы действительно хотите продолжить?' || exit 0
+        read_question $'\nВы действительно хотите продолжить?' || manage_stands
         local status name cmd_str vm_poweroff=false vm_snap_state=true vm_poweroff_answer=true
         case $switch in
                     6) cmd_str="create /nodes/{node}/{type}/{vmid}/snapshot --snapname 'Start' --description 'Снапшот начального состояния ВМ'{vmstate}";;
@@ -1787,7 +1788,7 @@ function manage_stands() {
     if [[ $switch == 12 ]]; then
 
         echo_tty -n $'Выбранные пользователи: '; get_val_print "$(echo ${user_list[$group_name]} )"
-        read_question $'\nВы действительно хотите продолжить?' || exit 0
+        read_question $'\nВы действительно хотите продолжить?' || manage_stands
 
         function make_node_ifs_info {
             local -n ifaces_info="ifaces_info_$(echo -n "$vm_nodes" | grep -c '^')"
