@@ -21,7 +21,7 @@ declare -A config_base=(
     [_inet_bridge]='Интерфейс с выходом в Интернет, NAT и DHCP'
     [inet_bridge]='{auto}'
 
-    [_start_vmid]='Начальный идентификатор ВМ (VMID), с коротого будут создаваться ВМ'
+    [_start_vmid]='Начальный идентификатор ВМ (VMID), с которого будут создаваться ВМ'
     [start_vmid]='{auto}'
 
     [_mk_tmpfs_imgdir]='Временный раздел tmpfs в ОЗУ для хранения образов ВМ (уничтожается в конце установки)'
@@ -834,7 +834,7 @@ function check_name() {
     local -n ref_var="$1"
 
     if [[ "$ref_var" =~ ^[\-0-9a-zA-Z\_\.]+(\{0\})?[\-0-9a-zA-Z\_\.]*$ ]] \
-        && [[ "$(echo -n "$ref_var" | wc -m)" -ge 3 && "$(echo -n "$ref_var" | wc -m)" -le 32 ]]; then
+        && [[ "$(echo -n "$ref_var" | wc -m)" -ge 4 && "$(echo -n "$ref_var" | wc -m)" -le 32 ]]; then
         [[ ! "$ref_var" =~ \{0\} ]] && ref_var+='{0}'
         return 0
     else
@@ -858,7 +858,7 @@ function configure_poolname() {
         shift
         [[ "${config_base[pool_name]}" == "$def_value" ]] && return 0
     }
-    check_name 'config_base[pool_name]' ||  { echo_err "Ошибка: шаблон имён пулов некорректный: '${config_base[pool_name]}'. Запрещенные символы или длина больше 32 или меньше 3. Выход"; ${3:-true} && exit 1 || config_base[pool_name]=$def_value && return 1; }
+    check_name 'config_base[pool_name]' ||  { echo_err "Ошибка: шаблон имён пулов некорректный: '${config_base[pool_name]}'. Запрещенные символы или длина больше 32 или меньше 3"; ${3:-true} && exit 1 || config_base[pool_name]=$def_value && return 1; }
 
     [[ "$1" == 'install' ]] && {
         local pool_list pool_name
@@ -978,7 +978,9 @@ function check_config() {
         echo $pve_ver | grep -Pq '^([7-9]|[1-9][0-9])\.' || { echo_err "Ошибка: версия PVE '$pve_ver' уже устарела и установка ВМ данным скриптом не поддерживается." && exit 1; }
         create_access_network=$( echo $pve_ver | grep -Pq '^([8-9]|[1-9][0-9])\.' && echo true || echo false )
 
+        [[ "$( echo -n 'тест' | wc -m )" != 4 ]] && { LC_ALL="en_US.UTF-8"; echo_warn "Предупреждение: обнаружена установленная кодировка без поддержки Unicode. Изменено на 'en_US.UTF-8'" }
         [[ "$( echo -n 'тест' | wc -m )" != 4 ]] && {
+            
             echo_warn "Предупреждение: обнаружена проблема с кодировкой. Символы Юникода (в т.ч. кириллические буквы) не будут корректно обрабатываться и строки описаний будут заменены на символы '�'. Попробуйте запустить скрипт другим способом (SSH?)"
             echo_tty
             echo_warn "Warning: An encoding problem has been detected. Unicode characters (including Cyrillic letters) will not be processed correctly and description lines will be replaced with '�' characters. Try running the script in a different way from (SSH?)"
@@ -1285,7 +1287,7 @@ function deploy_stand_config() {
         local username="${config_base[access_user_name]/\{0\}/$stand_num}@pve"
         run_cmd /noexit "pveum user add '$username' --enable '${config_base[access_user_enable]}' --comment '${config_base[access_user_desc]/\{0\}/$stand_num}' --groups '$stands_group'" \
             || { echo_err "Ошибка: не удалось создать пользователя '$username'"; exit 1; }
-        run_cmd "pveum user modify '$username' --comment '${config_base[access_user_desc]/\{0\}/$stand_num}'"
+        # run_cmd "pveum user modify '$username' --comment '${config_base[access_user_desc]/\{0\}/$stand_num}'"
         run_cmd "pveum acl modify '/pool/$pool_name' --users '$username' --roles 'PVEAuditor' --propagate 'false'"
     }
 
@@ -1497,7 +1499,7 @@ function install_stands() {
 
     ${config_base[run_vm_after_installation]} && manage_bulk_vm_power --start-vms
 
-    deploy_access_passwd
+    ${config_base[access_create]} && deploy_access_passwd
 
     echo_tty $'\n'"${c_green}Установка закочена.${c_null} Выход"
     
