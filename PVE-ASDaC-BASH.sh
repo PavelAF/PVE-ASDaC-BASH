@@ -21,7 +21,7 @@ declare -A config_base=(
     [_inet_bridge]='Интерфейс с выходом в Интернет, NAT и DHCP'
     [inet_bridge]='{auto}'
 
-    [_start_vmid]='Начальный идентификатор ВМ (VMID), с коротого будут создаваться ВМ'
+    [_start_vmid]='Начальный идентификатор ВМ (VMID), с которого будут создаваться ВМ'
     [start_vmid]='{auto}'
 
     [_mk_tmpfs_imgdir]='Временный раздел tmpfs в ОЗУ для хранения образов ВМ (уничтожается в конце установки)'
@@ -138,7 +138,7 @@ declare -A config_stand_1_var=(
 
     [_test-vm1]='test-vm'
     [test-vm1]='
-        description = rewritred description test-vm1
+        description = rewritred описание test-vm1
         disk3 = 0.1
     	config_template = test
         startup = order=1,up=5,down=5
@@ -151,7 +151,7 @@ declare -A config_stand_1_var=(
 
     [_test-vm2]='test-vm'
     [test-vm2]='
-        description = rewritred description test-vm2
+        description = rewritred описание test-vm2
         disk3 = 0.1
         disk4 = 0.1
     	config_template =    test   
@@ -978,7 +978,9 @@ function check_config() {
         echo $pve_ver | grep -Pq '^([7-9]|[1-9][0-9])\.' || { echo_err "Ошибка: версия PVE '$pve_ver' уже устарела и установка ВМ данным скриптом не поддерживается." && exit 1; }
         create_access_network=$( echo $pve_ver | grep -Pq '^([8-9]|[1-9][0-9])\.' && echo true || echo false )
 
-        [[ "$( echo -n 'тест' | wc -m )" != 4 ]] && {
+        [[ "$( printf '%x' "'й" )" != '439' ]] && { LC_ALL="en_US.UTF-8"; echo_warn $'\n'"Предупреждение: установленная кодировка не поддерживает символы Unicode"; echo_info "Кодировка была изменена на '${c_value}en_US.UTF-8${c_info}'"$'\n'; }
+        [[ "$( echo -n 'тест' | wc -m )" != 4 || "$( printf '%x' "'й" )" != '439' ]] && {
+            
             echo_warn "Предупреждение: обнаружена проблема с кодировкой. Символы Юникода (в т.ч. кириллические буквы) не будут корректно обрабатываться и строки описаний будут заменены на символы '�'. Попробуйте запустить скрипт другим способом (SSH?)"
             echo_tty
             echo_warn "Warning: An encoding problem has been detected. Unicode characters (including Cyrillic letters) will not be processed correctly and description lines will be replaced with '�' characters. Try running the script in a different way from (SSH?)"
@@ -1285,7 +1287,7 @@ function deploy_stand_config() {
         local username="${config_base[access_user_name]/\{0\}/$stand_num}@pve"
         run_cmd /noexit "pveum user add '$username' --enable '${config_base[access_user_enable]}' --comment '${config_base[access_user_desc]/\{0\}/$stand_num}' --groups '$stands_group'" \
             || { echo_err "Ошибка: не удалось создать пользователя '$username'"; exit 1; }
-        run_cmd "pveum user modify '$username' --comment '${config_base[access_user_desc]/\{0\}/$stand_num}'"
+        # run_cmd "pveum user modify '$username' --comment '${config_base[access_user_desc]/\{0\}/$stand_num}'"
         run_cmd "pveum acl modify '/pool/$pool_name' --users '$username' --roles 'PVEAuditor' --propagate 'false'"
     }
 
