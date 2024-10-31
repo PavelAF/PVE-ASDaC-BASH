@@ -7,9 +7,7 @@ sh='PVE-ASDaC-BASH.sh';curl -sOL "https://raw.githubusercontent.com/PavelAF/PVE-
 ```
 sh='PVE-ASDaC-BASH.sh';curl -sOL "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/main/$sh"&&chmod +x $sh&&./$sh -c https://disk.yandex.ru/d/259h8afDR9hqyQ -z;rm -f $sh
 ```
-
-
-
+<br>
 Скрипт простого авторазвертывания стендов с виртуальной ИТ-инфраструктурой на базе гипервизора Proxmox VE и Альт Сервер Виртуализация (PVE)
 
 Поддерживаемые версии: Proxmox VE от 7 до 8.2 (latest), Альт Сервер Виртуализация 10.0 и выше (PVE 7.0+)
