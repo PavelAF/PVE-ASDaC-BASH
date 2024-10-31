@@ -1581,7 +1581,7 @@ function manage_stands() {
         }
     done
 
-    [[ ${#print_list[@]} != 0 ]] && echo_tty $'\n\nСписок развернутых конфигураций:' || { echo_warn "Ни одной конфигурации не было найдено. Выход"; return 0; }
+    [[ ${#print_list[@]} != 0 ]] && echo_tty $'\n\nСписок развернутых конфигураций:' || { echo_info $'\n'"Не найденно ни одной развернутой конфигурации"; return 0; }
     local i=0
     for item in ${!print_list[@]}; do
         echo_tty "  $((++i)). ${print_list[$item]}"
@@ -1670,7 +1670,7 @@ function manage_stands() {
             deploy_access_passwd set
         fi
         opt_stand_nums=()
-        echo_tty $'\n'"${c_green}Настройка завершена.${c_null} Выход" && return 0
+        echo_tty $'\n'"${c_green}Настройка завершена.${c_null} Выход"; return 0
     fi
 
     local stand_range='' stand_count=$(echo -n "${pool_list[$group_name]}" | grep -c '^') stand_list='' usr_list=''
@@ -1706,10 +1706,10 @@ function manage_stands() {
             [[ "$stand_list" != '' ]] && break || echo_warn "Не выбран ни один стенд!"
         done
 
+        stand_list=$( echo "$stand_list" | sed /^$/d )
         user_list[$group_name]=$( echo "$usr_list" | sed /^$/d )
-        pool_list[$group_name]=$( echo "$stand_list" | sed /^$/d )
-
         [[ "${pool_list[$group_name]}" == "$stand_list" ]] && local del_all=true
+        pool_list[$group_name]=$stand_list
     else
         local del_all=true
     fi
@@ -1723,7 +1723,7 @@ function manage_stands() {
     [[ "$switch" == 4 || "$switch" == 5 ]] && manage_bulk_vm_power --init
 
     if [[ $switch -ge 4 && $switch -le 11 ]]; then
-        read_question $'\nВы действительно хотите продолжить?' || manage_stands
+        read_question $'\nВы действительно хотите продолжить?' || return 0
         local status name cmd_str vm_poweroff=false vm_snap_state=true vm_poweroff_answer=true
         case $switch in
                     6) cmd_str="create /nodes/{node}/{type}/{vmid}/snapshot --snapname 'Start' --description 'Снапшот начального состояния ВМ'{vmstate}";;
@@ -1788,7 +1788,7 @@ function manage_stands() {
     if [[ $switch == 12 ]]; then
 
         echo_tty -n $'Выбранные пользователи: '; get_val_print "$(echo ${user_list[$group_name]} )"
-        read_question $'\nВы действительно хотите продолжить?' || manage_stands
+        read_question $'\nВы действительно хотите продолжить?' || return 0
 
         function make_node_ifs_info {
             local -n ifaces_info="ifaces_info_$(echo -n "$vm_nodes" | grep -c '^')"
@@ -1796,7 +1796,7 @@ function manage_stands() {
             local bridge_ports vm_node=$( echo "$vm_nodes" | sed -n "$(echo -n "$vm_nodes" | grep -c '^')p" )
 
             parse_noborder_table "pvesh get /nodes/$vm_node/network" ifaces_info iface type bridge_ports address address6 bridge_vlan_aware comments vlan-raw-device
-
+            local i=1
             for ((i=1; i<=$( echo -n "${ifaces_info[iface]}" | grep -c '^' ); i++)); do
                 bridge_ports=$( echo "${ifaces_info[bridge_ports]}" | sed -n "${i}p" )
                 ifname=$( echo "${ifaces_info[iface]}" | sed -n "${i}p" )
@@ -1817,7 +1817,7 @@ function manage_stands() {
             eval "deny_ifaces_$(echo -n "$vm_nodes" | grep -c '^')+=' $2'"
         }
 
-        local ifname vm_nodes='' vm_netifs depend_if if_desc k restart_network=false 
+        local ifname vm_nodes='' vm_netifs depend_if if_desc k restart_network=false vm_protection=0 vm_del_protection_answer=''
         for ((i=1; i<=$( echo -n "${pool_list[$group_name]}" | grep -c '^' ); i++)); do
             echo_tty
             pool_name=$( echo "${pool_list[$group_name]}" | sed -n "${i}p" )
@@ -1845,6 +1845,7 @@ function manage_stands() {
                 local -n deny_ifaces="deny_ifaces_$(echo "$vm_nodes" | awk -v s="$vm_node" '$0=s{print NR;exit}')"
 
                 vm_netifs=$( pvesh get /nodes/$vm_node/$vm_type/$vmid/config --output-format json-pretty ) || { echo_err "Ошибка: не удалось получить информацию об ВМ стенда '$pool_name'"; exit 1; }
+                vm_protection=$( echo "$vm_netifs" | grep -Po '\s*"protection"\s*:\s*\"?\K\d' )
                 vm_netifs=$( echo "$vm_netifs" | grep -Po '\s*\"net[0-9]+\"\s*:\s*(\".*?bridge=\K\w+)' )
 
                 for ((k=1; k<=$( echo -n "$vm_netifs" | grep -c '^' ); k++)); do
@@ -1856,6 +1857,11 @@ function manage_stands() {
                     delete_if "$pool_name" "$ifname" "$if_desc"
                     restart_network=true
                 done
+                [[ "$vm_protection" == '1' ]] && {
+                    [[ "$vm_del_protection_answer" == '' ]] && vm_del_protection_answer=$( read_question "Машина ${c_lgreen}$name${c_null} (${c_lcyan}$vmid${c_null}) стенда ${c_value}$pool_name${c_null}: включена защита от удаления"$'\n'"Продолжить удаление стендов?" && echo 1 || exit 0 )
+                    run_cmd "pvesh create /nodes/$vm_node/$vm_type/$vmid/config --protection '0' 2>&1"
+                }
+
                 [[ "$vm_status" == 'running' && "$vm_type" == 'qemu' ]] && run_cmd "pvesh create /nodes/$vm_node/$vm_type/$vmid/status/stop --skiplock 'true' --timeout '0'"
                 vm_cmd_arg="--skiplock 'true' --purge 'true'"
                 [[ "$vm_type" != 'qemu' ]] && vm_cmd_arg="--force 'true'"
