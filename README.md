@@ -1,9 +1,9 @@
 # #PROF39
-**Пре-конфиг стендов демекзамена, классический**
+**Пре-конфиг стендов демекзамена 09.02.06-2025, классический**
 ```
 sh='PVE-ASDaC-BASH.sh';curl -sOL "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/main/$sh"&&chmod +x $sh&&./$sh -c https://disk.yandex.ru/d/HDgvq-iMbduqag -z;rm -f $sh
 ```
-**Пре-конфиг стендов демекзамена, только ОС Альт**
+**Пре-конфиг стендов демекзамена 09.02.06-2025, только ОС Альт**
 ```
 sh='PVE-ASDaC-BASH.sh';curl -sOL "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/main/$sh"&&chmod +x $sh&&./$sh -c https://disk.yandex.ru/d/259h8afDR9hqyQ -z;rm -f $sh
 ```
