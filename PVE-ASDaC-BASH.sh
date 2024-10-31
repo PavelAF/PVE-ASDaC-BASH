@@ -197,7 +197,7 @@ function get_val_print() {
     [[ "$1" == true ]] && echo "${c_lgreen}Да${c_null}" && return 0
     [[ "$1" == false ]] && echo "${c_lred}Нет${c_null}" && return 0
     if [[ "$2" == storage ]] && ! [[ "$1" =~ ^\{(manual|auto)\}$ ]] && [[ "$sel_storage_space" != '' ]]; then
-        echo "${c_value}$1${c_null} (свободно $(echo "$sel_storage_space" | awk 'BEGIN{ split("К|М|Г|Т",x,"|") } { for(i=1;$1>=1024&&i<length(x);i++) $1/=1024; print int($1) " " x[i] "Б" }'))"
+        echo "${c_value}$1${c_null} (свободно $(echo "$sel_storage_space" | awk 'BEGIN{ split("К|М|Г|Т",x,"|") } { for(i=1;$1>=1024&&i<length(x);i++) $1/=1024; printf("%3.1f %sБ",$1,x[i]) }'))"
         return 0
     elif [[ "$2" == access_pass_chars ]]; then
         echo "[${c_value}$1${c_null}]"
@@ -910,7 +910,7 @@ function configure_storage() {
     [[ "$1" == check-only ]] && [[ "${config_base[storage]}" == '{auto}' || "${config_base[storage]}" == '{manual}' ]] && return 0
     set_storage() {
             echo $'\nСписок доступных хранилищ:'
-            echo "$pve_storage_list" | awk -F' ' 'BEGIN{split("К|М|Г|Т",x,"|")}{for(i=1;$2>=1024&&i<length(x);i++)$2/=1024;print NR"\t"$1"\t"$3"\t"int($2)" "x[i]"Б"; }' \
+            echo "$pve_storage_list" | awk -F' ' 'BEGIN{split("К|М|Г|Т",x,"|")}{for(i=1;$2>=1024&&i<length(x);i++)$2/=1024;printf("%s\t%s\t%s\t%3.1f %sБ\n",NR,$1,$3,$2,x[i]) }' \
             | column -t -s$'\t' -N'Номер,Имя хранилища,Тип хранилища,Свободное место' -o$'\t' -R1
             config_base[storage]=$( read_question_select 'Выберите номер хранилища'  '^[1-9][0-9]*$' 1 $(echo -n "$pve_storage_list" | grep -c '^') )
             config_base[storage]=$(echo "$pve_storage_list" | awk -F' ' -v nr="${config_base[storage]}" 'NR==nr{print $1}')
