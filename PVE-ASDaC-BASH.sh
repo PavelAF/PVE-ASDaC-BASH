@@ -1535,7 +1535,7 @@ function manage_bulk_vm_power() {
     [[ "$action" == 'startall' ]] && args=" --force 'true'" && act_desc="${c_lgreen}включение${c_null}" || { act_desc="${c_lred}выключение${c_null}"; isdigit_check "$2" && args=" --timeout '$2'"; }
     for pve_node in ${!bulk_vms_power_list[@]}; do
         bulk_vms_power_list[$pve_node]=$( echo "${bulk_vms_power_list[$pve_node]}" | awk 'NF{printf $0}' | sed 's/ \|\;/,/g;s/,\+/,/g' )
-        echo_tty "[${c_lgreen}Задание${c_null}] запущено массовое $act_desc машин на узле '${c_value}$pve_node${c_null}'. ВМIDs: '${c_value}${bulk_vms_power_list[$pve_node]:1}${c_null}'"
+        echo_tty "[${c_lgreen}Задание${c_null}] запущено массовое $act_desc машин на узле '${c_value}$pve_node${c_null}'. ВМIDs: ${c_value}${bulk_vms_power_list[$pve_node]:1}${c_null}"
         run_cmd "pvesh create /nodes/$pve_node/$action --vms '${bulk_vms_power_list[$pve_node]:1}'$args"
         echo_ok "$act_desc машин на узле '${c_value}$pve_node${c_null}'"
     done
@@ -1598,19 +1598,17 @@ function manage_stands() {
     done
 
     echo_tty $'\nУправление конфигурацией:'
-    echo_tty '   1. Включение учетных записей'
-    echo_tty '   2. Отключение учетных записей'
-    echo_tty '   3. Установка паролей для учетных записей'
-    echo_tty '   4. Включить виртуальные машины'
-    echo_tty '   5. Выключить виртуальные машины'
-    echo_tty '   6. Создать снапшот с начальным состоянием ВМ: "Start"'
-    echo_tty '   7. Откатить виртуальные машины до начального снапшота: "Start"'
-    echo_tty '   8. Удалить снапшот: "Start"'
-    echo_tty '   9. Создать снапшот ВМ с результатом выполнения: "Finish"'
-    echo_tty '  10. Откатить виртуальные машины до снапшота: "Finish"'
-    echo_tty '  11. Удалить снапшот: "Finish"'
-    echo_tty '  12. Удаление стендов'
-    local switch=$( read_question_select $'\nВыберите действие' '^([0-9]{1,2}|)$' 1 12 )
+    echo_tty "   1. Включение учетных записей"
+    echo_tty "   2. Отключение учетных записей"
+    echo_tty "   3. Установка паролей для учетных записей"
+    echo_tty "   4. Включить или ${c_lyellow}перезагрузить${c_null} виртуальные машины"
+    echo_tty "   5. Выключить виртуальные машины"
+    echo_tty "   6. Откатить виртуальные машины до начального снапшота ${c_value}Start${c_null}"
+    echo_tty "   7. Создать снапшоты виртуальных машин"
+    echo_tty "   8. Откатить снапшоты виртуальных машин"
+    echo_tty "   9. Удалить снапшоты виртуальных машин"
+    echo_tty "  10. Удаление стендов"
+    local switch=$( read_question_select $'\nВыберите действие' '^([0-9]{1,2}|)$' 1 10 )
 
     [[ "$switch" == '' ]] && switch=$( read_question_select $'\nВыберите действие' '^([0-9]{1,2}|)$' 1 12 ) && [[ "$switch" == '' ]] && return 0
     if [[ $switch =~ ^[1-3]$ ]]; then
@@ -1718,20 +1716,24 @@ function manage_stands() {
 
     local regex='\s*\"{opt_name}\"\s*:\s*(\K[0-9]+|\"\K(?(?=\\").{2}|[^"])+)'
 
-    local vm_cmd_arg='' pool_info vmid_list vmname_list vmid vm_node_list='' vm_status_list=''  vm_type_list='' vm_is_template_list='' vm_node='' vm_status='' vm_type='' vm_is_template=''
+    local vm_snap_name='' vm_snap_description='' vm_cmd_arg='' pool_info vmid_list vmname_list vmid vm_node_list='' vm_status_list=''  vm_type_list='' vm_is_template_list='' vm_node='' vm_status='' vm_type='' vm_is_template=''
 
     [[ "$switch" == 4 || "$switch" == 5 ]] && manage_bulk_vm_power --init
 
-    if [[ $switch -ge 4 && $switch -le 11 ]]; then
+    [[ "$switch" -ge 6 ]] && vm_snap_name='Start'
+    [[ "$switch" -ge 7 && "$switch" -le 9 ]] && {
+        echo_info $'\n'"Имя снапшота может состоять из симолов ${c_value}A-Z a-z - _${c_info}. Первый симол всегда буква"
+        vm_snap_name=$( read_question_select 'Введите имя снапшота' '^[a-zA-Z][\w\-]+$' )
+    }
+    [[ "$switch" == 7 ]] && vm_snap_description="$( read_question_select $'Описание для снапшота' )"
+
+    if [[ $switch -ge 4 && $switch -le 9 ]]; then
         read_question $'\nВы действительно хотите продолжить?' || return 0
         local status name cmd_str vm_poweroff=false vm_snap_state=true vm_poweroff_answer=true
         case $switch in
-                    6) cmd_str="create /nodes/{node}/{type}/{vmid}/snapshot --snapname 'Start' --description 'Снапшот начального состояния ВМ'{vmstate}";;
-                    7) cmd_str="create /nodes/{node}/{type}/{vmid}/snapshot/Start/rollback";;
-                    8) cmd_str="delete /nodes/{node}/{type}/{vmid}/snapshot/Start";;
-                    9) cmd_str="create /nodes/{node}/{type}/{vmid}/snapshot --snapname 'Finish' --description 'Снапшот ВМ с завершенным состоянием выполнения задания'{vmstate}";;
-                    10) cmd_str="create /nodes/{node}/{type}/{vmid}/snapshot/Finish/rollback";;
-                    11) cmd_str="delete /nodes/{node}/{type}/{vmid}/snapshot/Finish";;
+                    7) cmd_str="create /nodes/{node}/{type}/{vmid}/snapshot --snapname '{snap_name}' --description '{snap_descr}'{vm_state}";;
+                    6|8) cmd_str="create /nodes/{node}/{type}/{vmid}/snapshot/{snap_name}/rollback";;
+                    9) cmd_str="delete /nodes/{node}/{type}/{vmid}/snapshot/{snap_name}";;
         esac
         for ((i=1; i<=$( echo -n "${pool_list[$group_name]}" | grep -c '^' ); i++)); do
             echo_tty
@@ -1769,7 +1771,7 @@ function manage_stands() {
                 }
                 vm_cmd_arg=" --vmstate '$vm_snap_state'"
                 [[ "$vm_type" != 'qemu' ]] && vm_cmd_arg=''
-                status=$( run_cmd /noexit "pvesh $(echo "$cmd_str" | sed "s/{node}/$vm_node/;s/{vmid}/$vmid/;s/{vmstate}/$vm_cmd_arg/;s/{type}/$vm_type/" ) 2>&1" ) && {
+                status=$( run_cmd /noexit "pvesh $(echo "$cmd_str" | sed "s/{node}/$vm_node/;s/{vmid}/$vmid/;s/{vm_state}/$vm_cmd_arg/;s/{type}/$vm_type/;s/{snap_name}/$vm_snap_name/;s/{snap_descr}/$vm_snap_description/" ) 2>&1" ) && {
                     echo_ok "стенд ${c_value}$pool_name${c_null} машина ${c_lgreen}$name${c_null} (${c_lcyan}$vmid${c_null})"
                     continue
                 }
@@ -1781,11 +1783,11 @@ function manage_stands() {
                 echo_err "Необработанная ошибка: ВМ $name ($vmid), стенд $pool_name:"$'\n'$status && exit
             done
         done
+        [[ "$switch" == 4 || "$switch" == 5 ]] && manage_bulk_vm_power --stop-vms
         [[ "$switch" == 4 ]] && manage_bulk_vm_power --start-vms
-        [[ "$switch" == 5 ]] && manage_bulk_vm_power --stop-vms
     fi
 
-    if [[ $switch == 12 ]]; then
+    if [[ $switch == 10 ]]; then
 
         echo_tty -n $'Выбранные пользователи: '; get_val_print "$(echo ${user_list[$group_name]} )"
         read_question $'\nВы действительно хотите продолжить?' || return 0
