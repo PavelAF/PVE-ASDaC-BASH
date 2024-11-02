@@ -100,65 +100,65 @@ _config_templates='Список шаблонов ВМ'
 declare -A config_templates=(
     [_test]='Шаблон ВМ для теста'
     [test]='
-        startup = order=100,up=100,down=10
-        tags = test
-        ostype = l26
-        serial0 = socket
-        tablet = 0
-        scsihw = virtio-scsi-single
-        cpu = host
-        cores = 1
-        acpi = 0
-        agent = 1
-        memory = 1024
-        bios = seabios
-        disk_type = ide
-        netifs_type = vmxnet3
+        startup      = order=100,up=100,down=10
+        tags         = test
+        ostype       = l26
+        serial0      = socket
+        tablet       = 0
+        scsihw       = virtio-scsi-single
+        cpu          = host
+        cores        = 1
+        acpi         = 0
+        agent        = 1
+        memory       = 1024
+        bios         = seabios
+        disk_type    = ide
+        netifs_type  = vmxnet3
 	    access_roles = Competitor
-        description = test description
-        arch = x86_64
-        args = -no-shutdown
-        vga = serial0
-        kvm = 1
-        rng0 = source=/dev/urandom
-        disk3 = 0.2
-        network0 = {bridge=inet}
+        description  = test description
+        arch         = x86_64
+        args         = -no-shutdown
+        vga          = serial0
+        kvm          = 1
+        rng0         = source=/dev/urandom
+        disk3        = 0.2
+        network_0    = {bridge=inet}
     '
 )
 
 _config_stand_1_var='Вариант развертывания для тестирования функционала'
 declare -A config_stand_1_var=(
     [_stand_config]='
-        pool_name = Test_A-{0}
+        pool_name           = Test_A-{0}
         stands_display_desc = Поле описания служебной группы стендов тестирования функционала
-        pool_desc = Описание пула стенда тестирования функционала
-        access_user_name = Test-A{0}
-        access_user_desc = Описание учетной записи стенда тестирования функционала #{0}
+        pool_desc           = Описание пула стенда тестирования функционала
+        access_user_name    = Test-A{0}
+        access_user_desc    = Описание учетной записи стенда тестирования функционала #{0}
     '
 
     [_test-vm1]='test-vm'
     [test-vm1]='
         description = rewritred описание test-vm1
-        disk3 = 0.1
+        disk_3          = 0.1
     	config_template = test
-        startup = order=1,up=5,down=5
-        network0 =   {   bridge=inet   ,  state   =  down  }   
-        network1 =    {     bridge    =    "    🖧: тест                 "    ,     state     =    down    }      
-        network2 =         {      bridge     =      "      🖧: тест  "     , state       =      down     , trunks       =        10;20;30       }          
-        network3 =       {            bridge      =    "         🖧: тест      "        , tags=      10    ,      state             =      down       }      
-        network4 =   🖧: тест  
+        startup         = order=1,up=5,down=5
+        network_0       =   {   bridge=inet   ,  state   =  down  }   
+        network_1       =    {     bridge    =    "    🖧: тест                 "    ,     state     =    down    }      
+        network2        =         {      bridge     =      "      🖧: тест  "     , state       =      down     , trunks       =        10;20;30       }          
+        network_3       =       {            bridge      =    "         🖧: тест      "        , tags=      10    ,      state             =      down       }      
+        network_4       =   🖧: тест  
     '
 
     [_test-vm2]='test-vm'
     [test-vm2]='
         description = rewritred описание test-vm2
-        disk3 = 0.1
-        disk4 = 0.1
+        disk_3          = 0.1
+        disk4           = 0.1
     	config_template =    test   
-        startup =   order=10,up=10,down=10    
-        machine =    pc-i440fx-99.99    
-        network4 =       🖧: тест      
-        network2 =      {     bridge     =   "         🖧: тест        "     ,       vtag      =      100     ,        master         =      inet       }        
+        startup         =   order=10,up=10,down=10    
+        machine         =    pc-i440fx-99.99    
+        network_4       =       🖧: тест      
+        network2        =      {     bridge     =   "         🖧: тест        "     ,       vtag      =      100     ,        master         =      inet       }        
     '
 )
 
@@ -1094,7 +1094,7 @@ function deploy_stand_config() {
         [[ "$1" == '' || "$2" == '' && "$1" != test ]] && echo_err 'Ошибка: set_netif_conf нет аргумента' && exit 1
         [[ "$1" == 'test' ]] && { [[ "$netifs_type" =~ ^(e1000|e1000-82540em|e1000-82544gc|e1000-82545em|e1000e|i82551|i82557b|i82559er|ne2k_isa|ne2k_pci|pcnet|rtl8139|virtio|vmxnet3)$ ]] && return 0; echo_err "Ошибка: указаный в конфигурации модель сетевого интерфейса '$netifs_type' не является корректным [e1000|e1000-82540em|e1000-82544gc|e1000-82545em|e1000e|i82551|i82557b|i82559er|ne2k_isa|ne2k_pci|pcnet|rtl8139|virtio|vmxnet3]"; exit 1; }
 
-        [[ ! "$1" =~ ^network([0-9]+)$ ]] && { echo_err "Ошибка: опция конфигурации ВМ network некорректна '$1'"; exit 1; }
+        [[ ! "$1" =~ ^network_?([0-9]+)$ ]] && { echo_err "Ошибка: опция конфигурации ВМ network некорректна '$1'"; exit 1; }
     
         function add_bridge() {
             local iface="$1" if_desc="$2" special
@@ -1202,7 +1202,7 @@ function deploy_stand_config() {
     function set_disk_conf() {
         [[ "$1" == '' || "$2" == '' && "$1" != test ]] && echo_err 'Ошибка: set_disk_conf нет аргумента' && exit 1
         [[ "$1" == 'test' ]] && { [[ "$disk_type" =~ ^(ide|sata|scsi|virtio)$ ]] && return 0; echo_err "Ошибка: указаный в конфигурации тип диска '$disk_type' не является корректным [ide|sata|scsi|virtio]"; exit 1; }
-        [[ ! "$1" =~ ^(boot_|)disk[0-9]+ ]] && { echo_err "Ошибка: неизвестный параметр ВМ '$1'" && exit 1; }
+        [[ ! "$1" =~ ^(boot_|)disk_?[0-9]+ ]] && { echo_err "Ошибка: неизвестный параметр ВМ '$1'" && exit 1; }
         local _exit=false
         case "$disk_type" in
             ide)    [[ "$disk_num" -le 4  ]] || _exit=true;;
@@ -1212,7 +1212,7 @@ function deploy_stand_config() {
         esac
         $_exit && { echo_err "Ошибка: невозможно присоедиить больше $((disk_num-1)) дисков типа '$disk_type' к ВМ '$elem'. Выход"; exit 1;}
 
-        if [[ "${BASH_REMATCH[1]}" != boot_ ]] && [[ "$2" =~ ^([0-9]+(|\.[0-9]+))\ *([gG][bB])?$ ]]; then
+        if [[ "${BASH_REMATCH[1]}" != boot_ ]] && [[ "$2" =~ ^([0-9]+(|\.[0-9]+))\ *([gGГг][bBБб]?)?$ ]]; then
             cmd_line+=" --${disk_type}${disk_num} '${config_base[storage]}:${BASH_REMATCH[1]},format=$config_disk_format'";
         else
             local file="$2"
