@@ -1,0 +1,29 @@
+_config_stand_autocheck_1_var='Автопроверка стенда демекзамена 09.02.03-2025, модуль 1'
+config_stand_autocheck_1_var[autocheck_vms]='
+	ISP    = Аль JeOS
+	HQ-RTR = EcoRouterOS
+	HQ-SRV = Альт Сервер
+	HQ-CLI = Альт Рабочая станция
+	BR-RTR = EcoRouterOS
+	BR-SRV = Альт Сервер
+'
+config_stand_autocheck_1_var[autocheck_vms_exec_type]='
+	ISP    = exec_agent_bash
+	HQ-RTR = exec_ssh-cisco
+	HQ-SRV = exec_agent_bash
+	HQ-CLI = exec_agent_bash
+	BR-RTR = exec_ssh-cisco
+	BR-SRV = exec_agent_bash
+'
+
+config_stand_autocheck_1_var[check_1_group]='Группа проверок 1'
+config_stand_autocheck_1_var[check_1]='Аспект 1: IP адреса {vms_list}'
+config_stand_autocheck_1_var[check_2_vms_list]='HQ-RTR BR-RTR'
+config_stand_autocheck_1_var[check_1_exec_guest-agent]='ip -br a'
+config_stand_autocheck_1_var[check_1_exec_ssh-cisco]='show ip interfaces brief'
+
+config_stand_autocheck_1_var[check_2_group]='Группа проверок 1'
+config_stand_autocheck_1_var[check_2]='Аспект 1: IP адреса {vms_list}'
+config_stand_autocheck_1_var[check_2_vms_list]='HQ-RTR {random(desc="Альт Сервер" exec_type="exec_ssh-cisco")}'
+config_stand_autocheck_1_var[check_2_exec_guest-agent]='ip -br a'
+config_stand_autocheck_1_var[check_2_exec_ssh-cisco]='show ip interfaces brief'
