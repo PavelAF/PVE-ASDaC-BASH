@@ -448,7 +448,7 @@ function show_config() {
             fi
         fi
         i=1
-        local first_elem=true no_elem=true pool_name='' stand_config_var=''
+        local first_elem=true no_elem=true pool_name='' vm_name='' vm_template=''
 
         if [[ $opt_sel_var != 0 ]]; then
             i=$opt_sel_var
@@ -460,18 +460,31 @@ function show_config() {
         fi
         for conf in $vars; do
             local -n ref_conf="$conf"
-            pool_name=''; description=''; stand_config_var=''
-            description="$(eval echo "\$_$conf")"
-            [[ "$description" == "" ]] && description="Вариант $i (без названия)"
-            get_dict_value "$conf[_stand_config]" pool_name=pool_name
+            pool_name=''; description=''
+            description="$( get_dict_value "$conf[stand_config]" description )"
+            [[ "$description" == '' ]] && description="Вариант $i (без названия)"
+            pool_name="$( get_dict_value "$conf[stand_config]" pool_name )"
             [[ "$pool_name" == "" ]] && pool_name=${config_base[def_pool_name]}
             description="$pool_name : $description"
             for var in $( echo "${!ref_conf[@]}" ); do
-                [[ "$var" =~ ^_ ]] && continue
+                [[ "$var" == 'stand_config' ]] && continue
                 $first_elem && first_elem=false && echo -n $'\n  '"$((i++)). $description"$'\n  - ВМ: '
                 no_elem=false
-                description="$( echo "${ref_conf[_$var]}" )"
-                echo -en "$var"
+
+                vm_name=''; description=''
+                vm_name="$( get_dict_value "$conf[$var]" name )"
+                description="$( get_dict_value "$conf[$var]" os_descr )"
+
+                [[ "$vm_name" == '' || "$description" == '' ]] && {
+                    vm_template="$( get_dict_value "$conf[$var]" config_template )"
+                    [[ ! -v "config_templates[$vm_template]" ]] && { echo_err "Ошибка: шаблон конфигурации '$vm_template' для ВМ '$var' не найден. Выход"; exit 1; } 
+                    [[ "$vm_name" == '' ]] && vm_name="$( get_dict_value "config_templates[$vm_template]" name )"
+                    [[ "$description" == '' ]] && description="$( get_dict_value "config_templates[$vm_template]" os_descr )"
+                }
+
+                [[ "$vm_name" == '' ]] && vm_name="$var"
+                
+                echo -en "$vm_name"
                 [[ "$description" != "" ]] && echo -en "(\e[1;34m${description}\e[m) " || echo -n ' '
             done
             ! $first_elem && echo
@@ -483,8 +496,8 @@ function show_config() {
             echo -n $'\n'"Номера стендов: ${c_value}"
             printf '%s\n' "${opt_stand_nums[@]}" | awk 'NR==1{d="";first=last=$1;next} $1 == last+1 {last=$1;next} {d="-";if (first==last-1)d=",";if (first!=last) printf first d; printf last","; first=last=$1} END{d="-";if (first==last-1)d=",";if (first!=last)printf first d; printf last"\n"}'
             echo -n "${c_null}"
-            echo "Всего стендов к развертыванию: $(get_val_print "${#opt_stand_nums[@]}" )"
-            echo "Кол-во создаваемых виртуальных машин: $(get_val_print "$(( ${#opt_stand_nums[@]} * $(eval "printf '%s\n' \${!config_stand_${opt_sel_var}_var[@]}" | grep -Pv '^_' | wc -l) ))" )"
+            echo "Всего стендов к развертыванию: $( get_val_print "${#opt_stand_nums[@]}" )"
+            echo "Кол-во создаваемых виртуальных машин: $( get_val_print "$(( ${#opt_stand_nums[@]} * $(eval "printf '%s\n' \${!config_stand_${opt_sel_var}_var[@]}" | grep -Pc '^vm_\d+$' ) ))" )"
         fi
     fi
     [[ "$1" != opt_verbose ]] && echo
@@ -934,7 +947,7 @@ function configure_poolname() {
     [[ "$1" == check-only && "${config_base[pool_name]}" == '' && "$opt_sel_var" == 0 ]] && return
     local def_value=${config_base[pool_name]}
     [[ "$opt_sel_var" != 0 && "${config_base[pool_name]}" == '' ]] && {
-        get_dict_value "config_stand_${opt_sel_var}_var[_stand_config]" config_base[pool_name]=pool_name
+        config_base[pool_name]="$( get_dict_value "config_stand_${opt_sel_var}_var[stand_config]" pool_name )"
         [[ "${config_base[pool_name]}" == '' ]] && config_base[pool_name]=${config_base[def_pool_name]} && echo_warn "Предупреждение: настройке шаблона имени пула присвоено значение по умолчанию: '${config_base[def_pool_name]}'"
         $silent_mode && [[ "${config_base[pool_name]}" == '' ]] && echo_err "Ошибка: не удалось установить имя пула. Выход" && exit 1
     }
@@ -963,7 +976,7 @@ function configure_username() {
     [[ "$1" == check-only && "${config_base[access_user_name]}" == '' && "$opt_sel_var" == 0 ]] && return 0
     local def_value=${config_base[access_user_name]}
     [[ "$opt_sel_var" != 0 && "${config_base[access_user_name]}" == '' ]] && {
-        get_dict_value "config_stand_${opt_sel_var}_var[_stand_config]" 'config_base[access_user_name]=access_user_name'
+        config_base[access_user_name]="$( get_dict_value "config_stand_${opt_sel_var}_var[stand_config]" access_user_name )"
         [[ "${config_base[access_user_name]}" == '' ]] && config_base[access_user_name]=${config_base[def_access_user_name]} && echo_warn "Предупреждение: настройке шаблона имени пользователя присвоено значение по умолчанию: '${config_base[def_access_user_name]}'"
         $silent_mode && [[ "${config_base[access_user_name]}" == '' ]] && echo "Ошибка: не удалось установить имя пула. Выход" && exit 1
     }
@@ -1128,15 +1141,15 @@ function get_dict_config() {
     done < <(printf '%s' "$config_var")
 }
 
-function get_dict_value() {
-    [[ "$1" == '' || "$2" == '' ]] && { echo_err "Ошибка get_dict_value"; exit 1; }
+function get_dict_values() {
+    [[ "$1" == '' || "$2" == '' ]] && { echo_err "Ошибка get_dict_values"; exit 1; }
 
     local -n "config_var1=$1"
     local -A dict
     get_dict_config config_var1 dict noexit
     shift
     while [[ "$1" != '' ]]; do
-        [[ "$1" =~ ^[a-zA-Z\_][0-9a-zA-Z\_]{0,32}(\[[a-zA-Z\_][[0-9a-zA-Z\_]{0,32}\])?\=[a-zA-Z\_]+$ ]] || { echo_err "Ошибка get_dict_value: некорректый аргумент '$1'"; exit 1; }
+        [[ "$1" =~ ^[a-zA-Z\_][0-9a-zA-Z\_]{0,32}(\[[a-zA-Z\_][[0-9a-zA-Z\_]{0,32}\])?\=[a-zA-Z\_]+$ ]] || { echo_err "Ошибка get_dict_values: некорректый аргумент '$1'"; exit 1; }
         local -n ref_var="${1%=*}"
         local opt_name="${1#*=}"
         for opt in ${!dict[@]}; do
@@ -1146,6 +1159,11 @@ function get_dict_value() {
     done
 }
 
+function get_dict_value() {
+    [[ "$1" == '' || "$2" == '' ]] && { echo_err "Ошибка get_dict_value"; exit 1; }
+    local -n "ref_config_var=$1"
+    echo -n "$ref_config_var" | grep -Po "^$2 = \K.*"
+}
 
 function run_cmd() {
     local to_exit=true
@@ -1378,24 +1396,33 @@ function deploy_stand_config() {
         run_cmd "pveum acl modify '/pool/$pool_name' --users '$username' --roles 'PVEAuditor' --propagate 'false'"
     }
 
-    for elem in $(printf '%s\n' "${!config_var[@]}" | grep -P '^[^_]' | sort); do
+    local cmd_line='' netifs_type='virtio' disk_type='scsi' disk_num=0 boot_order='' vm_template='' vm_name=''
+    local -A vm_config=()
 
-        local cmd_line=''
-        local netifs_type='virtio'
-        local disk_type='scsi'
-        local disk_num=0
-        local boot_order=''
-        local -A vm_config=()
-        local cmd_line="qm create '$vmid' --name '$elem' --pool '$pool_name'"
+    for elem in $(printf '%s\n' "${!config_var[@]}" | grep -P 'vm_\d+' | sort -V ); do
 
-        get_dict_config "config_stand_${opt_sel_var}_var[$elem]" vm_config
+        netifs_type='virtio'
+        disk_type='scsi'
+        disk_num=0
+        boot_order=''
+        vm_config=()
+        vm_template="$( get_dict_value config_stand_${opt_sel_var}_var[$elem] config_template )"
+        vm_name=''
 
-        [[ "${vm_config[config_template]}" != '' ]] && {
-            [[ -v "config_templates[${vm_config[config_template]}]" ]] || { echo_err "Ошибка: шаблон конфигурации '${vm_config[config_template]}' для ВМ '$elem' не найден. Выход"; exit 1; }
-            get_dict_config "config_templates[${vm_config[config_template]}]" vm_config
-            get_dict_config "config_stand_${opt_sel_var}_var[$elem]" vm_config
-            unset -v 'vm_config[config_template]';
+        [[ "$vm_template" != '' ]] && {
+            [[ -v "config_templates[$vm_template]" ]] || { echo_err "Ошибка: шаблон конфигурации '$vm_template' для ВМ '$elem' не найден. Выход"; exit 1; }
+            get_dict_config "config_templates[$vm_template]" vm_config
         }
+        get_dict_config "config_stand_${opt_sel_var}_var[$elem]" vm_config
+        vm_name="${vm_config[name]}"
+        unset 'vm_config[os_descr]'
+        unset 'vm_config[templ_descr]'
+        unset 'vm_config[config_template]'
+
+        [[ "$vm_name" == '' ]] && vm_name="$elem"
+
+        cmd_line="qm create '$vmid' --name '$vm_name' --pool '$pool_name'"
+
         [[ "${vm_config[netifs_type]}" != '' ]] && netifs_type="${vm_config[netifs_type]}" && unset -v 'vm_config[netifs_type]'
         [[ "${vm_config[disk_type]}" != '' ]] && disk_type="${vm_config[disk_type]}" && unset -v 'vm_config[disk_type]'
 
@@ -1409,12 +1436,12 @@ function deploy_stand_config() {
                 boot_disk*|disk*) set_disk_conf "$opt" "${vm_config[$opt]}";;
                 access_roles) ${config_base[access_create]} && set_role_config "${vm_config[$opt]}";;
                 machine) set_machine_type "${vm_config[$opt]}";;
-                *) echo_warn "[Предупреждение]: обнаружен неизвестный параметр конфигурации '$opt = ${vm_config[$opt]}' ВМ '$elem'. Пропущен"
+                *) echo_warn "[Предупреждение]: обнаружен неизвестный параметр конфигурации '$opt = ${vm_config[$opt]}' ВМ '$vm_name'. Пропущен"
             esac
         done
         [[ "$boot_order" != '' ]] && cmd_line+=" --boot 'order=$boot_order'"
 
-        run_cmd /noexit "$cmd_line " || { echo_err "Ошибка: не удалось создать ВМ '$elem' стенда '$pool_name'. Выход"; exit 1; }
+        run_cmd /noexit "$cmd_line " || { echo_err "Ошибка: не удалось создать ВМ '$vm_name' стенда '$pool_name'. Выход"; exit 1; }
 
         ${config_base[access_create]} && [[ "${vm_config[access_roles]}" != '' ]] && run_cmd "pveum acl modify '/vms/$vmid' --roles '${vm_config[access_roles]}' --users '$username'"
 
@@ -1422,7 +1449,7 @@ function deploy_stand_config() {
 
         ${config_base[run_vm_after_installation]} && manage_bulk_vm_power --add "$(hostname)" "$vmid"
 
-        echo_ok "${c_info}Конфигурирование VM ${c_value}$elem${c_info} завершено${c_null}"
+        echo_ok "${c_info}Конфигурирование VM ${c_value}$vm_name${c_info} завершено${c_null}"
         ((vmid++))
     done
 
@@ -1504,7 +1531,7 @@ function install_stands() {
 
     local val=''
     for opt in pool_desc access_user_desc; do
-        get_dict_value "config_stand_${opt_sel_var}_var[_stand_config]" "val=$opt"
+        val="$( get_dict_value "config_stand_${opt_sel_var}_var[stand_config]" "$opt" )"
         descr_string_check "$val" && [[ "$val" != '' ]] && config_base["$opt"]=$val
     done
     echo_tty "$( show_config )"
@@ -1554,7 +1581,7 @@ function install_stands() {
     local stands_group=${config_base[pool_name]/\{0\}/"X"}
     local vmbr_ids=( {{1001..9999},{0000..0999},{00..09},{010..099},{0..1000}} )
 
-    get_dict_value "config_stand_${opt_sel_var}_var[_stand_config]" "val=stands_display_desc"
+    val="$( get_dict_value "config_stand_${opt_sel_var}_var[stand_config]" stands_display_desc )"
     [[ "$val" == '' ]] && val=$(eval echo "\$_config_stand_${opt_sel_var}_var")
     [[ "$val" == '' ]] && val=${config_base[pool_name]}
 
@@ -2093,7 +2120,7 @@ while ! $silent_mode; do
     $silent_mode || switch_action=$(read_question_select $'\nДействие: 1 - Развертывание стендов, 2 - Управление стендами' '^([1-2]|)$' )
 
     case $switch_action in
-        1) _exit=false; $is_check || { echo_tty $'\n'"${c_ok}Подождите, идет проверка конфигурации...${c_null}"$'\n'; check_config check-only; is_check=true; };  install_stands || exit;;
+        1) _exit=false; $is_check || { echo_tty $'\n'"${c_ok}Подождите, идет проверка конфигурации...${c_null}"$'\n'; terraform_config_vars; check_config check-only; is_check=true; };  install_stands || exit;;
         2) _exit=false; manage_stands || exit;;
         '') $_exit && exit; _exit=true;;
         *) echo_warn 'Функционал в процессе разработки и пока недоступен. Выход'; exit 0;;
