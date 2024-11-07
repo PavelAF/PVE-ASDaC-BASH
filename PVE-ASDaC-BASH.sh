@@ -347,7 +347,7 @@ function parse_noborder_table() {
     done
 }
 
-# Объявление осовных функций
+# Объявление основных функций
 
 function show_help() {
     local t=$'\t'
@@ -432,7 +432,7 @@ function show_config() {
         echo '#<------------------- Конец параметров конфигурации ------------------->#'
     else
         if [[ "$1" != var ]]; then
-            echo $'#>------------------ Осовные параметры конфигурации -------------------<#\n'
+            echo $'#>------------------ Основные параметры конфигурации -------------------<#\n'
             for var in inet_bridge storage $( [[ $opt_sel_var != 0 && "${config_base[pool_name]}" != '' ]] && echo pool_name ) take_snapshots access_create; do
                 echo "  $((++i)). ${config_base[_$var]:-$var}: $(get_val_print "${config_base[$var]}" "$var" )"
             done
