@@ -1014,7 +1014,7 @@ function configure_storage() {
             config_base[storage]=$( read_question_select 'Выберите номер хранилища'  '^[1-9][0-9]*$' 1 $(echo -n "$pve_storage_list" | grep -c '^') )
             config_base[storage]=$( echo "$pve_storage_list" | awk -F' ' -v nr="${config_base[storage]}" 'NR==nr{print $1}' )
     }
-    pve_storage_list=$( pvesm status  --target "$(hostname)" --enabled 1 --content images | awk -F' ' 'NR>1{print $1" "$6" "$2}' | sort -k2nr )
+    pve_storage_list=$( pvesm status  --target "$(hostname -s)" --enabled 1 --content images | awk -F' ' 'NR>1{print $1" "$6" "$2}' | sort -k2nr )
 
     [[ "$pve_storage_list" == '' ]] && echo_err 'Ошибка: не найдено ни одного активного PVE хранилища для дисков ВМ. Выход' && exit 1
 
@@ -1218,7 +1218,7 @@ function deploy_stand_config() {
             if_desc=${if_desc/\{0\}/$stand_num}
             $create_if && {
                 echo_verbose "${c_info}Добавление сети ${c_value}$iface${c_info} : ${c_value}$if_desc${c_null}"
-                run_cmd /noexit "pvesh create '/nodes/$(hostname)/network' --iface '$iface' --type 'bridge' --autostart 'true' --comments '$if_desc'$vlan_aware --slaves '$vlan_slave'" \
+                run_cmd /noexit "pvesh create '/nodes/$(hostname -s)/network' --iface '$iface' --type 'bridge' --autostart 'true' --comments '$if_desc'$vlan_aware --slaves '$vlan_slave'" \
                     || { read -n 1 -p "Интерфейс '$iface' ($if_desc) уже существует! Выход"; exit 1 ;}
             }
 
@@ -1264,7 +1264,7 @@ function deploy_stand_config() {
                     elif [[ ! -v "Networking[$master_if.$tag]" ]]; then
                         [[ "$if_desc" == "" ]] && if_desc="$if_bridge"
                         echo_verbose "${c_info}Добавление VLAN $master_if.$tag : '$master_desc => $if_desc'${c_null}"
-                        run_cmd /noexit "pvesh create '/nodes/$(hostname)/network' --iface '$master_if.$tag' --type 'vlan' --autostart 'true' --comments '$master_desc => $if_desc'" \
+                        run_cmd /noexit "pvesh create '/nodes/$(hostname -s)/network' --iface '$master_if.$tag' --type 'vlan' --autostart 'true' --comments '$master_desc => $if_desc'" \
                             || { read -n 1 -p "Интерфейс '$iface' ($if_desc) уже существует! Выход"; exit 1 ;}
                         Networking["${master_if}.$tag"]="{vlan=$if_bridge}"
                     fi
@@ -1285,14 +1285,14 @@ function deploy_stand_config() {
             [[ "${Networking["$net"]}" != "$if_desc" ]] && continue
             cmd_line+=" --net$if_num '${netifs_type:-virtio},bridge=$net$net_options'"
             ! $opt_dry_run && [[ "$vlan_slave" != '' || "$vlan_aware" != '' ]] && ! [[ "$vlan_slave" != '' && "$vlan_aware" != '' ]] && {
-                local port_info=$( pvesh get "/nodes/$(hostname)/network/$net" --output-format yaml )
+                local port_info=$( pvesh get "/nodes/$(hostname -s)/network/$net" --output-format yaml )
                 local if_options=''
                 if [[ "$vlan_slave" != '' ]]; then
                     echo "$port_info" | grep -Pq $'^bridge_vlan_aware: 1$' && if_options="--bridge_vlan_aware 'true'"
                 else
                     if_options="--slaves '$( echo "$port_info" | grep -Po $'^bridge_ports: \K[^\']+$' )'" || if_options=''
                 fi
-                [[ "$if_options" != '' ]] && run_cmd "pvesh set '/nodes/$(hostname)/network/$net' --type 'bridge' $if_options"
+                [[ "$if_options" != '' ]] && run_cmd "pvesh set '/nodes/$(hostname -s)/network/$net' --type 'bridge' $if_options"
             }
             return 0
         done
@@ -1382,7 +1382,7 @@ function deploy_stand_config() {
     local pool_name="${config_base[pool_name]/\{0\}/$stand_num}"
 
     local pve_net_ifs=''
-    parse_noborder_table 'pvesh get /nodes/$(hostname)/network' pve_net_ifs iface
+    parse_noborder_table 'pvesh get /nodes/$(hostname -s)/network' pve_net_ifs iface
 
     run_cmd /noexit "pveum pool add '$pool_name' --comment '${config_base[pool_desc]/\{0\}/$stand_num}'" || { echo_err "Ошибка: не удалось создать пул '$pool_name'"; exit 1; }
     run_cmd "pveum acl modify '/pool/$pool_name' --propagate 'false' --groups '$stands_group' --roles 'NoAccess'"
@@ -1447,7 +1447,7 @@ function deploy_stand_config() {
 
         ${config_base[take_snapshots]} && run_cmd /pipefail "qm snapshot '$vmid' 'Start' --description 'Исходное состояние ВМ' | tail -n2"
 
-        ${config_base[run_vm_after_installation]} && manage_bulk_vm_power --add "$(hostname)" "$vmid"
+        ${config_base[run_vm_after_installation]} && manage_bulk_vm_power --add "$(hostname -s)" "$vmid"
 
         echo_ok "${c_info}Конфигурирование VM ${c_value}$vm_name${c_info} завершено${c_null}"
         ((vmid++))
@@ -1604,7 +1604,7 @@ function install_stands() {
         deploy_stand_config ${opt_stand_nums[stand_num]} $stand_num
     done
 
-    run_cmd "pvesh set '/nodes/$(hostname)/network'"
+    run_cmd "pvesh set '/nodes/$(hostname -s)/network'"
 
     ${config_base[access_create]} && {
         [[ "${config_base[access_auth_pam_desc]}" != '' ]] && run_cmd "pveum realm modify pam --comment '${config_base[access_auth_pam_desc]}'"
