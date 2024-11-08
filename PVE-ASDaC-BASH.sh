@@ -1,7 +1,4 @@
 #!/bin/bash
-ex() { ((ex_var++)); echo -n $'\e[m' >> /dev/tty; [[ "$ex_var" == 1 ]] && configure_imgdir clear; echo $'\e[m' >> /dev/tty; exit; }
-
-trap ex INT
 
 # Запуск:               sh='PVE-ASDaC-BASH.sh';curl -sOLH 'Cache-Control: no-cache' "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/main/$sh"&&chmod +x $sh&&./$sh;rm -f $sh
 
@@ -74,6 +71,9 @@ declare -A config_base=(
 
     [_access_auth_pve_desc]='Изменение отображаемого названия аутентификации PVE'
     [access_auth_pve_desc]='Аутентификация участника'
+
+    [_pool_access_role]='Роль, устанавливаемая для пула по умолчанию'
+    [pool_access_role]=''
 )
 
 _config_base='Список ролей прав доступа'
@@ -132,7 +132,6 @@ declare -A config_stand_1_var=(
         description = rewritred описание test-vm1
         disk_3          = 0.1
     	config_template = test
-        name            = test----vm1
         startup         = order=1,up=5,down=5
         network_0       =   {   bridge=inet   ,  state   =  down  }   
         network_1       =    {     bridge    =    "    🖧: тест                 "    ,     state     =    down    }      
@@ -146,11 +145,9 @@ declare -A config_stand_1_var=(
         description = rewritred описание test-vm2
         disk_3          = 0.1
         disk4           = 0.1
-    	config_template =    test   
-        name            =          test----vm222      
+    	config_template =    test       
         startup         =   order=10,up=10,down=10    
         machine         =    pc-i440fx-99.99    
-        os_descr        =      os-testtt
         network_4       =       🖧: тест      
         network2        =      {     bridge     =   "         🖧: тест        "     ,       vtag      =      100     ,        master         =      inet       }        
     '
@@ -202,7 +199,7 @@ function get_val_print() {
 }
 
 echo_tty() {
-    echo "$@" >> /dev/tty
+    echo "$@${c_null}" >> /dev/tty
 }
 
 echo_2out() {
@@ -346,6 +343,20 @@ function parse_noborder_table() {
 }
 
 # Объявление основных функций
+
+function exit_func() { 
+    ((ex_var++))
+    [[ "$ex_var" == 1 ]] && $opt_not_tmpfs && {
+        local lower_nextid="$( pvesh get /cluster/options --output-format json | grep -Po '({|,)"next-id":{"lower":"\K\d+' )"
+        [[ "$lower_nextid" != '' &&  "$lower_nextid" == "$(( ${config_base[start_vmid]} + ${#opt_stand_nums[@]} * 100 ))" ]] && run_cmd "pvesh set /cluster/options --delete next-id"
+        configure_imgdir clear
+    }
+    echo $'\e[m' >> /dev/tty
+    exit
+}
+
+trap exit_func INT
+
 
 function show_help() {
     local t=$'\t'
@@ -616,9 +627,8 @@ function terraform_config_vars() {
     done
 
     for var in ${!config_access_roles[@]}; do
-        config_access_roles[$var]="$( echo -n "${config_access_roles[$var]}" | awk 'NF>0' | sed 's/,\| \|\;/\n/g' | sort -u | awk 'NF>0{ printf $0 "," }' )"
-        [[ "${config_access_roles[$var]}" == '' ]] && unset config_access_roles[$var]
-        config_access_roles[$var]="${config_access_roles[$var]::-1}"
+        config_access_roles[$var]="$( echo -n "${config_access_roles[$var]}" | awk 'NF>0' | sed 's/,\| \|\;/\n/g' | sort -u | awk 'NF>0{ printf $0 " " }' )"
+        [[ "${config_access_roles[$var]}" != '' ]] && config_access_roles[$var]="${config_access_roles[$var]::-1}"
     done
 
     vars="$(compgen -v | grep -P '^config_(templates|stand_[1-9][0-9]{0,3}_var)$' | awk '{if (NR>1) printf " ";printf $0}')"
@@ -660,16 +670,21 @@ function terraform_config_vars() {
             [[ "$( echo -n "${conf_var[$var]}" | grep -c '^' )" != "$vars_count" ]] && {
                 conf_oldsyntax=true
                 echo_err "Предупреждение: конфигурация ${c_value}$conf[$var]${c_error}: пропущены некорректные строки конфигурации:"
-                echo_tty "$( echo -n "$var_value" | grep -Pvn '^\s*\w+\s* = .*' )"
+                echo_tty "$( echo -n "$var_value" | grep --colour -Pvn '^\s*\w+\s* = .*' )"
                 $silent_mode && { sleep 5; } || $conf_nowarnings || {
-                    echo_warn 'В случае продожения операции эта настройка будет проигнорирована'
+                    echo_warn 'В случае продожения операции эти настройки будет проигнорированы'
                     read_question 'Продолжить выполнение?' && conf_nowarnings=true || exit 1
                 }
             }
             vars_count="$( echo -n "${conf_var[$var]}" | grep -c '^' )"
             conf_var[$var]="$( echo -n "${conf_var[$var]}" | awk '{$1=tolower($1)} !a[$1] {b[++i]=$1} {a[$1]=$0} END {for (i in b) print a[b[i]]}' )"
-            conf_var[$var]="$( echo -n "${conf_var[$var]}" | sed -r 's/^((boot_)?disk|network)-?([0-9] = )/\1_\3/g' )"
-
+            
+            [[ "$type" == 'stand_var' && "$var" == 'stand_config' ]] && {
+                conf_var[$var]="$( echo -n "${conf_var[$var]}" | sed -r 's/^stands(_display_desc = )/group\1/g' )"
+            } || {
+                conf_var[$var]="$( echo -n "${conf_var[$var]}" | sed -r 's/^((boot_)?disk|network)-?([0-9] = )/\1_\3/g;s/^(access_role)s( = )/\1\2/g' )"
+            }
+            
             ! $conf_oldsyntax && [[ "$( echo -n "${conf_var[$var]}" | grep -c '^' )" != "$vars_count" ]] && conf_oldsyntax=true
         done
         for i in $( printf '%s\n' "${!conf_var[@]}" | grep -P '^_' ); do unset conf_var[$i]; done
@@ -752,8 +767,11 @@ function configure_varnum() {
     else var=1
     fi
     set_varnum $var
+
     echo_tty -n "Выбранный вариант инсталляции - ${var}: "
-    echo_tty "$( get_val_print "$(eval echo "\$_config_stand_${var}_var")" )"
+    var="$( get_dict_value "config_stand_${var}_var[stand_config]" description )"
+    [[ "$var" == '' ]] && var="Вариант $i (без названия)"
+    echo_tty "${c_value}$var"
 }
 
 function configure_wan_vmbr() {
@@ -842,6 +860,7 @@ function configure_wan_vmbr() {
 }
 
 function configure_vmid() {
+
     [[ "${config_base[start_vmid]}" == '' ]] && { echo_err 'Ошибка: отсутстует парамер start_vmid в конфигурации'; exit 1; }
     [[ "${config_base[start_vmid]}" =~ ^[0-9]+$ ]] && ! [[ ${config_base[start_vmid]} -ge 100 && ${config_base[start_vmid]} -le 999900000 ]] && \
         echo_err "Ошибка: указанный vmid='${config_base[start_vmid]}' вне диапазона разрешенных для использования" && exit 1
@@ -853,35 +872,28 @@ function configure_vmid() {
         echo "Кратно 100. Пример: 100, 200, 1000, 1100"
         config_base[start_vmid]=$( read_question_select $'Начальный идентификатор ВМ' '^[1-9][0-9]*00$' 100 999900000 )
     }
-    local nodes=$(pvesh get /nodes --output-format yaml | grep -Po '^\s*node\s*:\s*\K.*')
-
-    [[ "$nodes" == '' ]] && echo_err "Ошибка: не удалось узнать информацию о PVE нодах" && exit 1
-
-    local node vmid_str=''
-    for node in $nodes; do
-        vmid_str="$( echo "$vmid_str"; pvesh get /nodes/$node/qemu --noborder | awk 'NR>1{print $2}' | sort )"
-        vmid_str="$( echo "$vmid_str"; pvesh get /nodes/$node/lxc --noborder | awk 'NR>1{print $2}' | sort )"
-    done
-
+    local vmid_str="$( pvesh get /cluster/resources --type 'vm' --output-format yaml | grep -Po '^\s*vmid: \K\d+' )"
+    
     local -a vmid_list
     IFS=$'\n' read -d '' -r -a vmid_list <<<"$( echo "$vmid_str" | sort -n )"
     [[ "$1" == manual ]] && config_base[start_vmid]='{manual}'
     if [[ "${config_base[start_vmid]}" == '{auto}' ]] || [[ $silent_mode && "${config_base[start_vmid]}" == '{manual}' ]]; then
-        config_base[start_vmid]=$( pvesh get /cluster/nextid )
-        [[ "${config_base[start_vmid]}" != '' && "${config_base[start_vmid]}" -lt 1000 ]] && config_base[start_vmid]=1000
+        config_base[start_vmid]="$( pvesh get /cluster/nextid )"
+        [[ "${config_base[start_vmid]}" == '' || "${config_base[start_vmid]}" -lt 1000 ]] && config_base[start_vmid]=10000
     fi
     [[ "${config_base[start_vmid]}" == '{manual}' ]] && set_vmid
 
-    local id=0
-    local i=$(( ${config_base[start_vmid]} + ( 99 - ( ${config_base[start_vmid]} - 1 ) % 100 ) ))
-    local vmid_count=$(( ${#opt_stand_nums[@]} * 100 ))
+    local id=0 \
+          i=$(( ${config_base[start_vmid]} + ( 99 - ( ${config_base[start_vmid]} - 1 ) % 100 ) )) \
+          vmid_count=$(( ${#opt_stand_nums[@]} * 100 ))
 
     for id in ${vmid_list[@]}; do
-	[[ $id -lt $i ]] && continue
-        [[ $id -gt $i && $(( $id - $i )) -ge $vmid_count ]] && break
-        [[ $i -gt 999900000 ]] && echo_err 'Ошибка: невозможно найти свободные VMID для развертывания стендов. Выход' && exit 1
+	    [[ $id -le $i ]] && continue
+        [[ $(( $id - $i )) -ge $vmid_count ]] && break
         i=$(( $id + ( 100 - $id % 100 ) ))
     done
+
+    [[ $i -gt 999900000 ]] && echo_err 'Ошибка: невозможно найти свободные VMID для развертывания стендов. Выход' && exit 1
 
     isdigit_check "$i" || { echo_err "Ошибка: configure_vmid внутренняя ошибка"; exit 1; }
     config_base[start_vmid]=$i
@@ -1014,7 +1026,7 @@ function configure_storage() {
             config_base[storage]=$( read_question_select 'Выберите номер хранилища'  '^[1-9][0-9]*$' 1 $(echo -n "$pve_storage_list" | grep -c '^') )
             config_base[storage]=$( echo "$pve_storage_list" | awk -F' ' -v nr="${config_base[storage]}" 'NR==nr{print $1}' )
     }
-    pve_storage_list=$( pvesm status  --target "$(hostname -s)" --enabled 1 --content images | awk -F' ' 'NR>1{print $1" "$6" "$2}' | sort -k2nr )
+    pve_storage_list=$( pvesm status --target "$(hostname -s)" --enabled 1 --content images | awk -F' ' 'NR>1{print $1" "$6" "$2}' | sort -k2nr )
 
     [[ "$pve_storage_list" == '' ]] && echo_err 'Ошибка: не найдено ни одного активного PVE хранилища для дисков ВМ. Выход' && exit 1
 
@@ -1049,16 +1061,13 @@ function configure_roles() {
     [[ "$(echo -n "$list_privs" | grep -c '^')" -ge 20 ]] || { echo_err "Ошибка: не удалось корректно загрузить список привилегий пользователей"; exit 1; }
 
     for role in ${!config_access_roles[@]}; do
-        ! [[ "$role" =~ ^[a-zA-Z\_][\-a-zA-Z\_]*$ && "$(echo -n "$role" | wc -m)" -le 32 ]] && echo_err "Ошибка: имя роли '$role' некорректное. Выход" && exit 1
-        config_access_roles["$role"]=$( echo "${config_access_roles[$role]}" | sed 's/,\| \|\;/\n/g;s/\n\n//g' | sort )
+        ! [[ "$role" =~ ^[a-zA-Z\_][\-a-zA-Z\_]*$ && "$(echo -n "$role" | wc -m)" -le 32 ]] && { echo_err "Ошибка: имя роли '$role' некорректное. Выход"; exit 1; }
         for priv in ${config_access_roles[$role]}; do
-            printf '%s\n' "$list_privs" | grep -Fxq -- "$priv" && continue || {
+            echo -n "$priv" | grep -Pq '^([A-Z][A-Za-z]*((?=\.[A-Z])\.|$)){2,}$' || { echo_err "Ошибка: название привилегии '$priv' в роли '$role' некорректа. Выход"; exit 1; }
+            printf '%s\n' "$list_privs" | grep -Fxq -- "$priv" || {
                 echo_err "Ошибка: название привилегии '$priv' в роли '$role' некорректа. Выход"
-                exit 1
             }
         done
-        config_access_roles["$role"]=$( echo -n "${config_access_roles[$role]}" | sort -u  )
-        config_access_roles["$role"]=$( echo -n "${config_access_roles[$role]}" | tr '\n' ','  )
     done
 }
 
@@ -1066,8 +1075,8 @@ function check_config() {
     [[ "$1" == '' ]] && set -- check-only
 
     [[ "$1" == 'base-check' ]] && {
-        for i in "${script_requirements_cmd[@]}"; do [ ! -x "$(command -v $i )" ] \
-                && echo_err "Ошибка: не найдена команда '$i'. На этом хосте установлен PVE (Proxmox VE)?. Конфигурирование стендов невозможно."$'\n'"Необходимые команды для работы: ${script_requirements_cmd[@]}" && exit 1
+        for i in "${script_requirements_cmd[@]}"; do [[ -x "$( command -v $i )" ]] \
+                || { echo_err "Ошибка: не найдена команда '$i'. На этом хосте установлен PVE (Proxmox VE)?. Конфигурирование стендов невозможно."$'\n'"Необходимые команды для работы: ${script_requirements_cmd[@]}"; exit 1; }
         done
 
         pve_ver=$(pvesh get /version --output-format json-pretty | grep -Po '"release"\ *:\ *"\K[^"]+')
@@ -1084,7 +1093,7 @@ function check_config() {
             opt_rm_tmpfs=false
             ! $silent_mode && { read_question 'Вы хотите продолжить? Do you want to continue?' || exit 0; }
         }
-        [[ "$1" == 'base-check' ]] && return
+        return
     }
 
     [[ "$1" == 'install' ]] && {
@@ -1092,7 +1101,7 @@ function check_config() {
         #[[ "$opt_sel_var" -gt 0 && $(eval "printf '%s\n' \${!config_stand_${opt_sel_var}_var[@]}" | grep -Pv '^_' | wc -l) -gt 0 ]] && echo 'Ошибка: был выбран несуществующий вариант развертки стенда. Выход' && exit 1
         [[ "${#opt_stand_nums[@]}" -gt 10 ]] && echo_warn -e "Предупреждение: конфигурация настроена на развертку ${#opt_stand_nums[@]} стендов!\n Развертка более 10 стендов на одном сервере (в зависимости от мощности \"железа\", может и меньше) может вызвать проблемы с производительностью"
         [[ "${#opt_stand_nums[@]}" -gt 100 ]] && echo_err "Ошибка: невозможно (бессмысленно) развернуть на одном стенде более 100 стендов. Выход" && exit 1
-        for check_func in configure_{poolname,wan_vmbr,vmid,imgdir,username,storage,roles}; do
+        for check_func in configure_{poolname,wan_vmbr,imgdir,username,storage,roles}; do
             echo_verbose "Проверка функционала $check_func"
             $check_func $1
         done
@@ -1218,11 +1227,14 @@ function deploy_stand_config() {
             if_desc=${if_desc/\{0\}/$stand_num}
             $create_if && {
                 echo_verbose "${c_info}Добавление сети ${c_value}$iface${c_info} : ${c_value}$if_desc${c_null}"
-                run_cmd /noexit "pvesh create '/nodes/$(hostname -s)/network' --iface '$iface' --type 'bridge' --autostart 'true' --comments '$if_desc'$vlan_aware --slaves '$vlan_slave'" \
-                    || { read -n 1 -p "Интерфейс '$iface' ($if_desc) уже существует! Выход"; exit 1 ;}
+                run_cmd /noexit "pvesh create '/nodes/$(hostname -s)/network' --iface '$iface' --type 'bridge' --autostart '1' --comments '$if_desc'$vlan_aware --slaves '$vlan_slave'" \
+                    || { read -n 1 -p "Интерфейс '$iface' ($if_desc) уже существует! Выход"; exit 1; }
             }
 
-            $not_special && $create_access_network && ${config_base[access_create]} && { run_cmd /noexit "pveum acl modify '/sdn/zones/localnetwork/$iface' --users '$username' --roles 'PVEAuditor'" || { echo_err "Не удалось создать ACL правило для сетевого интерфейса '$iface' и пользователя '$username'"; exit 1; } }
+            $not_special && $create_access_network && ${config_base[access_create]} && [[ "${vm_config[access_role]}" != NoAccess || "${config_base[access_role]}" == '' && "${config_base[pool_access_role]}" != '' && "${config_base[pool_access_role]}" != NoAccess ]] &&  { 
+                $create_if && { run_cmd /noexit "pveum acl modify '/sdn/zones/localnetwork/$iface' --users '$username' --roles 'PVEAuditor'" || { echo_err "Не удалось создать ACL правило для сетевого интерфейса '$iface' и пользователя '$username'"; exit 1; } } \
+                    || run_cmd /noexit "pveum acl modify '/sdn/zones/localnetwork/$iface' --groups '$stands_group' --roles 'PVEAuditor'" || { echo_err "Не удалось создать ACL правило для сетевого интерфейса '$iface' и пользователя '$username'"; exit 1; }
+            }
             
             ! $not_special && echo "$iface"
         }
@@ -1248,9 +1260,9 @@ function deploy_stand_config() {
             if_desc=$( echo "${BASH_REMATCH[2]/\\\"/\"}" | sed 's/[[:space:]]*$//' )
             if_config="${BASH_REMATCH[4]}"
             [[ "$if_config" =~ ^.*,\ *state\ *=\ *down\ *($|,.+$) ]] && net_options+=',link_down=1'
-            [[ "$if_config" =~ ^.*,\ *trunks\ *=\ *([0-9\;]*[0-9])\ *($|,.+$) ]] && net_options+=",trunks=${BASH_REMATCH[1]}" && vlan_aware=" --bridge_vlan_aware 'true'"
-            [[ "$if_config" =~ ^.*,\ *tag\ *=\ *([1-9][0-9]{0,2}|[1-3][0-9]{3}|40([0-8][0-9]|9[0-4]))\ *($|,.+$) ]] && net_options+=",tag=${BASH_REMATCH[1]}" && vlan_aware=" --bridge_vlan_aware 'true'"
-            if [[ "$if_config" =~ ^.*,\ *vtag\ *=\ *([1-9][0-9]{0,2}|[1-3][0-9]{3}|40([0-8][0-9]|9[0-4]))\ *($|,.+$) ]]; then
+            [[ "$if_config" =~ ^.*,\ *trunks\ *=\ *([0-9\;]*[0-9])\ *($|,.+$) ]] && net_options+=",trunks=${BASH_REMATCH[1]}" && vlan_aware=" --bridge_vlan_aware '1'"
+            [[ "$if_config" =~ ^.*,\ *tag\ *=\ *([1-9][0-9]{0,2}|[1-3][0-9]{3}|40([0-8][0-9]|9[0-4]))\ *($|,.+$) ]] && net_options+=",tag=${BASH_REMATCH[1]}" && vlan_aware=" --bridge_vlan_aware '1'"
+            [[ "$if_config" =~ ^.*,\ *vtag\ *=\ *([1-9][0-9]{0,2}|[1-3][0-9]{3}|40([0-8][0-9]|9[0-4]))\ *($|,.+$) ]] && {
                 local tag="${BASH_REMATCH[1]}"
                 if [[ "$if_config" =~ ^.*,\ *master\ *=\ *([0-9\.a-z]+|\"\ *((\\\"|[^\"])+)\")\ *($|,.+$) ]]; then
                     local master_desc='' master_if=''
@@ -1264,15 +1276,15 @@ function deploy_stand_config() {
                     elif [[ ! -v "Networking[$master_if.$tag]" ]]; then
                         [[ "$if_desc" == "" ]] && if_desc="$if_bridge"
                         echo_verbose "${c_info}Добавление VLAN $master_if.$tag : '$master_desc => $if_desc'${c_null}"
-                        run_cmd /noexit "pvesh create '/nodes/$(hostname -s)/network' --iface '$master_if.$tag' --type 'vlan' --autostart 'true' --comments '$master_desc => $if_desc'" \
-                            || { read -n 1 -p "Интерфейс '$iface' ($if_desc) уже существует! Выход"; exit 1 ;}
+                        run_cmd /noexit "pvesh create '/nodes/$(hostname -s)/network' --iface '$master_if.$tag' --type 'vlan' --autostart '1' --comments '$master_desc => $if_desc'" \
+                            || { read -n 1 -p "Интерфейс '$iface' ($if_desc) уже существует! Выход"; exit 1; }
                         Networking["${master_if}.$tag"]="{vlan=$if_bridge}"
                     fi
                     vlan_slave="$master_if.$tag"
+                else
+                    echo_err "Ошибка конфигурации: интерфейс '$2': объявлен master интерфейс, но не объявлен vlan tag"; exit 1
                 fi
-            elif [[ "$if_config" =~ ^.*,\ *master\ *=\ *([0-9\.a-z]+|\"((\\\"|[^\"])+)\")\ *($|,.+$) ]]; then
-                echo_err "Ошибка конфигурации: интерфейс '$2': объявлен master интерфейс, но не объявлен vlan tag"; exit 1
-            fi
+            }
             [[ "$if_desc" == "" ]] && if_config="$if_bridge" && if_desc="{bridge=$if_bridge}" || if_config=""
         elif [[ "$if_desc" =~ ^\{.*\}$ ]]; then 
             echo_err "Ошибка: некорректное значение подстановки настройки '$1 = $2' для ВМ '$elem'"
@@ -1288,7 +1300,7 @@ function deploy_stand_config() {
                 local port_info=$( pvesh get "/nodes/$(hostname -s)/network/$net" --output-format yaml )
                 local if_options=''
                 if [[ "$vlan_slave" != '' ]]; then
-                    echo "$port_info" | grep -Pq $'^bridge_vlan_aware: 1$' && if_options="--bridge_vlan_aware 'true'"
+                    echo "$port_info" | grep -Pq $'^bridge_vlan_aware: 1$' && if_options="--bridge_vlan_aware '1'"
                 else
                     if_options="--slaves '$( echo "$port_info" | grep -Po $'^bridge_ports: \K[^\']+$' )'" || if_options=''
                 fi
@@ -1331,32 +1343,31 @@ function deploy_stand_config() {
     }
 
     function set_role_config() {
-        [[ "$1" == '' ]] && echo_err 'Ошибка: set_role_conf нет аргумента' && exit 1
-        local roles=$( echo "$1" | sed 's/,/ /g;s/  \+/ /g;s/^ *//g;s/ *$//g' )
-        local i role set_role role_exists
-        for set_role in $roles; do
-            role_exists=false
-            for ((i=1; i<=$(echo -n "${roles_list[roleid]}" | grep -c '^'); i++)); do
-                role=$( echo "${roles_list[roleid]}" | sed -n "${i}p" )
-                [[ "$set_role" != "$role" ]] && continue
-                if [[ -v "config_access_roles[$set_role]" ]]; then
-                    [[ "$( echo "${roles_list[privs]}" | sed -n "${i}p" )" != "${config_access_roles[$set_role]}" ]] \
-                        && run_cmd /noexit "pvesh set '/access/roles/$set_role' --privs '${config_access_roles[$set_role]}'"
-                fi
-                role_exists=true
-                break
-            done
-            ! $role_exists && {
-                [[ ! -v "config_access_roles[$set_role]" ]] && { echo_err "Ошибка: в конфигурации для установки ВМ '$elem' установлена несуществующая access роль '$set_role'. Выход"; exit 1; }
-                run_cmd "pvesh create /access/roles --roleid '$set_role' --privs '${config_access_roles[$set_role]}'"
-                roles_list[roleid]+=$'\n'$set_role
-                roles_list[privs]+=$'\n'${config_access_roles[$set_role]}
-            }
+        [[ "$1" == '' ]] && { echo_err 'Ошибка: set_role_conf нет аргумента'; exit 1; }
+        [[ "$1" =~ ^[a-zA-Z0-9\.\-_]+$ ]] || { echo_err "Ошибка: имя роли '$1' некорректное"; exit 1; }
+        local i role role_exists
+        role_exists=false
+        for ((i=1; i<=$(echo -n "${roles_list[roleid]}" | grep -c '^'); i++)); do
+            role=$( echo "${roles_list[roleid]}" | sed -n "${i}p" )
+            [[ "$1" != "$role" ]] && continue
+            [[ -v "config_access_roles[$1]" && "$( echo "${roles_list[privs]}" | sed -n "${i}p" )" != "${config_access_roles[$1]}" ]] && {
+                    run_cmd /noexit "pvesh set '/access/roles/$1' --privs '${config_access_roles[$1]}'"
+                    roles_list[roleid]=$( echo "$1"; echo -n "${roles_list[roleid]}" )
+                    roles_list[privs]=$( echo "${config_access_roles[$1]}"; echo -n "${roles_list[roleid]}" )
+                }
+            role_exists=true
+            break
         done
+        ! $role_exists && {
+            [[ ! -v "config_access_roles[$1]" ]] && { echo_err "Ошибка: в конфигурации для установки ВМ '$elem' установлена несуществующая access роль '$1'. Выход"; exit 1; }
+            run_cmd "pvesh create /access/roles --roleid '$1' --privs '${config_access_roles[$1]}'"
+            roles_list[roleid]=$( echo "$1"; echo -n "${roles_list[roleid]}" )
+            roles_list[privs]=$( echo "${config_access_roles[$1]}"; echo -n "${roles_list[roleid]}" )
+        }
     }
 
     function set_machine_type() {
-        [[ "$1" == '' ]] && echo_err 'Ошибка: set_disk_conf нет аргумента' && exit 1
+        [[ "$1" == '' ]] && { echo_err 'Ошибка: set_disk_conf нет аргумента'; exit 1; }
         local machine_list=$( kvm -machine help | awk 'NR>1{print $1}' )
         local type=$1
         if ! echo "$machine_list" | grep -Fxq "$type"; then
@@ -1371,7 +1382,7 @@ function deploy_stand_config() {
         cmd_line+=" --machine '$type'"
     }
 
-    [[ "$1" == '' ]] && echo_err "Внутренняя ошибка скрипта установки стенда" && exit 1
+    [[ "$1" == '' ]] && { echo_err "Внутренняя ошибка скрипта установки стенда"; exit 1; }
 
     local -n "config_var=config_stand_${opt_sel_var}_var"
     local -A Networking=()
@@ -1385,15 +1396,16 @@ function deploy_stand_config() {
     parse_noborder_table 'pvesh get /nodes/$(hostname -s)/network' pve_net_ifs iface
 
     run_cmd /noexit "pveum pool add '$pool_name' --comment '${config_base[pool_desc]/\{0\}/$stand_num}'" || { echo_err "Ошибка: не удалось создать пул '$pool_name'"; exit 1; }
-    run_cmd "pveum acl modify '/pool/$pool_name' --propagate 'false' --groups '$stands_group' --roles 'NoAccess'"
+    run_cmd "pveum acl modify '/pool/$pool_name' --propagate '0' --groups '$stands_group' --roles 'NoAccess'"
 
 
     ${config_base[access_create]} && {
         local username="${config_base[access_user_name]/\{0\}/$stand_num}@pve"
         run_cmd /noexit "pveum user add '$username' --enable '${config_base[access_user_enable]}' --comment '${config_base[access_user_desc]/\{0\}/$stand_num}' --groups '$stands_group'" \
             || { echo_err "Ошибка: не удалось создать пользователя '$username'"; exit 1; }
-        # run_cmd "pveum user modify '$username' --comment '${config_base[access_user_desc]/\{0\}/$stand_num}'"
-        run_cmd "pveum acl modify '/pool/$pool_name' --users '$username' --roles 'PVEAuditor' --propagate 'false'"
+        
+        [[ "${config_base[pool_access_role]}" != '' && "${config_base[pool_access_role]}" != NoAccess ]] && { set_role_config "${config_base[pool_access_role]}"; run_cmd "pveum acl modify '/pool/$pool_name' --users '$username' --roles '${config_base[pool_access_role]}'"; } \
+            || { run_cmd "pveum acl modify '/pool/$pool_name' --users '$username' --roles 'PVEAuditor' --propagate '0'"; }
     }
 
     local cmd_line='' netifs_type='virtio' disk_type='scsi' disk_num=0 boot_order='' vm_template='' vm_name=''
@@ -1407,7 +1419,6 @@ function deploy_stand_config() {
         boot_order=''
         vm_config=()
         vm_template="$( get_dict_value config_stand_${opt_sel_var}_var[$elem] config_template )"
-        vm_name=''
 
         [[ "$vm_template" != '' ]] && {
             [[ -v "config_templates[$vm_template]" ]] || { echo_err "Ошибка: шаблон конфигурации '$vm_template' для ВМ '$elem' не найден. Выход"; exit 1; }
@@ -1415,9 +1426,7 @@ function deploy_stand_config() {
         }
         get_dict_config "config_stand_${opt_sel_var}_var[$elem]" vm_config
         vm_name="${vm_config[name]}"
-        unset 'vm_config[os_descr]'
-        unset 'vm_config[templ_descr]'
-        unset 'vm_config[config_template]'
+        unset 'vm_config[name]' 'vm_config[os_descr]' 'vm_config[templ_descr]' 'vm_config[config_template]'
 
         [[ "$vm_name" == '' ]] && vm_name="$elem"
 
@@ -1434,7 +1443,7 @@ function deploy_stand_config() {
                     cmd_line+=" --$opt '${vm_config[$opt]}'";;
                 network*) set_netif_conf "$opt" "${vm_config[$opt]}";;
                 boot_disk*|disk*) set_disk_conf "$opt" "${vm_config[$opt]}";;
-                access_roles) ${config_base[access_create]} && set_role_config "${vm_config[$opt]}";;
+                access_role) ${config_base[access_create]} && set_role_config "${vm_config[$opt]}";;
                 machine) set_machine_type "${vm_config[$opt]}";;
                 *) echo_warn "[Предупреждение]: обнаружен неизвестный параметр конфигурации '$opt = ${vm_config[$opt]}' ВМ '$vm_name'. Пропущен"
             esac
@@ -1443,7 +1452,7 @@ function deploy_stand_config() {
 
         run_cmd /noexit "$cmd_line " || { echo_err "Ошибка: не удалось создать ВМ '$vm_name' стенда '$pool_name'. Выход"; exit 1; }
 
-        ${config_base[access_create]} && [[ "${vm_config[access_roles]}" != '' ]] && run_cmd "pveum acl modify '/vms/$vmid' --roles '${vm_config[access_roles]}' --users '$username'"
+        ${config_base[access_create]} && [[ "${vm_config[access_role]}" != '' ]] && run_cmd "pveum acl modify '/vms/$vmid' --roles '${vm_config[access_role]}' --users '$username'"
 
         ${config_base[take_snapshots]} && run_cmd /pipefail "qm snapshot '$vmid' 'Start' --description 'Исходное состояние ВМ' | tail -n2"
 
@@ -1453,7 +1462,7 @@ function deploy_stand_config() {
         ((vmid++))
     done
 
-    echo_ok "${c_info}Конфигурирование стенда ${c_value}$stand_num${c_info} завершено${c_null}"
+    echo_ok "${c_info}Конфигурирование стенда ${c_value}$pool_name${c_info} завершено${c_null}"
 }
 
 function deploy_access_passwd() {
@@ -1521,6 +1530,7 @@ function deploy_access_passwd() {
     echo_info $'\n#>====================== Конец ======================<#\n'
 }
 
+
 function install_stands() {
 
     is_show_config=false
@@ -1530,7 +1540,7 @@ function install_stands() {
     check_config install
 
     local val=''
-    for opt in pool_desc access_user_desc; do
+    for opt in pool_desc access_user_desc pool_access_role; do
         val="$( get_dict_value "config_stand_${opt_sel_var}_var[stand_config]" "$opt" )"
         descr_string_check "$val" && [[ "$val" != '' ]] && config_base["$opt"]=$val
     done
@@ -1581,8 +1591,9 @@ function install_stands() {
     local stands_group=${config_base[pool_name]/\{0\}/"X"}
     local vmbr_ids=( {{1001..9999},{0000..0999},{00..09},{010..099},{0..1000}} )
 
-    val="$( get_dict_value "config_stand_${opt_sel_var}_var[stand_config]" stands_display_desc )"
-    [[ "$val" == '' ]] && val=$(eval echo "\$_config_stand_${opt_sel_var}_var")
+    val="$( get_dict_value "config_stand_${opt_sel_var}_var[stand_config]" group_display_desc )"
+    [[ "$val" == '' ]] && val="$( get_dict_value "config_stand_${opt_sel_var}_var[stand_config]" description )"
+    [[ "$val" == '' ]] && val="${config_base[pool_desc]}"
     [[ "$val" == '' ]] && val=${config_base[pool_name]}
 
     $opt_dry_run && echo_warn '[Предупреждение]: включен режим dry-run. Никакие изменения в конфигурацию/ВМ внесены не будут'
@@ -1590,25 +1601,34 @@ function install_stands() {
     ! $silent_mode && { read_question 'Начать установку?' || return 0; }
     $silent_mode && { echo_info $'\n'"10 секунд для проверки правильности конфигурации"; sleep 10; }
 
+
     # Начало установки
     run_cmd /noexit "( pveum group add '$stands_group' --comment '$val'          2>&1;echo) | grep -Poq '(^$|already\ exists$)'" \
         || { echo_err "Ошибка: не удалось создать access группу для стендов '$stands_group'. Выход"; exit 1; }
 
+    run_cmd "pveum acl modify '/sdn/zones/localnetwork' --roles 'PVEAuditor' --groups '$stands_group' --propagate '0'"
+    
     local -A roles_list
     parse_noborder_table 'pveum role list' roles_list
 
     ${config_base[run_vm_after_installation]} && manage_bulk_vm_power --init
+
+    configure_vmid install
+    run_cmd "pvesh set /cluster/options --next-id 'lower=$(( ${config_base[start_vmid]} + ${#opt_stand_nums[@]} * 100 ))'"
     opt_not_tmpfs=false
 
     for stand_num in "${!opt_stand_nums[@]}"; do
         deploy_stand_config ${opt_stand_nums[stand_num]} $stand_num
     done
 
+    local lower_nextid="$( pvesh get /cluster/options --output-format json | grep -Po '({|,)"next-id":{"lower":"\K\d+' )"
+    [[ "$lower_nextid" != '' &&  "$lower_nextid" == "$(( ${config_base[start_vmid]} + ${#opt_stand_nums[@]} * 100 ))" ]] && run_cmd "pvesh set /cluster/options --delete next-id"
+
     run_cmd "pvesh set '/nodes/$(hostname -s)/network'"
 
     ${config_base[access_create]} && {
         [[ "${config_base[access_auth_pam_desc]}" != '' ]] && run_cmd "pveum realm modify pam --comment '${config_base[access_auth_pam_desc]}'"
-        [[ "${config_base[access_auth_pve_desc]}" != '' ]] && run_cmd "pveum realm modify pve --default 'true' --comment '${config_base[access_auth_pve_desc]}'"
+        [[ "${config_base[access_auth_pve_desc]}" != '' ]] && run_cmd "pveum realm modify pve --default '1' --comment '${config_base[access_auth_pve_desc]}'"
     }
 
     ${config_base[run_vm_after_installation]} && manage_bulk_vm_power --start-vms
@@ -1625,7 +1645,7 @@ function install_stands() {
 
 
 function check_arg() {
-    [[ "$1" == '' || "${1:0:1}" == '-' ]] && echo_err "Ошибка обработки аргуметов: ожидалось значение. Выход" && exit 1
+    [[ "$1" == '' || "${1:0:1}" == '-' ]] && { echo_err "Ошибка обработки аргуметов: ожидалось значение. Выход"; exit 1; }
 }
 
 function manage_bulk_vm_power() {
@@ -1646,7 +1666,7 @@ function manage_bulk_vm_power() {
     }
     
     local pve_node args act_desc=''
-    [[ "$action" == 'startall' ]] && args=" --force 'true'" && act_desc="${c_ok}включение${c_null}" || { act_desc="${c_error}выключение${c_null}"; isdigit_check "$2" && args=" --timeout '$2'"; }
+    [[ "$action" == 'startall' ]] && args=" --force '1'" && act_desc="${c_ok}включение${c_null}" || { act_desc="${c_error}выключение${c_null}"; isdigit_check "$2" && args=" --timeout '$2'"; }
     for pve_node in ${!bulk_vms_power_list[@]}; do
         bulk_vms_power_list[$pve_node]=$( echo "${bulk_vms_power_list[$pve_node]}" | awk 'NF{printf $0}' | sed 's/ \|\;/,/g;s/,\+/,/g' )
         echo_tty "[${c_ok}Задание${c_null}] запущено массовое $act_desc машин на узле '${c_value}$pve_node${c_null}'. ВМIDs: ${c_value}${bulk_vms_power_list[$pve_node]:1}${c_null}"
@@ -1728,7 +1748,7 @@ function manage_stands() {
     if [[ $switch =~ ^[1-3]$ ]]; then
         local user_name enable state usr_range='' usr_count=$(echo -n "${user_list[$group_name]}" | grep -c '^') usr_list=''
 
-        [[ "$usr_count" == 0 ]] && echo_err "Ошибка: пользователи стендов '$group_name' не найдены. Выход" && exit 1
+        [[ "$usr_count" == 0 ]] && { echo_err "Ошибка: пользователи стендов '$group_name' не найдены. Выход"; exit 1; }
         if [[ "$usr_count" -gt 1 ]]; then
             echo_tty $'\nВыберите пользователей для конфигурирования:'
             for ((i=1; i<=$usr_count; i++)); do
@@ -1787,7 +1807,7 @@ function manage_stands() {
 
     local stand_range='' stand_count=$(echo -n "${pool_list[$group_name]}" | grep -c '^') stand_list='' usr_list=''
 
-    [[ "$stand_count" == 0 ]] && echo_err "Ошибка: пулы стендов '$group_name' не найдены. Выход" && exit 1
+    [[ "$stand_count" == 0 ]] && { echo_err "Ошибка: пулы стендов '$group_name' не найдены. Выход"; exit 1; }
     if [[ "$stand_count" -gt 1 ]]; then
         echo_tty $'\nВыберите стеды для управления:'
         for ((i=1; i<=$stand_count; i++)); do
@@ -1881,7 +1901,7 @@ function manage_stands() {
                         echo_tty 
                         vm_poweroff_answer=false
                     }
-                    $vm_poweroff && run_cmd "pvesh create /nodes/$vm_node/stopall --vms '$vmid' --timeout '30' --force-stop 'true'"
+                    $vm_poweroff && run_cmd "pvesh create /nodes/$vm_node/stopall --vms '$vmid' --timeout '30' --force-stop '1'"
                 }
                 vm_cmd_arg=" --vmstate '$vm_snap_state'"
                 [[ "$vm_type" != 'qemu' ]] && vm_cmd_arg=''
@@ -1894,7 +1914,7 @@ function manage_stands() {
                 echo "$status" | grep -Pq $'^Configuration file \'[^\']+\' does not exist$' && echo_err "Ошибка: ВМ $name ($vmid) стенда $pool_name не существует!" && continue
                 echo "$status" | grep -P $'^snapshot \'[^\']+\' does not exist$' && echo_err "Ошибка: Снапшот ВМ $name ($vmid) стенда $pool_name не существует!" && continue
                 echo "$status" | grep -P $'^snapshot name \'[^\']+\' already used$' && echo_err "Ошибка: Снапшот ВМ $name ($vmid) стенда $pool_name уже существует!" && continue
-                echo_err "Необработанная ошибка: ВМ $name ($vmid), стенд $pool_name:"$'\n'$status && exit
+                echo_err "Необработанная ошибка: ВМ $name ($vmid), стенд $pool_name:"$'\n'$status; exit 1;
             done
         done
         [[ "$switch" == 4 || "$switch" == 5 ]] && manage_bulk_vm_power --stop-vms
@@ -1978,15 +1998,15 @@ function manage_stands() {
                     run_cmd "pvesh create /nodes/$vm_node/$vm_type/$vmid/config --protection '0' 2>&1"
                 }
 
-                [[ "$vm_status" == 'running' && "$vm_type" == 'qemu' ]] && run_cmd "pvesh create /nodes/$vm_node/$vm_type/$vmid/status/stop --skiplock 'true' --timeout '0'"
-                vm_cmd_arg="--skiplock 'true' --purge 'true'"
-                [[ "$vm_type" != 'qemu' ]] && vm_cmd_arg="--force 'true'"
+                [[ "$vm_status" == 'running' && "$vm_type" == 'qemu' ]] && run_cmd "pvesh create /nodes/$vm_node/$vm_type/$vmid/status/stop --skiplock '1' --timeout '0'"
+                vm_cmd_arg="--skiplock '1' --purge '1'"
+                [[ "$vm_type" != 'qemu' ]] && vm_cmd_arg="--force '1'"
                 run_cmd /noexit "( pvesh delete /nodes/$vm_node/$vm_type/$vmid $vm_cmd_arg 2>&1;echo) | grep -Pq '(^$|does not exist$)'" \
                     && echo_ok "стенд ${c_value}$pool_name${c_null}: удалена машина ${c_ok}$name${c_null} (${c_info}$vmid${c_null})" \
                     || { echo_err "Ошибка: не удалось удалить ВМ '$vmid' стенда '$pool_name'"; exit 1; }
             done
             local storages=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/storage}" )
-            [[ "$storages" != '' ]] && { run_cmd /noexit "( pveum pool modify '$pool_name' --delete 'true' --storage '$storages' 2>&1;echo) | grep -Pq '(^$|is not a pool member$)'" \
+            [[ "$storages" != '' ]] && { run_cmd /noexit "( pveum pool modify '$pool_name' --delete '1' --storage '$storages' 2>&1;echo) | grep -Pq '(^$|is not a pool member$)'" \
                 || { echo_err "Ошибка: не удалось удалить привязку хранилищ от пула стенда '$pool_name'"; exit 1; } }
             run_cmd /noexit "( pveum pool delete '$pool_name' 2>&1;echo) | grep -Pq '(^$|does not exist$)'" \
                     && echo_ok "стенд ${c_value}$pool_name${c_null}: пул удален" \
@@ -2094,6 +2114,8 @@ while [ $# != 0 ]; do
 done
 
 silent_mode=$opt_silent_install || $opt_silent_control
+
+check_config base-check
 
 if $opt_show_help; then show_help; exit; fi
 
