@@ -73,12 +73,12 @@ declare -A config_base=(
     [access_auth_pve_desc]='Аутентификация участника'
 
     [_pool_access_role]='Роль, устанавливаемая для пула по умолчанию'
-    [pool_access_role]=''
 )
 
 _config_base='Список ролей прав доступа'
 declare -A config_access_roles=(
     [Competitor]='Pool.Audit VM.Audit VM.Console VM.PowerMgmt VM.Snapshot.Rollback VM.Config.Network'
+    [Competitor_DE]='Pool.Audit VM.Audit VM.Console VM.PowerMgmt'
     [Competitor_ISP]='VM.Audit VM.Console VM.PowerMgmt VM.Snapshot.Rollback'
     [test]='VM.Audit     VM.Console   ,   VM.PowerMgmt,VM.Snapshot.Rollback;VM.Snapshot.Rollback'
 )
@@ -346,7 +346,7 @@ function parse_noborder_table() {
 
 function exit_func() { 
     ((ex_var++))
-    [[ "$ex_var" == 1 ]] && $opt_not_tmpfs && {
+    [[ "$ex_var" == 1 ]] && ! $opt_not_tmpfs && {
         local lower_nextid="$( pvesh get /cluster/options --output-format json | grep -Po '({|,)"next-id":{"lower":"\K\d+' )"
         [[ "$lower_nextid" != '' &&  "$lower_nextid" == "$(( ${config_base[start_vmid]} + ${#opt_stand_nums[@]} * 100 ))" ]] && run_cmd "pvesh set /cluster/options --delete next-id"
         configure_imgdir clear
@@ -436,7 +436,7 @@ function show_config() {
                     && echo -e "\n${c_lcyan}# $description${c_null}"
 
                 value=$( echo "${ref_conf[$var]}" )
-                if [[ "$( echo -n "$value" | grep -c '^' )" == 1 ]]; then
+                if [[ "$( echo -n "$value" | grep -c '^' )" -le 1 ]]; then
                     echo -e "$conf["$var"]='\e[1;34m${value}\e[m'"
                 else
                     value="$( echo -n "$value" | sed 's/ = /\r/' | column -t -s $'\r' -o ' = ' | awk '{print "\t" $0}' )"
@@ -477,7 +477,7 @@ function show_config() {
             pool_name="$( get_dict_value "$conf[stand_config]" pool_name )"
             [[ "$pool_name" == "" ]] && pool_name=${config_base[def_pool_name]}
             description="$pool_name : $description"
-            for var in $( echo "${!ref_conf[@]}" ); do
+            for var in $( printf '%s\n' "${!ref_conf[@]}" | sort -V ); do
                 [[ "$var" == 'stand_config' ]] && continue
                 $first_elem && first_elem=false && echo -n $'\n  '"$((i++)). $description"$'\n  - ВМ: '
                 no_elem=false
@@ -498,7 +498,7 @@ function show_config() {
                 echo -en "$vm_name"
                 [[ "$description" != "" ]] && echo -en "(\e[1;34m${description}\e[m) " || echo -n ' '
             done
-            ! $first_elem && echo
+            ! $first_elem && echo || echo '--- пустая конфигурация ---'
             first_elem=true
         done
         $no_elem && echo '--- пусто ---'
@@ -615,8 +615,7 @@ function get_file() {
 }
 
 function terraform_config_vars() {
-   # for 
-     
+   # for
     local var='' vars='' type='' descr_var='' conf nl=$'\n' vars_count=0 var_value='' \
         conf_nowarnings=false conf_oldsyntax=false free_vmid=0 conf_vars_list=''
     
@@ -1259,12 +1258,13 @@ function deploy_stand_config() {
             if_bridge="${BASH_REMATCH[1]/\\\"/\"}"
             if_desc=$( echo "${BASH_REMATCH[2]/\\\"/\"}" | sed 's/[[:space:]]*$//' )
             if_config="${BASH_REMATCH[4]}"
-            [[ "$if_config" =~ ^.*,\ *state\ *=\ *down\ *($|,.+$) ]] && net_options+=',link_down=1'
-            [[ "$if_config" =~ ^.*,\ *trunks\ *=\ *([0-9\;]*[0-9])\ *($|,.+$) ]] && net_options+=",trunks=${BASH_REMATCH[1]}" && vlan_aware=" --bridge_vlan_aware '1'"
-            [[ "$if_config" =~ ^.*,\ *tag\ *=\ *([1-9][0-9]{0,2}|[1-3][0-9]{3}|40([0-8][0-9]|9[0-4]))\ *($|,.+$) ]] && net_options+=",tag=${BASH_REMATCH[1]}" && vlan_aware=" --bridge_vlan_aware '1'"
-            [[ "$if_config" =~ ^.*,\ *vtag\ *=\ *([1-9][0-9]{0,2}|[1-3][0-9]{3}|40([0-8][0-9]|9[0-4]))\ *($|,.+$) ]] && {
+            [[ "$if_config" =~ ,\ *firewall\ *=\ *1\ *($|,.+$) ]] && net_options+=',firewall=1'
+            [[ "$if_config" =~ ,\ *state\ *=\ *down\ *($|,.+$) ]] && net_options+=',link_down=1'
+            [[ "$if_config" =~ ,\ *trunks\ *=\ *([0-9\;]*[0-9])\ *($|,.+$) ]] && net_options+=",trunks=${BASH_REMATCH[1]}" && vlan_aware=" --bridge_vlan_aware '1'"
+            [[ "$if_config" =~ ,\ *tag\ *=\ *([1-9][0-9]{0,2}|[1-3][0-9]{3}|40([0-8][0-9]|9[0-4]))\ *($|,.+$) ]] && net_options+=",tag=${BASH_REMATCH[1]}" && vlan_aware=" --bridge_vlan_aware '1'"
+            [[ "$if_config" =~ ,\ *vtag\ *=\ *([1-9][0-9]{0,2}|[1-3][0-9]{3}|40([0-8][0-9]|9[0-4]))\ *($|,.+$) ]] && {
                 local tag="${BASH_REMATCH[1]}"
-                if [[ "$if_config" =~ ^.*,\ *master\ *=\ *([0-9\.a-z]+|\"\ *((\\\"|[^\"])+)\")\ *($|,.+$) ]]; then
+                if [[ "$if_config" =~ ,\ *master\ *=\ *([0-9\.a-z]+|\"\ *((\\\"|[^\"])+)\")\ *($|,.+$) ]]; then
                     local master_desc='' master_if=''
                     master="${BASH_REMATCH[2]/\\\"/\"}"
                     master_desc="$master"
@@ -1343,7 +1343,7 @@ function deploy_stand_config() {
     }
 
     function set_role_config() {
-        [[ "$1" == '' ]] && { echo_err 'Ошибка: set_role_conf нет аргумента'; exit 1; }
+        [[ "$1" == '' ]] && { echo_err 'Ошибка: set_role_config нет аргумента'; exit 1; }
         [[ "$1" =~ ^[a-zA-Z0-9\.\-_]+$ ]] || { echo_err "Ошибка: имя роли '$1' некорректное"; exit 1; }
         local i role role_exists
         role_exists=false
@@ -1367,7 +1367,7 @@ function deploy_stand_config() {
     }
 
     function set_machine_type() {
-        [[ "$1" == '' ]] && { echo_err 'Ошибка: set_disk_conf нет аргумента'; exit 1; }
+        [[ "$1" == '' ]] && { echo_err 'Ошибка: set_machine_type нет аргумента'; exit 1; }
         local machine_list=$( kvm -machine help | awk 'NR>1{print $1}' )
         local type=$1
         if ! echo "$machine_list" | grep -Fxq "$type"; then
@@ -1380,6 +1380,15 @@ function deploy_stand_config() {
             fi
         fi
         cmd_line+=" --machine '$type'"
+    }
+
+    function set_firewall_opt() {
+        [[ "$1" == '' ]] && return 1
+        local opt=''
+        echo -n "$1" | grep -Pq '^{[^{}]*}$' || { echo_err "Ошибка set_firewall_opt: ВМ '$elem' некорректный синтаксис"; exit 1; }
+        echo -n "$1" | grep -Pq '(^{|,) ?enable ?= ?1 ?(,? ?}$|,)' && opt+=" --enable '1'"
+        echo -n "$1" | grep -Pq '(^{|,) ?dhcp ?= ?1 ?(,? ?}$|,)' && opt+=" --dhcp '1'"
+        [[ "$opt" != '' ]] && run_cmd "pvesh set /nodes/$( hostname -s )/qemu/$vmid/firewall/options ${opt}"
     }
 
     [[ "$1" == '' ]] && { echo_err "Внутренняя ошибка скрипта установки стенда"; exit 1; }
@@ -1445,12 +1454,15 @@ function deploy_stand_config() {
                 boot_disk*|disk*) set_disk_conf "$opt" "${vm_config[$opt]}";;
                 access_role) ${config_base[access_create]} && set_role_config "${vm_config[$opt]}";;
                 machine) set_machine_type "${vm_config[$opt]}";;
+                firewall_opt) continue;;
                 *) echo_warn "[Предупреждение]: обнаружен неизвестный параметр конфигурации '$opt = ${vm_config[$opt]}' ВМ '$vm_name'. Пропущен"
             esac
         done
         [[ "$boot_order" != '' ]] && cmd_line+=" --boot 'order=$boot_order'"
 
         run_cmd /noexit "$cmd_line " || { echo_err "Ошибка: не удалось создать ВМ '$vm_name' стенда '$pool_name'. Выход"; exit 1; }
+
+        set_firewall_opt "$( get_dict_value config_stand_${opt_sel_var}_var[$elem] firewall_opt )"
 
         ${config_base[access_create]} && [[ "${vm_config[access_role]}" != '' ]] && run_cmd "pveum acl modify '/vms/$vmid' --roles '${vm_config[access_role]}' --users '$username'"
 
@@ -1603,6 +1615,11 @@ function install_stands() {
 
 
     # Начало установки
+    opt_not_tmpfs=false
+
+    configure_vmid install
+    run_cmd "pvesh set /cluster/options --next-id 'lower=$(( ${config_base[start_vmid]} + ${#opt_stand_nums[@]} * 100 ))'"
+
     run_cmd /noexit "( pveum group add '$stands_group' --comment '$val'          2>&1;echo) | grep -Poq '(^$|already\ exists$)'" \
         || { echo_err "Ошибка: не удалось создать access группу для стендов '$stands_group'. Выход"; exit 1; }
 
@@ -1613,9 +1630,7 @@ function install_stands() {
 
     ${config_base[run_vm_after_installation]} && manage_bulk_vm_power --init
 
-    configure_vmid install
-    run_cmd "pvesh set /cluster/options --next-id 'lower=$(( ${config_base[start_vmid]} + ${#opt_stand_nums[@]} * 100 ))'"
-    opt_not_tmpfs=false
+    
 
     for stand_num in "${!opt_stand_nums[@]}"; do
         deploy_stand_config ${opt_stand_nums[stand_num]} $stand_num
