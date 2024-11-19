@@ -73,6 +73,9 @@ declare -A config_base=(
     [access_auth_pve_desc]='Аутентификация участника'
 
     [_pool_access_role]='Роль, устанавливаемая для пула по умолчанию'
+
+    [_pve_api_url]='Локальный URL адрес для PVE API, с которым скрипт будет взаимодействовать. НЕ ИЗМЕНЯТЬ ЕСЛИ РАБОТАЕТ!'
+    [pve_api_url]='https://127.0.0.1:8006/api2/json'
 )
 
 _config_base='Список ролей прав доступа'
@@ -179,8 +182,11 @@ c_white=$'\e[1;37m'
 
 c_null=$'\e[m'
 c_value=${c_lblue}
+c_val=${c_value}
 c_error=${c_lred}
+c_err=${c_error}
 c_warning=${c_lyellow}
+c_warn=${c_warning}
 c_info=${c_lcyan}
 c_ok=${c_lgreen}
 c_success=${c_green}
@@ -255,6 +261,13 @@ function isbool_check() {
         [[ "$ref_bool" =~ ^(false?|0|[nN][oO]?|[нН](|[еЕ][тТ]?))$ ]] && ref_bool=false && return 0
     }
     return 1
+}
+
+function get_int_bool() {
+    [[ "$1" =~ ^(true?|1|[yY](|[eE][sS]?)|[дД][аА]?)$ ]] && { echo 1; return 0; }
+    [[ "$1" =~ ^(false?|0|[nN][oO]?|[нН](|[еЕ][тТ]?))$ ]] && { echo 0; return 0; }
+    echo_err 'Ошибка get_int_bool: не удалось интерпретировать значение как bool'
+    exit 1
 }
 
 function isdigit_check() {
@@ -342,20 +355,28 @@ function parse_noborder_table() {
     done
 }
 
-# Объявление основных функций
-
-function exit_func() { 
-    ((ex_var++))
-    [[ "$ex_var" == 1 ]] && ! $opt_not_tmpfs && {
-        local lower_nextid="$( pvesh get /cluster/options --output-format json | grep -Po '({|,)"next-id":{"lower":"\K\d+' )"
-        [[ "$lower_nextid" != '' &&  "$lower_nextid" == "$(( ${config_base[start_vmid]} + ${#opt_stand_nums[@]} * 100 ))" ]] && run_cmd "pvesh set /cluster/options --delete next-id"
-        configure_imgdir clear
-    }
-    echo $'\e[m' >> /dev/tty
-    exit
+function check_min_version { 
+	[[ "$(echo $1$'\n'$2 | sort -V )" == $1$'\n'$2 ]] && return 0 || return 1
 }
 
-trap exit_func INT
+# Объявление основных функций
+
+function configure_clear() { 
+    ! $opt_not_tmpfs && {
+        local lower_nextid="$( pve_api_request GET /cluster/options | grep -Po '({|,)"next-id":{([^{}\[\]]*?,)?"lower":"\K\d+' )"
+        [[ "$lower_nextid" != '' &&  "$lower_nextid" == "$(( ${config_base[start_vmid]} + ${#opt_stand_nums[@]} * 100 ))" ]] && run_cmd "pve_api_request PUT /cluster/options delete=next-id"
+        configure_imgdir clear
+    }
+    configure_api_token clear
+    echo $'\e[m' >> /dev/tty
+}
+
+function exit_clear() { 
+    ((ex_var++))
+    [[ "$ex_var" == 1 ]] && configure_clear
+    exit 1
+}
+trap exit_clear INT
 
 
 function show_help() {
@@ -388,10 +409,74 @@ function show_help() {
         -si, --silent-install$t$_opt_silent_install
         -c, --config [in-file]$tИмпорт конфигурации из файла или URL
         -z, --clear-vmconfig$t$_opt_zero_vms
-        -sctl, --silent-control$t$_opt_silent_control
 EOL
 }
 
+function pve_api_request() {
+    [[ "$1" == '' || "$2" == ''  ]] && { echo_err 'Ошибка: нет подходящих аргументов или токена для pve_api_request'; exit 1; }
+    [[ "$var_pve_api_curl" == '' ]] && {
+        configure_api_token init; 
+        [[ "$var_pve_api_curl" == '' ]] && { echo_err 'Ошибка: не удалось получить API токен для pve_api_request'; exit 1; }
+    }
+    local res
+    res=$( eval "${var_pve_api_curl}${2}'" -X "${1}" $( printf ' --data-urlencode %q' "${@:3}" ) )
+
+    case $? in
+        0)    echo -n "$res" | sed -e '$d'
+              return 0;;
+        22)   local http_code="$(echo -n "$res" | sed '$!d')"
+              [[ "$http_code" == 401 ]] && {
+					configure_api_token clear force
+					configure_api_token init
+					pve_api_request "$@"
+                    return $?
+              }
+              [[ "$http_code" != 500 && "$http_code" != 501 ]] && {
+                    echo_err "Ошибка: запрос к API был обработан с ошибкой: ${c_val}$@"
+                    echo_err "API токен: ${c_val}${var_pve_token_id}"
+                    echo_err "HTTP код ответа: ${c_val}$http_code"
+                    echo_err "Ответ сервера: ${c_val}$( echo -n "$res" | sed '$d' )"
+                    exit 1
+              }
+              echo -n "$res"
+              return 1;;
+        7|28) echo_err "Ошибка: не удалось подключиться к PVE API. PVE запущен/работает?";;
+        2)    echo_err "Ошибка: неизвестная опция curl. Старая версия?";;
+        *)    echo_err "Ошибка: не удалось выполнить запрос к API: ${c_val}$@${c_err}. Токен ${c_val}${var_pve_token_id}${c_err}. Код ошибки curl: $?";;
+    esac
+    exit 1
+}
+
+function configure_api_token() {
+
+    [[ "$1" == 'clear' ]] && {
+        [[ ! -v var_pve_token_id ]] && return 0
+		if [[ "$2" == 'force' ]]; then
+			pvesh delete "/access/users/root@pam/token/$var_pve_token_id" 2>/dev/null
+		else 
+			pve_api_request DELETE "/access/users/root@pam/token/$var_pve_token_id" >/dev/null \
+				|| pvesh delete "/access/users/root@pam/token/$var_pve_token_id" \
+				|| echo_err "Ошибка: Не удалось удалить удалить токен API: ${c_val}${var_pve_token_id}${c_err}"
+		fi
+        unset var_pve_token_id; unset var_pve_api_curl
+        return 0
+    } || [[ "$1" != 'init' ]] && { echo_err 'Ошибка: нет подходящих аргументов configure_api_token'; exit 1; }
+
+    [[ "$var_pve_token_id" == '' ]] && { 
+        var_pve_token_id="PVE-ASDaC-BASH_$( cat /proc/sys/kernel/random/uuid )" || { echo_err 'Ошибка: не удалось сгенерировать уникальный идентификатор для API токена'; exit 1; }
+
+        local ret=$( pvesh create /access/users/root@pam/token/$var_pve_token_id --privsep '0' --comment "Токен скрипта авторазвертывания PVE-ASDaC-BASH. Дата создания: $( date '+%d.%m.%Y %H:%M:%S' )" --expire "$(( $( date +%s ) + 86400 ))" --output-format json-pretty ) \
+            || { echo_err "Ошибка: не удалось создать новый API токен ${c_val}${var_pve_token_id}"; exit 1; }
+
+        var_pve_api_curl="$( echo -n "$ret" | grep -Po '\s*"value"\s*:\s*"\K[^"]+' )"
+        ret="$( echo -n "$ret" | grep -Po '\s*"full-tokenid"\s*:\s*"\K[^"]+' )"
+
+        [[ ${#ret} -lt 30 || ${#var_pve_api_curl} -lt 30 ]] && { echo_err "Ошибка: непредвиденные значения API token (${c_val}${var_pve_api_curl}${c_err}) и/или token ID (${c_val}${ret}${c_err})"; exit 1; }
+
+        var_pve_api_curl="curl -k -w '\n%{http_code}' --no-progress-meter --fail-with-body --connect-timeout 5 -H 'Authorization: PVEAPIToken=$ret=$var_pve_api_curl' '${config_base[pve_api_url]}"
+    }
+    data_pve_version="$( pve_api_request GET /version | grep -Po '"release"\s*:\s*"\K[^"]+' )" || { echo_err 'Не удалось получить версию PVE через API'; exit 1; }
+}
 
 function show_config() {
     local i=0
@@ -871,13 +956,15 @@ function configure_vmid() {
         echo "Кратно 100. Пример: 100, 200, 1000, 1100"
         config_base[start_vmid]=$( read_question_select $'Начальный идентификатор ВМ' '^[1-9][0-9]*00$' 100 999900000 )
     }
-    local vmid_str="$( pvesh get /cluster/resources --type 'vm' --output-format yaml | grep -Po '^\s*vmid: \K\d+' )"
+    local vmid_str
+    vmid_str="$( pve_api_request GET /cluster/resources?type=vm )" || { echo_err "Ошибка: не удалось получить ресурсов кластера"; exit 1; }
+    vmid_str="$( echo -n "$vmid_str" | grep -Po '(,|{)\s*"vmid"\s*:\s*"?\K\d+' )"
     
     local -a vmid_list
     IFS=$'\n' read -d '' -r -a vmid_list <<<"$( echo "$vmid_str" | sort -n )"
     [[ "$1" == manual ]] && config_base[start_vmid]='{manual}'
     if [[ "${config_base[start_vmid]}" == '{auto}' ]] || [[ $silent_mode && "${config_base[start_vmid]}" == '{manual}' ]]; then
-        config_base[start_vmid]="$( pvesh get /cluster/nextid )"
+        config_base[start_vmid]="$( pve_api_request GET /cluster/nextid | grep -Po '(,|{)\s*"data"\s*:\s*"?\K\d+' )" || { echo_err "Ошибка: не удалось получить nextid"; exit 1; }
         [[ "${config_base[start_vmid]}" == '' || "${config_base[start_vmid]}" -lt 1000 ]] && config_base[start_vmid]=10000
     fi
     [[ "${config_base[start_vmid]}" == '{manual}' ]] && set_vmid
@@ -972,7 +1059,8 @@ function configure_poolname() {
 
     [[ "$1" == 'install' ]] && {
         local pool_list pool_name
-        parse_noborder_table 'pveum pool list' pool_list poolid
+        pool_list="$( pve_api_request GET /pools )" || { echo_err "Ошибка: не удалось получить список PVE пулов через API"; exit 1; }
+        pool_list="$( echo -n "$pool_list" | grep -Po '(,|{)"poolid":"\K[^"]+' )"
         for stand in ${opt_stand_nums[@]}; do
             pool_name="${config_base[pool_name]/\{0\}/$stand}"
             echo "$pool_list" | grep -Fxq -- "$pool_name" \
@@ -1001,7 +1089,8 @@ function configure_username() {
 
     if [[ "$1" == 'install' ]] && ${config_base[access_create]} || [[ "$1" == 'set-install' ]]; then
         local user_list user_name
-            parse_noborder_table 'pveum user list' user_list userid
+        user_list="$( pve_api_request GET /access/users )" || { echo_err "Ошибка: не удалось получить список PVE пользователей через API"; exit 1; }
+        user_list="$( echo -n "$user_list" | grep -Po '(,|{)"userid":"\K[^"]+' )"
         for stand in ${opt_stand_nums[@]}; do
             user_name="${config_base[access_user_name]/\{0\}/$stand}@pve"
             echo "$user_list" | grep -Fxq -- "$user_name" \
@@ -1055,7 +1144,7 @@ function configure_storage() {
 _configure_roles='проверка валидности списка access ролей (привилегий) Proxmox-а'
 function configure_roles() {
 
-    local list_privs=$( pvesh get /access/permissions --output-format yaml --path / --userid root@pam | grep -Po '^\s*\K[a-zA-Z\.]+(?=\:\ 1$)' ) \
+    local list_privs=$( pve_api_request GET '/access/permissions?path=/&userid=root@pam' | grep -Po '(?<=^{"data":{"\/":{"|,")[^"]+(?=":\d(,|}))' ) \
         || { echo_err "Ошибка: get не удалось загрузить список привилегий пользователей"; exit 1; }
     [[ "$(echo -n "$list_privs" | grep -c '^')" -ge 20 ]] || { echo_err "Ошибка: не удалось корректно загрузить список привилегий пользователей"; exit 1; }
 
@@ -1077,14 +1166,13 @@ function check_config() {
         for i in "${script_requirements_cmd[@]}"; do [[ -x "$( command -v $i )" ]] \
                 || { echo_err "Ошибка: не найдена команда '$i'. На этом хосте установлен PVE (Proxmox VE)?. Конфигурирование стендов невозможно."$'\n'"Необходимые команды для работы: ${script_requirements_cmd[@]}"; exit 1; }
         done
+        check_min_version 7.76 $( curl --version | grep -Po 'curl \K[0-9\.]+' ) || { echo_err "Ошибка: версия утилиты curl меньше требуемой ${c_val}7.76${c_err}. Обновите пакет/систему"; exit 1; }
+        configure_api_token init
+        check_min_version 7.2 "$data_pve_version" || { echo_err "Ошибка: версия PVE '$data_pve_version' уже устарела и установка ВМ данным скриптом не поддерживается."; exit 1; }
+        create_access_network=$( check_min_version 8 "$data_pve_version" && echo true || echo false )
 
-        pve_ver=$(pvesh get /version --output-format json-pretty | grep -Po '"release"\ *:\ *"\K[^"]+')
-        echo $pve_ver | grep -Pq '^([7-9]|[1-9][0-9])\.' || { echo_err "Ошибка: версия PVE '$pve_ver' уже устарела и установка ВМ данным скриптом не поддерживается." && exit 1; }
-        create_access_network=$( echo $pve_ver | grep -Pq '^([8-9]|[1-9][0-9])\.' && echo true || echo false )
-
-        [[ "$( printf '%x' "'й" )" != '439' ]] && { LC_ALL="en_US.UTF-8"; echo_warn $'\n'"Предупреждение: установленная кодировка не поддерживает символы Unicode"; echo_info "Кодировка была изменена на '${c_value}en_US.UTF-8${c_info}'"$'\n'; }
+        [[ "$( printf '%x' "'й" )" != '439' ]] && { LC_ALL="en_US.UTF-8"; echo_warn $'\n'"Предупреждение: установленная кодировка не поддерживает символы Unicode"; echo_info "Кодировка была изменена на '${c_val}en_US.UTF-8${c_info}'"$'\n'; }
         [[ "$( echo -n 'тест' | wc -m )" != 4 || "$( printf '%x' "'й" )" != '439' ]] && {
-            
             echo_warn "Предупреждение: обнаружена проблема с кодировкой. Символы Юникода (в т.ч. кириллические буквы) не будут корректно обрабатываться и строки описаний будут заменены на символы '�'. Попробуйте запустить скрипт другим способом (SSH?)"
             echo_tty
             echo_warn "Warning: An encoding problem has been detected. Unicode characters (including Cyrillic letters) will not be processed correctly and description lines will be replaced with '�' characters. Try running the script in a different way from (SSH?)"
@@ -1097,7 +1185,7 @@ function check_config() {
 
     [[ "$1" == 'install' ]] && {
         ! $create_access_network && echo_warn "Предупреждение: версия PVE '$pve_ver' имеет меньший функционал, чем последняя версия PVE и некоторые опции установки будут пропущены"
-        #[[ "$opt_sel_var" -gt 0 && $(eval "printf '%s\n' \${!config_stand_${opt_sel_var}_var[@]}" | grep -Pv '^_' | wc -l) -gt 0 ]] && echo 'Ошибка: был выбран несуществующий вариант развертки стенда. Выход' && exit 1
+        # [[ "$opt_sel_var" -gt 0 && $(eval "printf '%s\n' \${!config_stand_${opt_sel_var}_var[@]}" | grep -Pv '^stand_config' | wc -l) -gt 0 ]] && { echo_err 'Ошибка: был выбран несуществующий вариант развертки стенда или нечего разворачивать. Выход'; exit 1; }
         [[ "${#opt_stand_nums[@]}" -gt 10 ]] && echo_warn -e "Предупреждение: конфигурация настроена на развертку ${#opt_stand_nums[@]} стендов!\n Развертка более 10 стендов на одном сервере (в зависимости от мощности \"железа\", может и меньше) может вызвать проблемы с производительностью"
         [[ "${#opt_stand_nums[@]}" -gt 100 ]] && echo_err "Ошибка: невозможно (бессмысленно) развернуть на одном стенде более 100 стендов. Выход" && exit 1
         for check_func in configure_{poolname,wan_vmbr,imgdir,username,storage,roles}; do
@@ -1109,9 +1197,9 @@ function check_config() {
 
     local count
     for var in $( compgen -v | grep -P '^config_stand_[1-9][0-9]{0,3}_var$' | awk '{if (NR>1) printf " ";printf $0}' ); do
-        count=$( eval "printf '%s\n' \${!$var[@]}" | grep -Pv '^_' | wc -l )
-        [[ "$count" != "$( eval "printf '%s\n' \${!$var[@]}" | grep -P '^(([a-zA-Z0-9](|-*|\.(?=[a-zA-Z0-9]))){1,100}|vm_\d{1,2}|stand_config)$' | wc -l )" ]] \
-            && echo_err 'Ошибка: обнаружены некорректные элементы конфигурации ВМ (имена хостов). Выход' && exit 1
+        count=$( eval "printf '%s\n' \${!$var[@]}" | grep -Fvc 'stand_config' )
+        [[ "$count" != "$( eval "printf '%s\n' \${!$var[@]}" | grep -Pc '^vm_\d{1,2}$' )" ]] \
+            && echo_err "Ошибка: обнаружены некорректные элементы конфигурации ${c_val}$var${c_err}. Выход" && exit 1
     done
 
     for desc in pool_desc access_user_desc access_auth_pam_desc access_auth_pve_desc; do
@@ -1300,7 +1388,7 @@ function deploy_stand_config() {
                 local port_info=$( pvesh get "/nodes/$(hostname -s)/network/$net" --output-format yaml )
                 local if_options=''
                 if [[ "$vlan_slave" != '' ]]; then
-                    echo "$port_info" | grep -Pq $'^bridge_vlan_aware: 1$' && if_options="--bridge_vlan_aware '1'"
+                    echo -n "$port_info" | grep -Pq $'^bridge_vlan_aware: 1$' && if_options="--bridge_vlan_aware '1'"
                 else
                     if_options="--slaves '$( echo "$port_info" | grep -Po $'^bridge_ports: \K[^\']+$' )'" || if_options=''
                 fi
@@ -1351,7 +1439,7 @@ function deploy_stand_config() {
             role=$( echo "${roles_list[roleid]}" | sed -n "${i}p" )
             [[ "$1" != "$role" ]] && continue
             [[ -v "config_access_roles[$1]" && "$( echo "${roles_list[privs]}" | sed -n "${i}p" )" != "${config_access_roles[$1]}" ]] && {
-                    run_cmd /noexit "pvesh set '/access/roles/$1' --privs '${config_access_roles[$1]}'"
+                    run_cmd /noexit "pve_api_request PUT '/access/roles/$1' 'privs=${config_access_roles[$1]}'"
                     roles_list[roleid]=$( echo "$1"; echo -n "${roles_list[roleid]}" )
                     roles_list[privs]=$( echo "${config_access_roles[$1]}"; echo -n "${roles_list[roleid]}" )
                 }
@@ -1360,7 +1448,7 @@ function deploy_stand_config() {
         done
         ! $role_exists && {
             [[ ! -v "config_access_roles[$1]" ]] && { echo_err "Ошибка: в конфигурации для установки ВМ '$elem' установлена несуществующая access роль '$1'. Выход"; exit 1; }
-            run_cmd "pvesh create /access/roles --roleid '$1' --privs '${config_access_roles[$1]}'"
+            run_cmd "pve_api_request POST /access/roles 'roleid=$1' 'privs=${config_access_roles[$1]}' 2>&1"
             roles_list[roleid]=$( echo "$1"; echo -n "${roles_list[roleid]}" )
             roles_list[privs]=$( echo "${config_access_roles[$1]}"; echo -n "${roles_list[roleid]}" )
         }
@@ -1386,9 +1474,9 @@ function deploy_stand_config() {
         [[ "$1" == '' ]] && return 1
         local opt=''
         echo -n "$1" | grep -Pq '^{[^{}]*}$' || { echo_err "Ошибка set_firewall_opt: ВМ '$elem' некорректный синтаксис"; exit 1; }
-        echo -n "$1" | grep -Pq '(^{|,) ?enable ?= ?1 ?(,? ?}$|,)' && opt+=" --enable '1'"
-        echo -n "$1" | grep -Pq '(^{|,) ?dhcp ?= ?1 ?(,? ?}$|,)' && opt+=" --dhcp '1'"
-        [[ "$opt" != '' ]] && run_cmd "pvesh set /nodes/$( hostname -s )/qemu/$vmid/firewall/options ${opt}"
+        echo -n "$1" | grep -Pq '(^{|,) ?enable ?= ?1 ?(,? ?}$|,)' && opt+=" enable=1"
+        echo -n "$1" | grep -Pq '(^{|,) ?dhcp ?= ?1 ?(,? ?}$|,)' && opt+=" dhcp=1"
+        [[ "$opt" != '' ]] && run_cmd "pve_api_request PUT /nodes/$( hostname -s )/qemu/$vmid/firewall/options ${opt}"
     }
 
     [[ "$1" == '' ]] && { echo_err "Внутренняя ошибка скрипта установки стенда"; exit 1; }
@@ -1402,19 +1490,22 @@ function deploy_stand_config() {
     local pool_name="${config_base[pool_name]/\{0\}/$stand_num}"
 
     local pve_net_ifs=''
-    parse_noborder_table 'pvesh get /nodes/$(hostname -s)/network' pve_net_ifs iface
+    pve_net_ifs=$( pve_api_request GET /nodes/$(hostname -s)/network | grep -Po '({|,)"iface":"\K[^"]+' ) || { echo_err "Ошибка: не удалось загрузить список сетевых интерфейсов"; exit 1; }
 
-    run_cmd /noexit "pveum pool add '$pool_name' --comment '${config_base[pool_desc]/\{0\}/$stand_num}'" || { echo_err "Ошибка: не удалось создать пул '$pool_name'"; exit 1; }
-    run_cmd "pveum acl modify '/pool/$pool_name' --propagate '0' --groups '$stands_group' --roles 'NoAccess'"
 
+    run_cmd /noexit "pve_api_request POST /pools 'poolid=$pool_name' 'comment=${config_base[pool_desc]/\{0\}/$stand_num}'" || { echo_err "Ошибка: не удалось создать пул '$pool_name'"; exit 1; }
+    run_cmd "pve_api_request PUT /access/acl 'path=/pool/$pool_name' 'groups=$stands_group' roles=NoAccess  propagate=0"
 
     ${config_base[access_create]} && {
         local username="${config_base[access_user_name]/\{0\}/$stand_num}@pve"
-        run_cmd /noexit "pveum user add '$username' --enable '${config_base[access_user_enable]}' --comment '${config_base[access_user_desc]/\{0\}/$stand_num}' --groups '$stands_group'" \
+        
+        run_cmd /noexit "pve_api_request POST /access/users 'userid=$username' 'groups=$stands_group' 'enable=$( get_int_bool "${config_base[access_user_enable]}" )' 'comment=${config_base[pool_desc]/\{0\}/$stand_num}'" \
             || { echo_err "Ошибка: не удалось создать пользователя '$username'"; exit 1; }
         
-        [[ "${config_base[pool_access_role]}" != '' && "${config_base[pool_access_role]}" != NoAccess ]] && { set_role_config "${config_base[pool_access_role]}"; run_cmd "pveum acl modify '/pool/$pool_name' --users '$username' --roles '${config_base[pool_access_role]}'"; } \
-            || { run_cmd "pveum acl modify '/pool/$pool_name' --users '$username' --roles 'PVEAuditor' --propagate '0'"; }
+        [[ "${config_base[pool_access_role]}" != '' && "${config_base[pool_access_role]}" != NoAccess ]] && {
+            set_role_config "${config_base[pool_access_role]}"
+            run_cmd "pve_api_request PUT /access/acl 'path=/pool/$pool_name' 'users=$username' 'roles=${config_base[pool_access_role]}'"
+        } || { run_cmd "pve_api_request PUT /access/acl 'path=/pool/$pool_name' 'users=$username' roles=PVEAuditor propagate=0"; }
     }
 
     local cmd_line='' netifs_type='virtio' disk_type='scsi' disk_num=0 boot_order='' vm_template='' vm_name=''
@@ -1446,9 +1537,9 @@ function deploy_stand_config() {
 
         set_netif_conf test && set_disk_conf test || exit 1
 
-        for opt in $(printf '%s\n' "${!vm_config[@]}" | sort); do
+        for opt in $( printf '%s\n' "${!vm_config[@]}" | sort -V ); do
             case "$opt" in
-                startup|tags|ostype|serial0|serial1|serial2|serial3|agent|scsihw|cpu|cores|memory|bios|bwlimit|description|args|arch|vga|kvm|rng0|acpi|tablet|reboot)
+                startup|tags|ostype|serial0|serial1|serial2|serial3|agent|scsihw|cpu|cores|memory|bios|bwlimit|description|args|arch|vga|kvm|rng0|acpi|tablet|reboot|startdate|tdf)
                     cmd_line+=" --$opt '${vm_config[$opt]}'";;
                 network*) set_netif_conf "$opt" "${vm_config[$opt]}";;
                 boot_disk*|disk*) set_disk_conf "$opt" "${vm_config[$opt]}";;
@@ -1464,7 +1555,7 @@ function deploy_stand_config() {
 
         set_firewall_opt "$( get_dict_value config_stand_${opt_sel_var}_var[$elem] firewall_opt )"
 
-        ${config_base[access_create]} && [[ "${vm_config[access_role]}" != '' ]] && run_cmd "pveum acl modify '/vms/$vmid' --roles '${vm_config[access_role]}' --users '$username'"
+        ${config_base[access_create]} && [[ "${vm_config[access_role]}" != '' ]] && run_cmd "pve_api_request PUT /access/acl 'path=/vms/$vmid' 'roles=${vm_config[access_role]}' 'users=$username'"
 
         ${config_base[take_snapshots]} && run_cmd /pipefail "qm snapshot '$vmid' 'Start' --description 'Исходное состояние ВМ' | tail -n2"
 
@@ -1618,32 +1709,29 @@ function install_stands() {
     opt_not_tmpfs=false
 
     configure_vmid install
-    run_cmd "pvesh set /cluster/options --next-id 'lower=$(( ${config_base[start_vmid]} + ${#opt_stand_nums[@]} * 100 ))'"
+    run_cmd "pve_api_request PUT /cluster/options next-id=lower=$(( ${config_base[start_vmid]} + ${#opt_stand_nums[@]} * 100 ))"
 
-    run_cmd /noexit "( pveum group add '$stands_group' --comment '$val'          2>&1;echo) | grep -Poq '(^$|already\ exists$)'" \
+    run_cmd /noexit "pve_api_request POST /access/groups 'groupid=$stands_group' comment='$val' 2>&1 | tail -1 | grep -Pq '^500$|^(?!\d*$)'" \
         || { echo_err "Ошибка: не удалось создать access группу для стендов '$stands_group'. Выход"; exit 1; }
 
-    run_cmd "pveum acl modify '/sdn/zones/localnetwork' --roles 'PVEAuditor' --groups '$stands_group' --propagate '0'"
+    run_cmd "pve_api_request PUT /access/acl path=/sdn/zones/localnetwork roles=PVEAuditor 'groups=$stands_group' propagate=0"
     
     local -A roles_list
     parse_noborder_table 'pveum role list' roles_list
 
     ${config_base[run_vm_after_installation]} && manage_bulk_vm_power --init
 
-    
-
     for stand_num in "${!opt_stand_nums[@]}"; do
         deploy_stand_config ${opt_stand_nums[stand_num]} $stand_num
     done
 
-    local lower_nextid="$( pvesh get /cluster/options --output-format json | grep -Po '({|,)"next-id":{"lower":"\K\d+' )"
-    [[ "$lower_nextid" != '' &&  "$lower_nextid" == "$(( ${config_base[start_vmid]} + ${#opt_stand_nums[@]} * 100 ))" ]] && run_cmd "pvesh set /cluster/options --delete next-id"
+    configure_clear
 
     run_cmd "pvesh set '/nodes/$(hostname -s)/network'"
 
     ${config_base[access_create]} && {
-        [[ "${config_base[access_auth_pam_desc]}" != '' ]] && run_cmd "pveum realm modify pam --comment '${config_base[access_auth_pam_desc]}'"
-        [[ "${config_base[access_auth_pve_desc]}" != '' ]] && run_cmd "pveum realm modify pve --default '1' --comment '${config_base[access_auth_pve_desc]}'"
+        [[ "${config_base[access_auth_pam_desc]}" != '' ]] && run_cmd "pve_api_request PUT /access/domains/pam 'comment=${config_base[access_auth_pam_desc]}'"
+        [[ "${config_base[access_auth_pve_desc]}" != '' ]] && run_cmd "pve_api_request PUT /access/domains/pve 'default=1' 'comment=${config_base[access_auth_pve_desc]}'"
     }
 
     ${config_base[run_vm_after_installation]} && manage_bulk_vm_power --start-vms
@@ -1651,8 +1739,6 @@ function install_stands() {
     ${config_base[access_create]} && deploy_access_passwd
 
     echo_tty $'\n'"${c_success}Установка закочена.${c_null} Выход"
-    
-    configure_imgdir clear
     exit 0
 }
 
@@ -1786,11 +1872,12 @@ function manage_stands() {
         echo_tty -n $'\nВыбранные пользователи: '; echo_tty "$( get_val_print "$( echo ${user_list[$group_name]} )" )"
 
         opt_stand_nums=()
+        [[ $switch == 1 ]] && { enable=1; state="${c_ok}включен"; }
+        [[ $switch == 2 ]] && { enable=0; state="${c_error}выключен"; }
         for ((i=1; i<=$(echo -n "${user_list[$group_name]}" | grep -c '^'); i++)); do
             user_name=$(echo "${user_list[$group_name]}" | sed -n "${i}p" )
             [[ $switch != 3 ]] && {
-                [[ $switch == 1 ]] && { enable=true;state="${c_ok}включен"; }; [[ $switch == 2 ]] && { enable=false; state="${c_error}выключен"; }
-                run_cmd /noexit "pveum user modify '$user_name' --enable '$enable'" || { echo_err "Ошибка: не удалось изменить enable для пользователя '$user_name'"; }
+                run_cmd /noexit "pve_api_request PUT '/access/users/$user_name' 'enable=$enable'" || { echo_err "Ошибка: не удалось изменить enable для пользователя '$user_name'"; }
                 echo_tty "$user_name : $state${c_null}";
                 continue
             }
@@ -2164,4 +2251,4 @@ while ! $silent_mode; do
     esac
 done
 
-configure_imgdir clear
+configure_clear
