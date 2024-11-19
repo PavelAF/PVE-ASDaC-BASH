@@ -442,7 +442,7 @@ function pve_api_request() {
               return 1;;
         7|28) echo_err "Ошибка: не удалось подключиться к PVE API. PVE запущен/работает?";;
         2)    echo_err "Ошибка: неизвестная опция curl. Старая версия?";;
-        *)    echo_err "Ошибка: не удалось выполнить запрос к API: ${c_val}$*${c_err}. Токен ${c_val}${var_pve_token_id}${c_err}. Код ошибки curl: $?";;
+        *)    echo_err "Ошибка: не удалось выполнить запрос к API: ${c_val}$*${c_err}. Токен ${c_val}${var_pve_token_id}${c_err}. Код ошибки curl: ${c_val}$?";;
     esac
     configure_api_token clear force
     exit_clear
@@ -479,6 +479,10 @@ function configure_api_token() {
         var_pve_api_curl="curl -k -w '\n%{http_code}' --no-progress-meter --fail-with-body --connect-timeout 5 -H 'Authorization: PVEAPIToken=$ret=$var_pve_api_curl' '${config_base[pve_api_url]}"
     }
     data_pve_version="$( pve_api_request GET /version | grep -Po '"release"\s*:\s*"\K[^"]+' )" || { echo_err 'Не удалось получить версию PVE через API'; configure_api_token clear force; exit_clear; }
+}
+
+function make_local_configs() {
+    echo
 }
 
 function show_config() {
@@ -1205,7 +1209,7 @@ function check_config() {
 
     local count
     for var in $( compgen -v | grep -P '^config_stand_[1-9][0-9]{0,3}_var$' | awk '{if (NR>1) printf " ";printf $0}' ); do
-        count=$( eval "printf '%s\n' \${!$var[@]}" | grep -Fvc 'stand_config' )
+        count=$( eval "printf '%s\n' \${!$var[@]}" | grep -Fxvc 'stand_config' )
         [[ "$count" != "$( eval "printf '%s\n' \${!$var[@]}" | grep -Pc '^vm_\d{1,2}$' )" ]] \
             && { echo_err "Ошибка: обнаружены некорректные элементы конфигурации ${c_val}$var${c_err}. Выход"; exit_clear; }
     done
@@ -1301,7 +1305,13 @@ function deploy_stand_config() {
 
     function set_netif_conf() {
         [[ "$1" == '' || "$2" == '' && "$1" != test ]] && { echo_err 'Ошибка: set_netif_conf нет аргумента'; exit_clear; }
-        [[ "$1" == 'test' ]] && { [[ "$netifs_type" =~ ^(e1000|e1000-82540em|e1000-82544gc|e1000-82545em|e1000e|i82551|i82557b|i82559er|ne2k_isa|ne2k_pci|pcnet|rtl8139|virtio|vmxnet3)$ ]] && return 0; echo_err "Ошибка: указаный в конфигурации модель сетевого интерфейса '$netifs_type' не является корректным [e1000|e1000-82540em|e1000-82544gc|e1000-82545em|e1000e|i82551|i82557b|i82559er|ne2k_isa|ne2k_pci|pcnet|rtl8139|virtio|vmxnet3]"; exit_clear; }
+        [[ "$data_aviable_net_models" == '' ]] && data_aviable_net_models=$( kvm -net nic,model=help | awk 'NR!=1' | grep -Po '[^\(\)]+|(\(aka \K[^\)]+)' ) || { echo_err "Ошибка: не удалось получить список доступных моделей сетевых устройств"; exit_clear; }
+        [[ "$1" == 'test' ]] && { 
+            echo -n "$data_aviable_net_models" | grep -Fxq "$netifs_type" && return 0
+            echo_err "Ошибка: указаный в конфигурации модель сетевого интерфейса '$netifs_type' не является корректным"
+            echo_err "Список доступных моделей можно узнать командой ${c_val}kvm -net nic,model=help"
+            exit_clear
+        }
 
         [[ ! "$1" =~ ^network_?([0-9]+)$ ]] && { echo_err "Ошибка: опция конфигурации ВМ network некорректна '$1'"; exit_clear; }
     
@@ -1322,13 +1332,13 @@ function deploy_stand_config() {
             if_desc=${if_desc/\{0\}/$stand_num}
             $create_if && {
                 echo_verbose "${c_info}Добавление сети ${c_value}$iface${c_info} : ${c_value}$if_desc${c_null}"
-                run_cmd /noexit "pvesh create '/nodes/$(hostname -s)/network' --iface '$iface' --type 'bridge' --autostart '1' --comments '$if_desc'$vlan_aware --slaves '$vlan_slave'" \
+                run_cmd /noexit "pve_api_request POST '/nodes/$(hostname -s)/network' 'iface=$iface' type=bridge autostart=1 'comments=$if_desc'$vlan_aware 'slaves=$vlan_slave'" \
                     || { echo_err "Интерфейс '$iface' ($if_desc) уже существует! Выход"; exit_clear; }
             }
 
             $not_special && $create_access_network && ${config_base[access_create]} && [[ "${vm_config[access_role]}" != NoAccess || "${config_base[access_role]}" == '' && "${config_base[pool_access_role]}" != '' && "${config_base[pool_access_role]}" != NoAccess ]] &&  { 
-                $create_if && { run_cmd /noexit "pveum acl modify '/sdn/zones/localnetwork/$iface' --users '$username' --roles 'PVEAuditor'" || { echo_err "Не удалось создать ACL правило для сетевого интерфейса '$iface' и пользователя '$username'"; exit_clear; } } \
-                    || run_cmd /noexit "pveum acl modify '/sdn/zones/localnetwork/$iface' --groups '$stands_group' --roles 'PVEAuditor'" || { echo_err "Не удалось создать ACL правило для сетевого интерфейса '$iface' и пользователя '$username'"; exit_clear; }
+                $create_if && { run_cmd /noexit "pve_api_request PUT /access/acl 'path=/sdn/zones/localnetwork/$iface' 'users=$username' roles=PVEAuditor" || { echo_err "Не удалось создать ACL правило для сетевого интерфейса '$iface' и пользователя '$username'"; exit_clear; } } \
+                    || run_cmd /noexit "pve_api_request PUT /access/acl 'path=/sdn/zones/localnetwork/$iface' 'groups=$stands_group' roles=PVEAuditor" || { echo_err "Не удалось создать ACL правило для сетевого интерфейса '$iface' и пользователя '$username'"; exit_clear; }
             }
             
             ! $not_special && echo "$iface"
@@ -1356,8 +1366,8 @@ function deploy_stand_config() {
             if_config="${BASH_REMATCH[4]}"
             [[ "$if_config" =~ ,\ *firewall\ *=\ *1\ *($|,.+$) ]] && net_options+=',firewall=1'
             [[ "$if_config" =~ ,\ *state\ *=\ *down\ *($|,.+$) ]] && net_options+=',link_down=1'
-            [[ "$if_config" =~ ,\ *trunks\ *=\ *([0-9\;]*[0-9])\ *($|,.+$) ]] && net_options+=",trunks=${BASH_REMATCH[1]}" && vlan_aware=" --bridge_vlan_aware '1'"
-            [[ "$if_config" =~ ,\ *tag\ *=\ *([1-9][0-9]{0,2}|[1-3][0-9]{3}|40([0-8][0-9]|9[0-4]))\ *($|,.+$) ]] && net_options+=",tag=${BASH_REMATCH[1]}" && vlan_aware=" --bridge_vlan_aware '1'"
+            [[ "$if_config" =~ ,\ *trunks\ *=\ *([0-9\;]*[0-9])\ *($|,.+$) ]] && net_options+=",trunks=${BASH_REMATCH[1]}" && vlan_aware=" bridge_vlan_aware=1"
+            [[ "$if_config" =~ ,\ *tag\ *=\ *([1-9][0-9]{0,2}|[1-3][0-9]{3}|40([0-8][0-9]|9[0-4]))\ *($|,.+$) ]] && net_options+=",tag=${BASH_REMATCH[1]}" && vlan_aware=" bridge_vlan_aware=1"
             [[ "$if_config" =~ ,\ *vtag\ *=\ *([1-9][0-9]{0,2}|[1-3][0-9]{3}|40([0-8][0-9]|9[0-4]))\ *($|,.+$) ]] && {
                 local tag="${BASH_REMATCH[1]}"
                 if [[ "$if_config" =~ ,\ *master\ *=\ *([0-9\.a-z]+|\"\ *((\\\"|[^\"])+)\")\ *($|,.+$) ]]; then
@@ -1372,7 +1382,7 @@ function deploy_stand_config() {
                     elif [[ ! -v "Networking[$master_if.$tag]" ]]; then
                         [[ "$if_desc" == "" ]] && if_desc="$if_bridge"
                         echo_verbose "${c_info}Добавление VLAN $master_if.$tag : '$master_desc => $if_desc'${c_null}"
-                        run_cmd /noexit "pvesh create '/nodes/$(hostname -s)/network' --iface '$master_if.$tag' --type 'vlan' --autostart '1' --comments '$master_desc => $if_desc'" \
+                        run_cmd /noexit "pve_api_request POST '/nodes/$(hostname -s)/network' 'iface=$master_if.$tag' type=vlan autostart=1 'comments=$master_desc => $if_desc'" \
                             || { read -n 1 -p "Интерфейс '$iface' ($if_desc) уже существует! Выход"; exit_clear; }
                         Networking["${master_if}.$tag"]="{vlan=$if_bridge}"
                     fi
@@ -1393,14 +1403,14 @@ function deploy_stand_config() {
             [[ "${Networking["$net"]}" != "$if_desc" ]] && continue
             cmd_line+=" --net$if_num '${netifs_type:-virtio},bridge=$net$net_options'"
             ! $opt_dry_run && [[ "$vlan_slave" != '' || "$vlan_aware" != '' ]] && ! [[ "$vlan_slave" != '' && "$vlan_aware" != '' ]] && {
-                local port_info=$( pvesh get "/nodes/$(hostname -s)/network/$net" --output-format yaml )
+                local port_info=$( pve_api_request GET "/nodes/$(hostname -s)/network/$net" ) || { echo_err "Ошибка: не удалось взять параметры сетевого интерфейса ${c_val}$net"; exit_clear; }
                 local if_options=''
                 if [[ "$vlan_slave" != '' ]]; then
-                    echo -n "$port_info" | grep -Pq $'^bridge_vlan_aware: 1$' && if_options="--bridge_vlan_aware '1'"
+                    echo -n "$port_info" | grep -Pq '(,|{)"bridge_vlan_aware":1(,|})' && if_options="bridge_vlan_aware=1"
                 else
-                    if_options="--slaves '$( echo "$port_info" | grep -Po $'^bridge_ports: \K[^\']+$' )'" || if_options=''
+                    if_options="'slaves=$( echo "$port_info" | grep -Po '(,|{)"bridge_ports":"\K[^"]+(?="(,|}))' )'" || if_options=''
                 fi
-                [[ "$if_options" != '' ]] && run_cmd "pvesh set '/nodes/$(hostname -s)/network/$net' --type 'bridge' $if_options"
+                [[ "$if_options" != '' ]] && run_cmd "pve_api_request PUT '/nodes/$(hostname -s)/network/$net' type=bridge $if_options"
             }
             return 0
         done
@@ -2130,7 +2140,9 @@ function manage_stands() {
         done
 
         local roles_list_after list_roles
-        parse_noborder_table 'pveum acl list' roles_list_after roleid
+        roles_list_after="$( pve_api_request GET /access/acl )" || { echo_err "Ошибка: не удалось получить список ролей через API"; exit_clear; }
+        roles_list_after="$( grep -Po '(,|{)"roleid":"\K[^"]+' | sort -u )"
+
         for role in $( echo "${acl_list[roleid]}" | sort -u ); do
             echo "$roles_list_after" | grep -Fxq "$role" || {
                 [[ "$list_roles" == '' ]] && { list_roles=$( pveum role list --output-format yaml | grep -v - | grep -Po '^\s*(roleid|special)\s*:\s*\K.*' ) || exit_clear; }
