@@ -205,7 +205,7 @@ function get_val_print() {
 }
 
 echo_tty() {
-    echo "$@${c_null}" >> /dev/tty
+    echo "$@${c_null}" >/dev/tty
 }
 
 echo_2out() {
@@ -213,7 +213,7 @@ echo_2out() {
 }
 
 function echo_err() {
-    echo_tty "${c_error}$*${c_null}"
+    echo "${c_error}$*${c_null}" >&2
 }
 
 function echo_warn() {
@@ -320,12 +320,24 @@ function get_table_val() {
     echo -n "${ref_search_arr[$3]}" | sed -n "${index}p"
 }
 
+function get_numtable_val() {
+    [[ "$1" == '' || "$2" == ''  || "$3" == '' ]] && exit_clear
+    local -n ref_search_arr=$1
+    local var="${2%=*}" value="${2#*=}" index elem
+    for elem in $( printf '%s\n' "${!ref_search_arr[@]}" | grep -Po '^\d+,'"$var" || return 1 ); do
+        [[ "${ref_search_arr[$elem]}" != "$value" ]] && continue
+        echo -n "${ref_search_arr[${elem%,*},$3]}"
+        break
+    done
+}
+
 function parse_noborder_table() {
     [[ "$1" == '' || "$2" == '' ]] && exit_clear
     local _cmd="$1 --output-format text --noborder"
     local -n ref_dict_table=$2
     shift && shift
-    local _table=$(eval "$_cmd") || { echo "Ошибка: не удалось выполнить команду $_cmd"; exit_clear; }
+    local _table
+    _table=$(eval "$_cmd") || { echo "Ошибка: не удалось выполнить команду $_cmd"; exit_clear; }
 	
     local _index=0 _header='' _name='' _column='' i=0
     while [[ "$(echo -n $_table)" != '' ]]; do
@@ -422,7 +434,7 @@ function pve_api_request() {
     res=$( eval "${var_pve_api_curl}${2}'" -X "${1}" $( printf ' --data-urlencode %q' "${@:3}" ) )
 
     case $? in
-        0)    echo -n "$res" | sed -e '$d'
+        0)    echo -n "$res" | sed '$d'
               return 0;;
         22)   local http_code="$(echo -n "$res" | sed '$!d')"
               [[ "$http_code" == 401 ]] && {
@@ -435,7 +447,7 @@ function pve_api_request() {
                     echo_err "Ошибка: запрос к API был обработан с ошибкой: ${c_val}$*"
                     echo_err "API токен: ${c_val}${var_pve_token_id}"
                     echo_err "HTTP код ответа: ${c_val}$http_code"
-                    echo_err "Ответ сервера: ${c_val}$( echo -n "$res" | sed '$d' )"
+                    echo_err "Ответ сервера: ${c_val}$( echo -n "$res" | awk 'NF>0{if (n!=1) {printf $0;n=1;next}; printf "\n"$0 }' )"
                     exit_clear
               }
               echo -n "$res"
@@ -481,8 +493,26 @@ function configure_api_token() {
     data_pve_version="$( pve_api_request GET /version | grep -Po '"release"\s*:\s*"\K[^"]+' )" || { echo_err 'Не удалось получить версию PVE через API'; configure_api_token clear force; exit_clear; }
 }
 
+function jq_data_to_array() {
+	[[ "$1" == '' || "$2" == '' ]] && exit_clear
+	
+	local data line var_line i=-1
+	set -o pipefail
+	[[ "$1" =~ ^var=(.+) ]] && data=$( echo "${!BASH_REMATCH[1]}" ) || data=$( pve_api_request GET "$1" )
+	data=$( echo "$data" | grep -Po '(?(DEFINE)(?<str>"[^"\\]*(?:\\.[^"\\]*)*")(?<other>null|true|false|[0-9\-\.Ee\+]+)(?<arr>\[[^\[\]]*+(?:(?-1)[^\[\]]*)*+\])(?<obj>{[^{}]*+(?:(?-1)[^{}]*)*+}))(?:^\s*{\s*(?:(?&str)\s*:\s*(?:(?&other)|(?&str)|(?&arr)|(?&obj))\s*,\s*)*?"data"\s*:\s*(?:\[|(?={))|\G\s*,\s*)(?:(?:(?&other)|(?&str)|(?&arr))\s*,\s*)*\K(?>(?&obj)|)(?=\s*(?:\]|})|\s*,[^,])' ) || { echo_err "Ошибка: не удалось получить данные от API: ${c_val}GET '$1'"; return; }
+	local -n ref_dict_table=$2
+	while read -r line || [[ -n $line ]]; do
+		((i++))
+		while read -r var_line || [[ -n $var_line ]]; do
+			[[ "$var_line" =~ ^\"([^\"\\]*(\\.[^\"\\]*)*)\"\ *:\ *\"?(.*[^\"]|) ]] || { echo "Ошибка parse_json: некорректный bash парсинг: ${c_val}'$var_line'"; return; }
+			ref_dict_table[$i,${BASH_REMATCH[1]}]=${BASH_REMATCH[3]}
+		done < <( echo -n "$line" | grep -Po '(?(DEFINE)(?<str>"[^"\\]*(?:\\.[^"\\]*)*")(?<other>null|true|false|[0-9\-\.Ee\+]+)(?<arr>\[[^\[\]]*+(?:(?-1)[^\[\]]*)*+\])(?<obj>{[^{}]*+(?:(?-1)[^{}]*)*+}))(?:^\s*{\s*|\G\s*,\s*)\K(?:(?&str)\s*:\s*(?:(?&other)|(?&str)|(?&arr)|(?&obj)))(?=\s*}|\s*,[^,])' )
+	done < <( echo -n "$data" )
+	set +o pipefail
+}
+
 function make_local_configs() {
-    echo
+    return 1
 }
 
 function show_config() {
@@ -1298,6 +1328,7 @@ function run_cmd() {
             exit_clear
         fi
     }
+    set +o pipefail
     return 0
 }
 
@@ -1608,11 +1639,13 @@ function deploy_access_passwd() {
     [[ $format_opt == '' ]] && format_opt=1
 
     [[ $format_opt != 1 ]] && {
-        local -A pve_nodes; local i pve_url
-        parse_noborder_table 'pvesh get /cluster/status' pve_nodes ip local
-        for ((i=1; i<=$( echo -n "${pve_nodes[ip]}" | grep -c '^' ); i++)); do
-            [[ "$( echo -n "${pve_nodes[local]}" | sed -n "${i}p" )" == '1' ]] && pve_url="https://$( echo -n "${pve_nodes[ip]}" | sed -n "${i}p" ):8006" && break
+        local -A pve_nodes; local i pve_url max_index
+        jq_data_to_array /cluster/status pve_nodes
+        max_index=$( printf '%s\n' "${!pve_nodes[@]}" | sort -Vr | head -n 1 | grep -Po '^\d+' )
+        for ((i=0; i<=$max_index; i++)); do
+            [[ "${pve_nodes[$i,local]}" == '1' ]] && pve_url="https://${pve_nodes[$i,ip]}:8006" && break
         done
+        unset pve_nodes
         local val=$(read_question_select "Введите отображаемый адрес (URL) сервера Proxmox VE" '' '' '' "$pve_url" )
         [[ "$val" != '' ]] && pve_url=$val
     }
@@ -1727,7 +1760,7 @@ function install_stands() {
     opt_not_tmpfs=false
 
     configure_vmid install
-    run_cmd "pve_api_request PUT /cluster/options next-id=lower=$(( ${config_base[start_vmid]} + ${#opt_stand_nums[@]} * 100 ))"
+    run_cmd "pve_api_request PUT /cluster/options 'next-id=lower=$(( ${config_base[start_vmid]} + ${#opt_stand_nums[@]} * 100 ))'"
 
     run_cmd /noexit "pve_api_request POST /access/groups 'groupid=$stands_group' comment='$val' 2>&1 | tail -1 | grep -Pq '^500$|^(?!\d*$)'" \
         || { echo_err "Ошибка: не удалось создать access группу для стендов '$stands_group'. Выход"; exit_clear; }
@@ -1736,6 +1769,7 @@ function install_stands() {
     
     local -A roles_list
     parse_noborder_table 'pveum role list' roles_list
+
 
     ${config_base[run_vm_after_installation]} && manage_bulk_vm_power --init
 
@@ -1796,39 +1830,32 @@ function manage_bulk_vm_power() {
 
 function manage_stands() {
 
-    local -A acl_list
-    local -A group_list
+    local -A acl_list group_list print_list user_list pool_list
 
-    local -A print_list
-    local -A user_list
-    local -A pool_list
+    jq_data_to_array /access/acl acl_list
+    jq_data_to_array /access/groups group_list
 
-    parse_noborder_table 'pveum group list' group_list groupid users comment
-    parse_noborder_table 'pveum acl list' acl_list
+    local group_name pool_name comment users users_count=0 stands_count=0 max_count
 
-    local group_name pool_name comment users
-    local users_count=0 stands_count=0
-
-    for ((i=1; i<=$(echo -n "${acl_list[path]}" | grep -c '^'); i++)); do
-        [[ "$(echo "${acl_list[type]}" | sed -n "${i}p")" != group ]] && continue
-        group_name=$(echo "${acl_list[ugid]}" | sed -n "${i}p")
-        pool_name="$(echo "${acl_list[path]}" | sed -n "${i}p")"
-        if [[ "$pool_name" =~ ^\/pool\/(.+) ]] \
-            && [[ "$(echo "${acl_list[roleid]}" | sed -n "${i}p")" == NoAccess ]] \
-            && [[ "$(echo "${acl_list[propagate]}" | sed -n "${i}p")" == 0 ]]; then
-            print_list["$group_name"]=''
-            pool_list["$group_name"]+=" ${BASH_REMATCH[1]} "
-            pool_list["$group_name"]=$( echo "${pool_list[$group_name]}" | tr ' ' '\n' | sed '/^$/d' | sort -uV )
+    max_count=$( printf '%s\n' "${!acl_list[@]}" | sort -Vr | head -n 1 | grep -Po '^\d+' )
+    for ((i=0; i<=$max_count; i++)); do
+        [[ "${acl_list[$i,type]}" != group ]] && continue
+        group_name=${acl_list[$i,ugid]}
+        pool_name=${acl_list[$i,path]}
+        if [[ "$pool_name" =~ ^\/pool\/(.+) ]] && [[ "${acl_list[$i,roleid]}" == NoAccess && "${acl_list[$i,propagate]}" == 0 ]]; then
+            print_list[$group_name]=''
+            pool_list[$group_name]+=" ${BASH_REMATCH[1]} "
+            pool_list[$group_name]=$( echo "${pool_list[$group_name]}" | tr ' ' '\n' | sed '/^$/d' | sort -uV )
         fi
     done
-
-    for ((i=1; i<=$(echo -n "${group_list[groupid]}" | grep -c '^'); i++)); do
-        group_name=$(echo "${group_list[groupid]}" | sed -n "${i}p")
+    max_count=$( printf '%s\n' "${!group_list[@]}" | sort -Vr | head -n 1 | grep -Po '^\d+' )
+    for ((i=0; i<=$max_count; i++)); do
+        group_name="${group_list[$i,groupid]}"
         [[ -v "print_list[$group_name]" ]] && {
-            comment=$(echo "${group_list[comment]}" | sed -n "${i}p")
-            users=$(echo "${group_list[users]}" | sed -n "${i}p")
-            print_list["$group_name"]="${c_ok}$group_name${c_null} : $comment"
-            user_list["$group_name"]=$( echo "$users" | tr -s ',' '\n' | sort -uV )
+            comment="${group_list[$i,comment]}"
+            users="${group_list[$i,users]}"
+            print_list[$group_name]="${c_ok}$group_name${c_null} : $comment"
+            user_list[$group_name]=$( echo "$users" | tr -s ',' '\n' | sort -uV )
         }
     done
 
@@ -1944,11 +1971,12 @@ function manage_stands() {
                 printf '%s\n' "${numarr[@]}" | grep -Fxq "$i" && {
                     local stand_name=$( echo -n "${pool_list[$group_name]}" | sed -n "${i}p" )
                     stand_list=$( echo "$stand_list"; echo "$stand_name" )
-                    local j=1
-                    for ((j=1; j<=$( echo -n "${acl_list[path]}" | grep -c '^' ); j++)); do
-                        local path=$( echo "${acl_list[path]}" | sed -n "${j}p" )
-                        [[ "$path" == "/pool/$stand_name" && "$( echo "${acl_list[type]}" | sed -n "${j}p" )" == user ]] || continue
-                        local user=$( echo "${acl_list[ugid]}" | sed -n "${j}p" )
+                    local j=1 path user
+                    max_count=$( printf '%s\n' "${!acl_list[@]}" | sort -Vr | head -n 1 | grep -Po '^\d+' )
+                    for ((j=0; j<=$max_count; j++)); do
+                        path="${acl_list[$j,path]}"
+                        [[ "$path" == "/pool/$stand_name" && "${acl_list[$j,type]}" == user ]] || continue
+                        user="${acl_list[$j,ugid]}"
                         usr_list=$( echo "$usr_list"; echo "$user" )
                     done
                 }
@@ -2049,13 +2077,14 @@ function manage_stands() {
             local -n deny_ifaces="deny_ifaces_$(echo -n "$vm_nodes" | grep -c '^')"
             local bridge_ports vm_node=$( echo "$vm_nodes" | sed -n "$(echo -n "$vm_nodes" | grep -c '^')p" )
 
-            parse_noborder_table "pvesh get /nodes/$vm_node/network" ifaces_info iface type bridge_ports address address6 bridge_vlan_aware comments vlan-raw-device
+            jq_data_to_array /nodes/$vm_node/network ifaces_info
             local i=1
-            for ((i=1; i<=$( echo -n "${ifaces_info[iface]}" | grep -c '^' ); i++)); do
-                bridge_ports=$( echo "${ifaces_info[bridge_ports]}" | sed -n "${i}p" )
-                ifname=$( echo "${ifaces_info[iface]}" | sed -n "${i}p" )
-                [[ "$bridge_ports" != '' && "$( get_table_val ifaces_info "iface=$bridge_ports" vlan-raw-device )" == '' || "$( echo "${ifaces_info[address]}" | sed -n "${i}p" )" != '' \
-                    || "$( echo "${ifaces_info[address6]}" | sed -n "${i}p" )" != '' ]] && {
+            max_count=$( printf '%s\n' "${!ifaces_info[@]}" | sort -Vr | head -n 1 | grep -Po '^\d+' )
+            for ((i=0; i<=$max_count; i++)); do
+                bridge_ports="${ifaces_info[$i,bridge_ports]}"
+                ifname="${ifaces_info[$i,iface]}"
+                [[ "$bridge_ports" != '' && "$( get_numtable_val ifaces_info "iface=$bridge_ports" vlan-raw-device )" == '' || "${ifaces_info[$i,address]}" != '' \
+                    || "${ifaces_info[$i,address6]}" != '' ]] && {
                         deny_ifaces+=" $ifname $bridge_ports"
                 }
             done
@@ -2064,9 +2093,8 @@ function manage_stands() {
 
         function delete_if {
             [[ "$1" == '' || "$2" == '' ]] && exit_clear
-            local desc; [[ "$3" != '' ]] && desc=" ($3)"
             run_cmd /noexit "pve_api_request DELETE '/nodes/$vm_node/network/$2' 2>&1 | tail -1 | grep -Pq '^500$|^(?!\d*$)'" \
-                        && echo_ok "стенд ${c_value}$1${c_null}: удален сетевой интерфейс ${c_ok}$2${c_null}$desc" \
+                        && echo_ok "стенд ${c_value}$1${c_null}: удален сетевой интерфейс ${c_ok}$2${c_null}${3:+ ($3)}" \
                         || { echo_err "Ошибка: не удалось удалить сетевой интерфейс '$2'"; exit_clear; }
             eval "deny_ifaces_$(echo -n "$vm_nodes" | grep -c '^')+=' $2'"
         }
@@ -2103,10 +2131,11 @@ function manage_stands() {
                 vm_netifs=$( echo "$vm_netifs" | grep -Po '(,|{)\s*\"net[0-9]+\"\s*:\s*(\".*?bridge=\K\w+)' )
 
                 for ((k=1; k<=$( echo -n "$vm_netifs" | grep -c '^' ); k++)); do
-                    ifname="$( echo "$vm_netifs" | sed -n "${k}p" )"
+                    ifname=$( echo "$vm_netifs" | sed -n "${k}p" )
                     echo "$deny_ifaces" | grep -Pq '(?<=^| )'$ifname'(?=$| )' && continue
-                    if_desc="$( get_table_val ifaces_info "iface=$ifname" comments )"
-                    depend_if=$( get_table_val ifaces_info "vlan-raw-device=$ifname" iface )
+                    if_desc=$( get_numtable_val ifaces_info "iface=$ifname" comments )
+                    if_desc=$( printf '%b\n' "$if_desc" )
+                    depend_if=$( get_numtable_val ifaces_info "vlan-raw-device=$ifname" iface )
                     [[ "$depend_if" != '' ]] && ! echo "$deny_ifaces" | grep -Pq '(?<=^| )'$ifname'(?=$| )' && delete_if "$pool_name" "$depend_if"
                     delete_if "$pool_name" "$ifname" "$if_desc"
                     restart_network=true
@@ -2143,8 +2172,8 @@ function manage_stands() {
         roles_list_after="$( pve_api_request GET /access/acl )" || { echo_err "Ошибка: не удалось получить список ролей через API"; exit_clear; }
         roles_list_after="$( grep -Po '(,|{)"roleid":"\K[^"]+' | sort -u )"
 
-        for role in $( echo "${acl_list[roleid]}" | sort -u ); do
-            echo "$roles_list_after" | grep -Fxq "$role" || {
+        for role in $( printf '%s\n' "${!acl_list[@]}" | grep -Po '^\d+,roleid' ); do
+            echo "$roles_list_after" | grep -Fxq "${acl_list[$role]}" || {
                 [[ "$list_roles" == '' ]] && { list_roles=$( pveum role list --output-format yaml | grep -v - | grep -Po '^\s*(roleid|special)\s*:\s*\K.*' ) || exit_clear; }
                 echo "$list_roles" | grep -Pzq '(^|\n)'$role'\n0' && run_cmd "pve_api_request DELETE '/access/roles/$role' 2>&1 | tail -1 | grep -Pq '^500$|^(?!\d*$)'" && echo_ok "роль ${c_value}$role${c_null} удалена"
             }
