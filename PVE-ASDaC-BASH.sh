@@ -195,7 +195,7 @@ function get_val_print() {
     [[ "$1" == true ]] && echo "${c_ok}Да${c_null}" && return 0
     [[ "$1" == false ]] && echo "${c_error}Нет${c_null}" && return 0
     if [[ "$2" == storage ]] && ! [[ "$1" =~ ^\{(manual|auto)\}$ ]] && [[ "$sel_storage_space" != '' ]]; then
-        echo "${c_value}$1${c_null} (свободно $(echo "$sel_storage_space" | awk 'BEGIN{ split("К|М|Г|Т",x,"|") } { for(i=1;$1>=1024&&i<length(x);i++) $1/=1024; printf("%3.1f %sБ",$1,x[i]) }'))"
+        echo "${c_value}$1${c_null} (свободно $(echo "$sel_storage_space" | awk 'BEGIN{ split("|К|М|Г|Т",x,"|") } { for(i=1;$1>=1024&&i<length(x);i++) $1/=1024; printf("%3.1f %sБ",$1,x[i]) }'))"
         return 0
     elif [[ "$2" == access_pass_chars ]]; then
         echo "[${c_value}$1${c_null}]"
@@ -323,12 +323,25 @@ function get_table_val() {
 function get_numtable_val() {
     [[ "$1" == '' || "$2" == ''  || "$3" == '' ]] && exit_clear
     local -n ref_search_arr=$1
-    local var="${2%=*}" value="${2#*=}" index elem
+    local var="${2%=*}" value="${2#*=}" elem
     for elem in $( printf '%s\n' "${!ref_search_arr[@]}" | grep -Po '^\d+,'"$var" || return 1 ); do
         [[ "${ref_search_arr[$elem]}" != "$value" ]] && continue
         echo -n "${ref_search_arr[${elem%,*},$3]}"
-        break
+        return 0
     done
+    return 1
+}
+
+function get_numtable_indexOf() {
+    [[ "$1" == '' || "$2" == '' ]] && exit_clear
+    local -n ref_search_arr=$1
+    local var="${2%=*}" value="${2#*=}" elem
+    for elem in $( printf '%s\n' "${!ref_search_arr[@]}" | grep -Po '^\d+,'"$var" || return 1 ); do
+        [[ "${ref_search_arr[$elem]}" != "$value" ]] && continue
+        echo -n "${elem%,*}"
+        return 0
+    done
+    return 1
 }
 
 function parse_noborder_table() {
@@ -479,7 +492,7 @@ function configure_api_token() {
 
     [[ "$var_pve_token_id" == '' || "$var_pve_api_curl" == '' ]] && {
         var_pve_token_id="PVE-ASDaC-BASH_$( cat /proc/sys/kernel/random/uuid )" || { echo_err 'Ошибка: не удалось сгенерировать уникальный идентификатор для API токена'; configure_api_token clear force; exit_clear; }
-
+        echo_tty "${c_ok}Получение PVE токена..."
         local ret=$( pvesh create /access/users/root@pam/token/$var_pve_token_id --privsep '0' --comment "Токен скрипта авторазвертывания PVE-ASDaC-BASH. Дата создания: $( date '+%d.%m.%Y %H:%M:%S' )" --expire "$(( $( date +%s ) + 86400 ))" --output-format json-pretty ) \
             || { echo_err "Ошибка: не удалось создать новый API токен ${c_val}${var_pve_token_id}"; configure_api_token clear force; exit_clear; }
 
@@ -1151,30 +1164,40 @@ function configure_storage() {
     [[ "$1" == check-only ]] && [[ "${config_base[storage]}" == '{auto}' || "${config_base[storage]}" == '{manual}' ]] && return 0
     set_storage() {
             echo $'\nСписок доступных хранилищ:'
-            echo "$pve_storage_list" | awk -F' ' 'BEGIN{split("К|М|Г|Т",x,"|")}{for(i=1;$2>=1024&&i<length(x);i++)$2/=1024;printf("%s\t%s\t%s\t%3.1f %sБ\n",NR,$1,$3,$2,x[i]) }' \
+            echo "$data_pve_storage_list" | awk -F $'\t' 'BEGIN{split("|К|М|Г|Т",x,"|")}{for(i=1;$3>=1024&&i<length(x);i++)$3/=1024;printf("%s\t%s\t%s\t%3.1f %sБ\n",NR,$1,$2,$3,x[i]) }' \
             | column -t -s$'\t' -N'Номер,Имя хранилища,Тип хранилища,Свободное место' -o$'\t' -R1
-            config_base[storage]=$( read_question_select 'Выберите номер хранилища'  '^[1-9][0-9]*$' 1 $(echo -n "$pve_storage_list" | grep -c '^') )
-            config_base[storage]=$( echo "$pve_storage_list" | awk -F' ' -v nr="${config_base[storage]}" 'NR==nr{print $1}' )
+            config_base[storage]=$( read_question_select 'Выберите номер хранилища'  '^[1-9][0-9]*$' 1 $(echo -n "$data_pve_storage_list" | grep -c '^') )
+            config_base[storage]=$( echo "$data_pve_storage_list" | awk -F $'\t' -v nr="${config_base[storage]}" 'NR==nr{print $1}' )
     }
-    pve_storage_list=$( pvesm status --target "$(hostname -s)" --enabled 1 --content images | awk -F' ' 'NR>1{print $1" "$6" "$2}' | sort -k2nr )
+	
+	declare -gA data_pve_node_storages=()
+	data_pve_storage_list=''
+    jq_data_to_array "/nodes/$( hostname -s )/storage?enabled=1&content=images" data_pve_node_storages
+    [[ "${data_pve_node_storages[0,storage]}" == '' || "${data_pve_node_storages[0,avail]}" == '' ]] && { echo_err 'Ошибка: не найдено ни одного активного PVE хранилища для дисков ВМ. Выход'; exit_clear; }
 
-    [[ "$pve_storage_list" == '' ]] && { echo_err 'Ошибка: не найдено ни одного активного PVE хранилища для дисков ВМ. Выход'; exit_clear; }
+	local max_index i
+	max_index=$( printf '%s\n' "${!data_pve_node_storages[@]}" | sort -Vr | head -n 1 | grep -Po '^\d+' )
+	for ((i=0;i<=$max_index;i++)); do
+		data_pve_storage_list+=${data_pve_node_storages[$i,storage]}$'\t'${data_pve_node_storages[$i,type]}$'\t'${data_pve_node_storages[$i,avail]}$'\n'
+    done
+
+    data_pve_storage_list=$( echo -n "$data_pve_storage_list" | sort -t $'\t' -k3nr )
 
     if [[ "$1" != check-only ]]; then
-
         if [[ "${config_base[storage]}" == '{manual}' ]]; then
             $silent_mode && config_base[storage]='{auto}' || set_storage
         fi
-        [[ "${config_base[storage]}" == '{auto}' ]] && config_base[storage]=$(echo "$pve_storage_list" | awk 'NR==1{print $1;exit}')
-
+        [[ "${config_base[storage]}" == '{auto}' ]] && config_base[storage]=$(echo "$data_pve_storage_list" | awk -F $'\t' 'NR==1{print $1;exit}')
     fi
 
     if ! [[ "${config_base[storage]}" =~ ^\{(auto|manual)\}$ ]]; then
-        echo "$pve_storage_list" | awk -v s="${config_base[storage]}" 'BEGIN{e=0}$1==s{e=1;exit e}END{exit e}' && { echo_err "Ошибка: выбранное имя хранилища \"${config_base[storage]}\" не существует. Выход"; exit_clear; }
+        local index
+        index=$( get_numtable_indexOf data_pve_node_storages "storage=${config_base[storage]}" ) 
 
-        sel_storage_type=$( echo "$pve_storage_list" | awk -v s="${config_base[storage]}" '$1==s{print $3;exit}' )
-        sel_storage_space=$( echo "$pve_storage_list" | awk -v s="${config_base[storage]}" '$1==s{print $2;exit}' )
-
+        sel_storage_type=${data_pve_node_storages[$index,type]}
+        sel_storage_space=${data_pve_node_storages[$index,avail]}
+        
+        [[ "$sel_storage_type" == '' || "$sel_storage_space" == '' ]] && { echo_err "Ошибка: выбранное имя хранилища \"${config_base[storage]}\" не существует. Выход"; exit_clear; }
         case $sel_storage_type in
             dir|glusterfs|cifs|nfs|btrfs) config_disk_format=qcow2;;
             rbd|iscsidirect|iscsi|zfs|zfspool|lvmthin|lvm) config_disk_format=raw;;
@@ -1336,7 +1359,7 @@ function deploy_stand_config() {
 
     function set_netif_conf() {
         [[ "$1" == '' || "$2" == '' && "$1" != test ]] && { echo_err 'Ошибка: set_netif_conf нет аргумента'; exit_clear; }
-        [[ "$data_aviable_net_models" == '' ]] && data_aviable_net_models=$( kvm -net nic,model=help | awk 'NR!=1' | grep -Po '[^\(\)]+|(\(aka \K[^\)]+)' ) || { echo_err "Ошибка: не удалось получить список доступных моделей сетевых устройств"; exit_clear; }
+        [[ "$data_aviable_net_models" == '' ]] && { data_aviable_net_models=$( kvm -net nic,model=help | awk 'NR!=1' | grep -Po '[^\(\)]+|(\(aka \K[^\)]+)' ) || { echo_err "Ошибка: не удалось получить список доступных моделей сетевых устройств"; exit_clear; } }
         [[ "$1" == 'test' ]] && { 
             echo -n "$data_aviable_net_models" | grep -Fxq "$netifs_type" && return 0
             echo_err "Ошибка: указаный в конфигурации модель сетевого интерфейса '$netifs_type' не является корректным"
@@ -2170,7 +2193,7 @@ function manage_stands() {
 
         local roles_list_after list_roles
         roles_list_after="$( pve_api_request GET /access/acl )" || { echo_err "Ошибка: не удалось получить список ролей через API"; exit_clear; }
-        roles_list_after="$( grep -Po '(,|{)"roleid":"\K[^"]+' | sort -u )"
+        roles_list_after="$( echo -n "$roles_list_after" | grep -Po '(,|{)"roleid":"\K[^"]+' | sort -u )"
 
         for role in $( printf '%s\n' "${!acl_list[@]}" | grep -Po '^\d+,roleid' ); do
             echo "$roles_list_after" | grep -Fxq "${acl_list[$role]}" || {
@@ -2280,7 +2303,7 @@ fi
 
 $silent_mode && {
     case $switch_action in
-        1) install_stands;;
+        1) terraform_config_vars; check_config check-only; install_stands;;
         2) manage_stands;;
         *) echo_warn 'Функционал в процессе разработки и пока недоступен. Выход'; exit_clear;;
     esac
