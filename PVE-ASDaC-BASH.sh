@@ -7,7 +7,7 @@ echo $'\nProxmox VE Automatic stand deployment and configuration script by AF\n'
 ############################# -= Встроенная конфигурация =- #############################
 
 # Необходимые команды для работы скрипта
-script_requirements_cmd=( curl qm pvesh pvesm pveum qemu-img kvm md5sum )
+script_requirements_cmd=( curl qm pvesh qemu-img kvm md5sum )
 
 # Приоритет параметров: значения в этом файле -> значения из импортированного файла конфигурации -> переопределенные значения из аргуметов командной строки
 
@@ -392,6 +392,7 @@ function configure_clear() {
         [[ "$lower_nextid" != '' &&  "$lower_nextid" == "$(( ${config_base[start_vmid]} + ${#opt_stand_nums[@]} * 100 ))" ]] && run_cmd "pve_api_request PUT /cluster/options delete=next-id"
         configure_imgdir clear
     }
+    configure_ticket_api clear
     configure_api_token clear
     echo $'\e[m' >> /dev/tty
 }
@@ -483,17 +484,18 @@ function configure_api_token() {
 			pvesh delete "/access/users/root@pam/token/$var_pve_token_id" 2>/dev/null
 		else 
 			pve_api_request DELETE "/access/users/root@pam/token/$var_pve_token_id" 2>&1 | tail -1 | grep -Pq '^500$|^(?!\d*$)' \
-				|| pvesh delete "/access/users/root@pam/token/$var_pve_token_id" \
+				|| { pvesh delete "/access/users/root@pam/token/$var_pve_token_id"; [[ $? =~ ^0$|^255$ ]]; } \
 				|| echo_err "Ошибка: Не удалось удалить удалить токен API: ${c_val}${var_pve_token_id}${c_err}"
 		fi
-        unset var_pve_token_id; unset var_pve_api_curl
+        unset var_pve_token_id var_pve_api_curl
         return 0
     } || [[ "$1" != 'init' ]] && { echo_err 'Ошибка: нет подходящих аргументов configure_api_token'; configure_api_token clear force; exit_clear; }
 
     [[ "$var_pve_token_id" == '' || "$var_pve_api_curl" == '' ]] && {
         var_pve_token_id="PVE-ASDaC-BASH_$( cat /proc/sys/kernel/random/uuid )" || { echo_err 'Ошибка: не удалось сгенерировать уникальный идентификатор для API токена'; configure_api_token clear force; exit_clear; }
         echo_tty "${c_ok}Получение PVE токена..."
-        local ret=$( pvesh create /access/users/root@pam/token/$var_pve_token_id --privsep '0' --comment "Токен скрипта авторазвертывания PVE-ASDaC-BASH. Дата создания: $( date '+%d.%m.%Y %H:%M:%S' )" --expire "$(( $( date +%s ) + 86400 ))" --output-format json-pretty ) \
+        local ret
+        ret=$( pvesh create /access/users/root@pam/token/$var_pve_token_id --privsep '0' --comment "Токен скрипта PVE-ASDaC-BASH. Создан: $( date '+%d.%m.%Y %H:%M:%S' )" --expire "$(( $( date +%s ) + 86400 ))" --output-format json-pretty ) \
             || { echo_err "Ошибка: не удалось создать новый API токен ${c_val}${var_pve_token_id}"; configure_api_token clear force; exit_clear; }
 
         var_pve_api_curl="$( echo -n "$ret" | grep -Po '\s*"value"\s*:\s*"\K[^"]+' )"
@@ -506,20 +508,89 @@ function configure_api_token() {
     data_pve_version="$( pve_api_request GET /version | grep -Po '"release"\s*:\s*"\K[^"]+' )" || { echo_err 'Не удалось получить версию PVE через API'; configure_api_token clear force; exit_clear; }
 }
 
+function configure_ticket_api() {
+	[[ "$1" == 'clear' ]] && {
+        [[ ! -v var_pve_ticket_user ]] && return 0
+		if [[ "$2" == 'force' ]]; then
+			pvesh delete "/access/users/$var_pve_ticket_user" 2>/dev/null
+		else 
+			pve_api_request DELETE "/access/users/$var_pve_ticket_user" 2>/dev/null | tail -1 | grep -Pq '^500$|^(?!\d*$)'\
+				|| { pvesh delete "/access/users/$var_pve_ticket_user" 2>/dev/null; [[ $? =~ ^0$|^255$ ]]; } \
+				|| echo_err "Ошибка: Не удалось удалить удалить пользователя ${c_val}${var_pve_ticket_user}${c_err}"
+		fi
+        unset var_pve_ticket_user var_pve_ticket_pass var_pve_tapi_curl
+        return 0
+    } || [[ "$1" != 'init' ]] && { echo_err 'Ошибка: нет подходящих аргументов configure_ticket_api'; exit_clear; }
+
+    [[ "$var_pve_ticket_user" == '' || "$var_pve_ticket_pass"  == '' ]] && {
+        var_pve_ticket_user="PVE-ASDaC-BASH_$( cat /proc/sys/kernel/random/uuid )@pve"
+		var_pve_ticket_pass=$( tr -dc A-Za-z0-9 </dev/urandom | head -c 32 )
+		[[ "${#var_pve_ticket_pass}" -lt 32 ]] && { echo_err "Ошибка: не удалось сгенерировать пароль для служебного пользователя"; exit_clear; }
+		
+		pve_api_request POST /access/users "userid=$var_pve_ticket_user" "comment=Служебный: PVE-ASDaC-BASH. Создан: $( date '+%d.%m.%Y %H:%M:%S' )" "expire=$(( $( date +%s ) + 14400 ))" "password=$var_pve_ticket_pass" >/dev/null || { echo_err "Ошибка: не удалось создать служебного пользователя ${c_val}${var_pve_ticket_user}"; exit_clear; }
+		pve_api_request PUT /access/acl "users=$var_pve_ticket_user" path=/ roles=Administrator >/dev/null || { echo_err "Ошибка: не удалось задать права для служебного пользователя ${c_val}${var_pve_ticket_user}"; exit_clear; }
+	}
+	local ret
+	ret=$( curl -ks -f -d "username=$var_pve_ticket_user&password=$var_pve_ticket_pass" "${config_base[pve_api_url]}/access/ticket" ) || { echo_err "Ошибка: не удалось запросить тикет служебного пользователя ${c_val}${var_pve_ticket_user}"; exit_clear; }
+	var_pve_tapi_curl="$( echo -n "$ret" | grep -Po '"ticket":"\K[^"]+' )" || { echo_err "Ошибка: не удалось получить тикет из ответа API для ${c_val}${var_pve_ticket_user}"; exit_clear; }
+	ret="$( echo -n "$ret" | grep -Po '"CSRFPreventionToken":"\K[^"]+' )" || { echo_err "Ошибка: не удалось получить CSRFPreventionToken из ответа API для ${c_val}${var_pve_ticket_user}"; exit_clear; }
+
+	[[ ${#ret} -lt 30 || ${#var_pve_tapi_curl} -lt 30 ]] && { echo_err "Ошибка: непредвиденные значения API ticket (${c_val}${var_pve_tapi_curl}${c_err}) и/или CSRFPreventionToken (${c_val}${ret}${c_err})"; exit_clear; }
+
+	var_pve_tapi_curl="curl -ks --no-progress-meter -w '\n%{http_code}' --fail-with-body --connect-timeout 5 -H 'CSRFPreventionToken:$ret' -b 'PVEAuthCookie=$var_pve_tapi_curl' '${config_base[pve_api_url]}"
+
+    eval "${var_pve_tapi_curl}/version'" -X GET /version | grep -Pq '"release"\s*:\s*"[^"]+' >/dev/tty || { echo_err 'Не удалось получить версию PVE через API (ticket)'; exit_clear; }
+}
+
+function pve_tapi_request() {
+    [[ "$1" == '' || "$2" == ''  ]] && { echo_err 'Ошибка: нет подходящих аргументов или токена для pve_tapi_request'; exit_clear; }
+    [[ "$var_pve_tapi_curl" == '' ]] && {
+        configure_tapi_user init; 
+        [[ "$var_pve_tapi_curl" == '' ]] && { echo_err 'Ошибка: не удалось получить API токен для pve_tapi_request'; exit_clear; }
+    }
+    local res
+    res=$( eval "${var_pve_tapi_curl}${2}'" -X "${1}" $( printf ' --data-urlencode %q' "${@:3}" ) )
+	
+    case $? in
+        0)    echo -n "$res" | sed -e '$d'
+              return 0;;
+        22)   local http_code="$(echo -n "$res" | sed '$!d')"
+			  [[ "$http_code" == 401 ]] && {
+					configure_tapi_user init
+					pve_tapi_request "${@}"
+					return $?
+			  }
+              ! [[ "$http_code" =~ ^(500|501|596)$ ]] && {
+                    echo_err "Ошибка: запрос к API был обработан с ошибкой: ${c_val}${@:1:2}$( printf '%q\n' "${@:3}" | awk 'NF>0{ printf " " $0 }' )${c_err}"
+                    echo_err "API токен: ${c_val}${var_pve_token_id}"
+                    echo_err "HTTP код ответа: ${c_val}$http_code"
+                    echo_err "Ответ сервера: ${c_val}$( echo -n "$res" | sed '$d' )"
+                    exit_clear
+              }
+			  echo -n "$res"
+              return 1;;
+        7|28) echo_err "Не удалось подключиться к PVE API. PVE запущен/работает?";;
+        2)    echo_err "Неизвестная опция curl. Старая версия";;
+        *)    echo_err "Ошибка: не удалось выполнить запрос к API: ${c_val}$@${c_err}. Токен ${c_val}${var_pve_token_id}${c_err}. Код ошибки curl: $?"
+    esac
+    exit_clear
+}
+
 function jq_data_to_array() {
 	[[ "$1" == '' || "$2" == '' ]] && exit_clear
 	
 	local data line var_line i=-1
 	set -o pipefail
 	[[ "$1" =~ ^var=(.+) ]] && data=$( echo "${!BASH_REMATCH[1]}" ) || data=$( pve_api_request GET "$1" )
-	data=$( echo "$data" | grep -Po '(?(DEFINE)(?<str>"[^"\\]*(?:\\.[^"\\]*)*")(?<other>null|true|false|[0-9\-\.Ee\+]+)(?<arr>\[[^\[\]]*+(?:(?-1)[^\[\]]*)*+\])(?<obj>{[^{}]*+(?:(?-1)[^{}]*)*+}))(?:^\s*{\s*(?:(?&str)\s*:\s*(?:(?&other)|(?&str)|(?&arr)|(?&obj))\s*,\s*)*?"data"\s*:\s*(?:\[|(?={))|\G\s*,\s*)(?:(?:(?&other)|(?&str)|(?&arr))\s*,\s*)*\K(?>(?&obj)|)(?=\s*(?:\]|})|\s*,[^,])' ) || { echo_err "Ошибка: не удалось получить данные от API: ${c_val}GET '$1'"; return; }
+	data=$( echo "$data" | grep -Po '(?(DEFINE)(?<str>"[^"\\]*(?:\\.[^"\\]*)*")(?<other>null|true|false|[0-9\-\.Ee\+]+)(?<arr>\[[^\[\]]*+(?:(?-1)[^\[\]]*)*+\])(?<obj>{[^{}]*+(?:(?-1)[^{}]*)*+}))(?:^\s*{\s*(?:(?&str)\s*:\s*(?:(?&other)|(?&str)|(?&arr)|(?&obj))\s*,\s*)*?"data"\s*:\s*(?:\[|(?={))|\G\s*,\s*)(?:(?:(?&other)|(?&str)|(?&arr))\s*,\s*)*\K(?>(?&obj)|)(?=\s*(?:\]|})|\s*,[^,])' ) \
+        || { echo_err "Ошибка: не удалось получить данные от API: ${c_val}GET '$1'"; return 1; }
 	local -n ref_dict_table=$2
 	while read -r line || [[ -n $line ]]; do
 		((i++))
 		while read -r var_line || [[ -n $var_line ]]; do
-			[[ "$var_line" =~ ^\"([^\"\\]*(\\.[^\"\\]*)*)\"\ *:\ *\"?(.*[^\"]|) ]] || { echo "Ошибка parse_json: некорректный bash парсинг: ${c_val}'$var_line'"; return; }
+			[[ "$var_line" =~ ^\"([^\"\\]*(\\.[^\"\\]*)*)\"\ *:\ *\"?(.*[^\"]|) ]] || { echo "Ошибка parse_json: некорректный bash парсинг: ${c_val}'$var_line'"; return 1; }
 			ref_dict_table[$i,${BASH_REMATCH[1]}]=${BASH_REMATCH[3]}
-		done < <( echo -n "$line" | grep -Po '(?(DEFINE)(?<str>"[^"\\]*(?:\\.[^"\\]*)*")(?<other>null|true|false|[0-9\-\.Ee\+]+)(?<arr>\[[^\[\]]*+(?:(?-1)[^\[\]]*)*+\])(?<obj>{[^{}]*+(?:(?-1)[^{}]*)*+}))(?:^\s*{\s*|\G\s*,\s*)\K(?:(?&str)\s*:\s*(?:(?&other)|(?&str)|(?&arr)|(?&obj)))(?=\s*}|\s*,[^,])' )
+		done < <( echo -n "$line" | grep -Po '(?(DEFINE)(?<str>"[^"\\]*(?:\\.[^"\\]*)*")(?<other>null|true|false|[0-9\-\.Ee\+]+)(?<arr>\[[^\[\]]*+(?:(?-1)[^\[\]]*)*+\])(?<obj>{[^{}]*+(?:(?-1)[^{}]*)*+}))(?:^\s*{\s*|\G\s*,\s*)\K(?:(?&str)\s*:\s*(?:(?&other)|(?&str)|(?&arr)|(?&obj)))(?=\s*}|\s*,[^,])' || { echo_err "Ошибка: ошибка парсинга ответа API: ${c_val}GET '$1'"; return 1; } )
 	done < <( echo -n "$data" )
 	set +o pipefail
 }
@@ -1629,7 +1700,7 @@ function deploy_stand_config() {
 
         ${config_base[access_create]} && [[ "${vm_config[access_role]}" != '' ]] && run_cmd "pve_api_request PUT /access/acl 'path=/vms/$vmid' 'roles=${vm_config[access_role]}' 'users=$username'"
 
-        ${config_base[take_snapshots]} && run_cmd /pipefail "qm snapshot '$vmid' 'Start' --description 'Исходное состояние ВМ' | tail -n2"
+        ${config_base[take_snapshots]} && run_cmd "pvesh create '/nodes/$( hostname -s )/qemu/$vmid/snapshot' --snapname 'Start' --description 'Исходное состояние ВМ'"
 
         ${config_base[run_vm_after_installation]} && manage_bulk_vm_power --add "$(hostname -s)" "$vmid"
 
@@ -1679,7 +1750,7 @@ function deploy_access_passwd() {
         2) table+=$header_html;;
         4) table+="\"Точка подключения к гипервизору$nl(IP или доменное имя:порт)\";\"Учётная запись для входа в гипервизор$nl(логин | пароль)\"$nl";;
     esac
-
+    configure_ticket_api init
     for stand_num in "${opt_stand_nums[@]}"; do
         [[ "$1" != set ]] && username="${config_base[access_user_name]/\{0\}/$stand_num}@pve" || username=$stand_num
         [[ $format_opt == 3 ]] && table+="$header_html"
@@ -1691,7 +1762,7 @@ function deploy_access_passwd() {
             done 
         )
 
-        run_cmd /noexit "pvesh set /access/password --userid '$username' --password '$passwd'" || { echo_err "Ошибка: не удалось установить пароль пользователю $username"; exit_clear; }
+        run_cmd /noexit "pve_tapi_request PUT /access/password 'userid=$username' 'password=$passwd' 'confirmation-password=$var_pve_ticket_pass'" || { echo_err "Ошибка: не удалось установить пароль пользователю $username"; exit_clear; }
         username=${username::-4}
         case $format_opt in
             1) table+="$username | $passwd$nl";;
@@ -1764,9 +1835,7 @@ function install_stands() {
         done
         echo_tty "$( show_config )"
     }
-    local stand_num
-    local stands_group=${config_base[pool_name]/\{0\}/"X"}
-    local vmbr_ids=( {{1001..9999},{0000..0999},{00..09},{010..099},{0..1000}} )
+    local stand_num stands_group=${config_base[pool_name]/\{0\}/"X"} vmbr_ids=( {{1001..9999},{0000..0999},{00..09},{010..099},{0..1000}} )
 
     val="$( get_dict_value "config_stand_${opt_sel_var}_var[stand_config]" group_display_desc )"
     [[ "$val" == '' ]] && val="$( get_dict_value "config_stand_${opt_sel_var}_var[stand_config]" description )"
@@ -1790,9 +1859,14 @@ function install_stands() {
 
     run_cmd "pve_api_request PUT /access/acl path=/sdn/zones/localnetwork roles=PVEAuditor 'groups=$stands_group' propagate=0"
     
-    local -A roles_list
-    parse_noborder_table 'pveum role list' roles_list
-
+    local -A roles_list roles_data 
+    local max_index i
+    jq_data_to_array /access/roles roles_data || exit_clear
+    max_index=$( printf '%s\n' "${!pve_nodes[@]}" | sort -Vr | head -n 1 | grep -Po '^\d+' )
+    for ((i=0;i<=$max_index;i++)); do
+        roles_list[roleid]+=${roles_data[$i,roleid]}$'\n'
+        roles_list[privs]+=${roles_data[$i,privs]}$'\n'
+    done
 
     ${config_base[run_vm_after_installation]} && manage_bulk_vm_power --init
 
@@ -2081,8 +2155,8 @@ function manage_stands() {
 
                 echo "$status" | grep -Pq $'^snapshot feature is not available$' && echo_err "Ошибка: ВМ $name ($vmid) стенда $pool_name: хранилище ВМ не поддерживает создание снапшота!" && continue
                 echo "$status" | grep -Pq $'^Configuration file \'[^\']+\' does not exist$' && echo_err "Ошибка: ВМ $name ($vmid) стенда $pool_name не существует!" && continue
-                echo "$status" | grep -P $'^snapshot \'[^\']+\' does not exist$' && echo_err "Ошибка: Снапшот ВМ $name ($vmid) стенда $pool_name не существует!" && continue
-                echo "$status" | grep -P $'^snapshot name \'[^\']+\' already used$' && echo_err "Ошибка: Снапшот ВМ $name ($vmid) стенда $pool_name уже существует!" && continue
+                echo "$status" | grep -Pq $'^snapshot \'[^\']+\' does not exist$' && echo_err "Ошибка: Снапшот ВМ $name ($vmid) стенда $pool_name не существует!" && continue
+                echo "$status" | grep -Pq $'^snapshot name \'[^\']+\' already used$' && echo_err "Ошибка: Снапшот ВМ $name ($vmid) стенда $pool_name уже существует!" && continue
                 echo_err "Необработанная ошибка: ВМ $name ($vmid), стенд $pool_name:"$'\n'$status; exit_clear;
             done
         done
@@ -2175,8 +2249,8 @@ function manage_stands() {
                     && echo_ok "стенд ${c_value}$pool_name${c_null}: удалена машина ${c_ok}$name${c_null} (${c_info}$vmid${c_null})" \
                     || { echo_err "Ошибка: не удалось удалить ВМ '$vmid' стенда '$pool_name'"; exit_clear; }
             done
-            local storages=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/storage}" )
-            [[ "$storages" != '' ]] && { run_cmd /noexit "( pveum pool modify '$pool_name' --delete '1' --storage '$storages' 2>&1;echo) | grep -Pq '(^$|is not a pool member$)'" \
+            local storages=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/storage}" | awk 'NR>1{printf " "}{printf $0}' )
+            [[ "$storages" != '' ]] && { run_cmd /noexit "pve_api_request PUT '/pools/$pool_name' delete=1 'storage=$storages' 2>&1 | tail -1 | grep -Pq '^500$|^(?!\d*$)'" \
                 || { echo_err "Ошибка: не удалось удалить привязку хранилищ от пула стенда '$pool_name'"; exit_clear; } }
             run_cmd /noexit "pve_api_request DELETE '/pools/$pool_name' 2>&1 | tail -1 | grep -Pq '^500$|^(?!\d*$)'" \
                     && echo_ok "стенд ${c_value}$pool_name${c_null}: пул удален" \
@@ -2191,14 +2265,15 @@ function manage_stands() {
                 || { echo_err "Ошибка: не удалось удалить пользователя '$user_name' стенда '$pool_name'"; exit_clear; }
         done
 
-        local roles_list_after list_roles
+        local roles_list_after 
+        local -A list_roles
         roles_list_after="$( pve_api_request GET /access/acl )" || { echo_err "Ошибка: не удалось получить список ролей через API"; exit_clear; }
         roles_list_after="$( echo -n "$roles_list_after" | grep -Po '(,|{)"roleid":"\K[^"]+' | sort -u )"
+        jq_data_to_array /access/roles list_roles
 
         for role in $( printf '%s\n' "${!acl_list[@]}" | grep -Po '^\d+,roleid' ); do
             echo "$roles_list_after" | grep -Fxq "${acl_list[$role]}" || {
-                [[ "$list_roles" == '' ]] && { list_roles=$( pveum role list --output-format yaml | grep -v - | grep -Po '^\s*(roleid|special)\s*:\s*\K.*' ) || exit_clear; }
-                echo "$list_roles" | grep -Pzq '(^|\n)'$role'\n0' && run_cmd "pve_api_request DELETE '/access/roles/$role' 2>&1 | tail -1 | grep -Pq '^500$|^(?!\d*$)'" && echo_ok "роль ${c_value}$role${c_null} удалена"
+                [[ "$( get_numtable_val list_roles "roleid=${acl_list[$role]}" special )" == 0 ]] && run_cmd "pve_api_request DELETE '/access/roles/$role' 2>&1 | tail -1 | grep -Pq '^500$|^(?!\d*$)'" && echo_ok "роль ${c_value}$role${c_null} удалена"
             }
         done
 
