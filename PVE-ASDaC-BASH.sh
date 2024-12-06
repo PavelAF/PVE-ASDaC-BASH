@@ -533,6 +533,7 @@ function configure_api_ticket() {
 		if [[ "$2" == 'force' ]]; then
 			pvesh delete "/access/users/$var_pve_ticket_user" 2>/dev/null
 		else 
+            local pve_api_request_exit=1
 			pve_api_request '' DELETE "/access/users/$var_pve_ticket_user" 2>/dev/null | tail -1 | grep -Pq '^500$|^(?!\d*$)' \
 				|| { pvesh delete "/access/users/$var_pve_ticket_user" 2>/dev/null; [[ $? =~ ^0$|^255$ ]]; } \
 				|| echo_err "Ошибка: Не удалось удалить удалить пользователя ${c_val}${var_pve_ticket_user}${c_err}"
@@ -1330,7 +1331,7 @@ function check_config() {
                 || { echo_err "Ошибка: не найдена команда '$i'. На этом хосте установлен PVE (Proxmox VE)?. Конфигурирование стендов невозможно."$'\n'"Необходимые команды для работы: ${script_requirements_cmd[*]}"; exit 1; }
         done
 
-        [[ "$( printf '%x' "'й" )" != 439 ]] && { LC_ALL="en_US.UTF-8"; echo_warn $'\n'"Предупреждение: установленная кодировка не поддерживает символы Unicode"; echo_info "Кодировка была изменена на '${c_val}en_US.UTF-8${c_info}'"$'\n'; }
+        [[ "$( printf '%x' "'й" )" != 439 ]] && { LC_ALL=en_US.UTF-8; echo_warn $'\n'"Предупреждение: установленная кодировка не поддерживает символы Unicode"; echo_info "Кодировка была изменена на '${c_val}en_US.UTF-8${c_info}'"$'\n'; }
         [[ "$( echo -n 'тест' | wc -m )" != 4 || "$( printf '%x' "'й" )" != 439 ]] && {
             echo_warn "Предупреждение: обнаружена проблема с кодировкой. Символы Юникода (в т.ч. кириллические буквы) не будут корректно обрабатываться и строки описаний будут заменены на символы '�'. Попробуйте запустить скрипт другим способом (SSH?)"
             echo_tty
