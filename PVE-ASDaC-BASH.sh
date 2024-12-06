@@ -1149,7 +1149,7 @@ function configure_imgdir() {
         && { echo_err "Ошибка: путь временой директории некоректен: '${config_base[mk_tmpfs_imgdir]}'. Выход"; exit_clear; }
 
     [[ "$1" == 'clear' ]] && {
-        { ! $opt_rm_tmpfs || $opt_not_tmpfs } && [[ "$2" != 'force' ]] && return 0
+        { ! $opt_rm_tmpfs || $opt_not_tmpfs; } && [[ "$2" != 'force' ]] && return 0
         [[ $(findmnt -T "${config_base[mk_tmpfs_imgdir]}" -o FSTYPE -t tmpfs | wc -l) != 1 ]] && {
             echo_tty
             $silent_mode || read_question "Удалить временный раздел со скачанными образами ВМ ('${config_base[mk_tmpfs_imgdir]}')?" \
