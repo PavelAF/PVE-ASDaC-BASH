@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Запуск:               sh='PVE-ASDaC-BASH.sh';curl -sOLH 'Cache-Control: no-cache' "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/main/$sh"&&chmod +x $sh&&./$sh;rm -f $sh
+# Запуск:  branch=main file=PVE-ASDaC-BASH.sh; curl -sOLH 'Cache-Control: no-cache' "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/$branch/$file" && chmod +x $file && ./$sh; rm -f $file
 
 echo $'\nProxmox VE Automatic stand deployment and configuration script by AF\n' >> /dev/tty
 
@@ -394,7 +394,7 @@ function configure_clear() {
         [[ "$lower_nextid" != '' &&  "$lower_nextid" == "$(( ${config_base[start_vmid]} + ${#opt_stand_nums[@]} * 100 ))" ]] && run_cmd pve_api_request return_cmd PUT /cluster/options delete=next-id
         ex_var=0
         opt_not_tmpfs=true
-        configure_imgdir clear
+        configure_imgdir clear force
     }
     configure_api_ticket clear
     configure_api_token clear
@@ -1148,8 +1148,8 @@ function configure_imgdir() {
     [[ "${#config_base[mk_tmpfs_imgdir]}" -lt 1 || "${#config_base[mk_tmpfs_imgdir]}" -gt 255 || -e "${config_base[mk_tmpfs_imgdir]}" && ! -d "${config_base[mk_tmpfs_imgdir]}" ]] \
         && { echo_err "Ошибка: путь временой директории некоректен: '${config_base[mk_tmpfs_imgdir]}'. Выход"; exit_clear; }
 
-    [[ "$1" == clear ]] && {
-        { ! $opt_rm_tmpfs || $opt_not_tmpfs; } && return 0
+    [[ "$1" == 'clear' ]] && {
+        { ! $opt_rm_tmpfs || $opt_not_tmpfs || ! [[ "$2" == 'force' ]] } && return 0
         [[ $(findmnt -T "${config_base[mk_tmpfs_imgdir]}" -o FSTYPE -t tmpfs | wc -l) != 1 ]] && {
             echo_tty
             $silent_mode || read_question "Удалить временный раздел со скачанными образами ВМ ('${config_base[mk_tmpfs_imgdir]}')?" \
@@ -1158,7 +1158,7 @@ function configure_imgdir() {
         return 0
     }
 
-    if [[ "$1" == check-only ]]; then
+    if [[ "$1" == 'check-only' ]]; then
         awk '/MemAvailable/ {if($2<16777216) {exit 1} }' /proc/meminfo || \
             { echo_err $'Ошибка: Недостаточно свободной оперативной памяти!\nДля развертывания стенда необходимо как минимум 16 ГБ свободоной ОЗУ'; exit_clear; }
         return 0
@@ -1889,7 +1889,7 @@ function install_stands() {
     configure_vmid install
     run_cmd pve_api_request return_cmd PUT /cluster/options "'next-id=lower=$(( ${config_base[start_vmid]} + ${#opt_stand_nums[@]} * 100 ))'"
 
-    run_cmd /noexit pve_api_request '' POST /access/groups "'groupid=$stands_group' 'comment=$val' 2>&1 | tail -1 | grep -Pq '^500$|^(?!\d*$)'" \
+    run_cmd /noexit pve_api_request "''" POST /access/groups "'groupid=$stands_group' 'comment=$val' 2>&1 | tail -1 | grep -Pq '^500$|^(?!\d*$)'" \
         || { echo_err "Ошибка: не удалось создать access группу для стендов '$stands_group'. Выход"; exit_clear; }
 
     run_cmd pve_api_request return_cmd PUT /access/acl path=/sdn/zones/localnetwork "roles=PVEAuditor 'groups=$stands_group' propagate=0"
@@ -2225,7 +2225,7 @@ function manage_stands() {
 
         function delete_if {
             [[ "$1" == '' || "$2" == '' ]] && exit_clear
-            run_cmd /noexit pve_api_request '' DELETE "/nodes/$vm_node/network/$2" "2>&1 | tail -1 | grep -Pq '^500$|^(?!\d*$)'" \
+            run_cmd /noexit pve_api_request "''" DELETE "/nodes/$vm_node/network/$2" "2>&1 | tail -1 | grep -Pq '^500$|^(?!\d*$)'" \
                         && echo_ok "стенд ${c_value}$1${c_null}: удален сетевой интерфейс ${c_ok}$2${c_null}${3:+ ($3)}" \
                         || { echo_err "Ошибка: не удалось удалить сетевой интерфейс '$2'"; exit_clear; }
             eval "deny_ifaces_$(echo -n "$vm_nodes" | grep -c '^')+=' $2'"
@@ -2286,9 +2286,9 @@ function manage_stands() {
                     || { echo_err "Ошибка: не удалось удалить ВМ '$vmid' стенда '$pool_name'"; exit_clear; }
             done
             local storages=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/storage}" | awk 'NR>1{printf " "}{printf $0}' )
-            [[ "$storages" != '' ]] && { run_cmd /noexit pve_api_request '' PUT "/pools/$pool_name delete=1 'storage=$storages' 2>&1 | tail -1 | grep -Pq '^500$|^(?!\d*$)'" \
+            [[ "$storages" != '' ]] && { run_cmd /noexit pve_api_request "''" PUT "/pools/$pool_name delete=1 'storage=$storages' 2>&1 | tail -1 | grep -Pq '^500$|^(?!\d*$)'" \
                 || { echo_err "Ошибка: не удалось удалить привязку хранилищ от пула стенда '$pool_name'"; exit_clear; } }
-            run_cmd /noexit pve_api_request '' DELETE "/pools/$pool_name 2>&1 | tail -1 | grep -Pq '^500$|^(?!\d*$)'" \
+            run_cmd /noexit pve_api_request "''" DELETE "/pools/$pool_name 2>&1 | tail -1 | grep -Pq '^500$|^(?!\d*$)'" \
                     && echo_ok "стенд ${c_value}$pool_name${c_null}: пул удален" \
                     || { echo_err "Ошибка: не удалось удалить пул стенда '$pool_name'"; exit_clear; }
         done
