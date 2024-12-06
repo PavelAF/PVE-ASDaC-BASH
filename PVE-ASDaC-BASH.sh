@@ -497,7 +497,7 @@ function configure_api_token() {
         
 		if [[ "$2" == 'force' || "$var_pve_api_curl" == '' ]]; then
 			pvesh delete "/access/users/root@pam/token/$var_pve_token_id" 2>/dev/null
-		else 
+		else
             local pve_api_request_exit=1
 			pve_api_request '' DELETE "/access/users/root@pam/token/$var_pve_token_id" 2>/dev/null | tail -1 | grep -Pq '^500$|^(?!\d*$)' \
 				|| { pvesh delete "/access/users/root@pam/token/$var_pve_token_id" 2>/dev/null; [[ $? =~ ^0$|^255$ ]]; }  \
@@ -535,7 +535,7 @@ function configure_api_ticket() {
 		else 
             local pve_api_request_exit=1
 			pve_api_request '' DELETE "/access/users/$var_pve_ticket_user" 2>/dev/null | tail -1 | grep -Pq '^500$|^(?!\d*$)' \
-				|| { pvesh delete "/access/users/$var_pve_ticket_user" 2>/dev/null; [[ $? =~ ^0$|^255$ ]]; } \
+				|| { configure_api_token clear force; pvesh delete "/access/users/$var_pve_ticket_user" 2>/dev/null; [[ $? =~ ^0$|^255$ ]]; } \
 				|| echo_err "Ошибка: Не удалось удалить удалить пользователя ${c_val}${var_pve_ticket_user}${c_err}"
 		fi
         unset var_pve_ticket_user var_pve_ticket_pass var_pve_tapi_curl
