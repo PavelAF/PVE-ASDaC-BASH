@@ -1348,7 +1348,7 @@ function check_config() {
     }
 
     [[ "$1" == 'install' ]] && {
-        ! $create_access_network && echo_warn "Предупреждение: версия PVE '$data_pve_version' имеет меньший функционал, чем последняя версия PVE и некоторые опции установки будут пропущены"
+        ! $create_access_network && echo_warn "Предупреждение: версия PVE ${c_val}$data_pve_version${c_warn} имеет меньший функционал, чем последняя версия PVE и некоторые опции установки будут пропущены"
         # [[ "$opt_sel_var" -gt 0 && $(eval "printf '%s\n' \${!config_stand_${opt_sel_var}_var[@]}" | grep -Pv '^stand_config' | wc -l) -gt 0 ]] && { echo_err 'Ошибка: был выбран несуществующий вариант развертки стенда или нечего разворачивать. Выход'; exit_clear; }
         [[ "${#opt_stand_nums[@]}" -gt 10 ]] && echo_warn -e "Предупреждение: конфигурация настроена на развертку ${#opt_stand_nums[@]} стендов!\n Развертка более 10 стендов на одном сервере (в зависимости от мощности \"железа\", может и меньше) может вызвать проблемы с производительностью"
         [[ "${#opt_stand_nums[@]}" -gt 100 ]] && { echo_err "Ошибка: невозможно (бессмысленно) развернуть на одном стенде более 100 стендов. Выход"; exit_clear; }
@@ -1465,7 +1465,7 @@ function deploy_stand_config() {
 
     function set_netif_conf() {
         [[ "$1" == '' || "$2" == '' && "$1" != test ]] && { echo_err 'Ошибка: set_netif_conf нет аргумента'; exit_clear; }
-        [[ "$data_aviable_net_models" == '' ]] && { data_aviable_net_models=$( kvm -net nic,model=help | awk 'NR!=1' | grep -Po '[^\(\)]+|(\(aka \K[^\)]+)' ) || { echo_err "Ошибка: не удалось получить список доступных моделей сетевых устройств"; exit_clear; } }
+        [[ "$data_aviable_net_models" == '' ]] && { data_aviable_net_models=$( kvm -net nic,model=help awk 'NR!=1{if($1=="virtio-net-pci")print "virtio";print $1}' ) || { echo_err "Ошибка: не удалось получить список доступных моделей сетевых устройств"; exit_clear; } }
         [[ "$1" == 'test' ]] && { 
             echo -n "$data_aviable_net_models" | grep -Fxq "$netifs_type" && return 0
             echo_err "Ошибка: указаный в конфигурации модель сетевого интерфейса '$netifs_type' не является корректным"
