@@ -829,7 +829,7 @@ function get_file() {
         fi
         [[ -e "$filename" && ! -f "$filename" ]] && { echo_err "Ошибка: Попытка скачать файл в '$filename': этот файловый путь уже используется"; exit_clear; }
         [[ -r "$filename" ]] && [[ "$filesize" == '0' || "$( wc -c "$filename" | awk '{printf $1;exit}' )" == "$filesize" ]] \
-        && [[ "$filesize" -gt 655360 && "${#file_sha256}" != 64 || "$( sha256sum "$filename" | awk '{printf $1}' )" == "$file_sha256" ]] || {
+        && [[ "$filesize" -gt 102400 || "${#file_sha256}" == 64 && "$( sha256sum "$filename" | awk '{printf $1}' )" == "$file_sha256" ]] || {
             configure_imgdir add-size $max_filesize
             echo_tty "[${c_info}Info${c_null}] Скачивание файла ${c_value}$filename${c_null} Размер: ${c_value}$( echo "$filesize" | awk 'BEGIN{split("Б|КБ|МБ|ГБ|ТБ",x,"|")}{for(i=1;$1>=1024&&i<length(x);i++)$1/=1024;printf("%3.1f %s", $1, x[i]) }' )${c_null} URL: ${c_value}$base_url${c_null}"
             echo_verbose "SIZE: ${c_value}$filesize${c_null} SHA-256: ${c_value}$file_sha256${c_null}"
@@ -1745,7 +1745,7 @@ function deploy_stand_config() {
 
         ${config_base[run_vm_after_installation]} && manage_bulk_vm_power --add "$(hostname -s)" "$vmid"
 
-        echo_ok "${c_info}Конфигурирование VM ${c_value}$vm_name${c_info} завершено${c_null}"
+        echo_ok "${c_info}Конфигурирование ВМ ${c_value}$vm_name${c_info}($vmid) завершено${c_null}"
         ((vmid++))
     done
 
