@@ -1793,7 +1793,7 @@ function deploy_access_passwd() {
         4) table+="\"Точка подключения к гипервизору$nl(IP или доменное имя:порт)\";\"Учётная запись для входа в гипервизор$nl(логин | пароль)\"$nl";;
     esac
 
-    check_min_version 8.2 && service_user_password="'confirmation-password={ticket_user_pwd}'"
+    check_min_version 8.2 "$data_pve_version"  && service_user_password="'confirmation-password={ticket_user_pwd}'"
     for username in "${opt_stand_nums[@]}"; do
         [[ "$1" != set ]] && username="${config_base[access_user_name]/\{0\}/$username}@pve"
         [[ $format_opt == 3 ]] && table+="$header_html"
