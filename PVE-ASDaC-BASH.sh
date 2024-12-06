@@ -1152,7 +1152,7 @@ function configure_imgdir() {
         { ! $opt_rm_tmpfs || $opt_not_tmpfs; } && [[ "$2" != 'force' ]] && return 0
         [[ $(findmnt -T "${config_base[mk_tmpfs_imgdir]}" -o FSTYPE -t tmpfs | wc -l) != 1 ]] && {
             echo_tty
-            $silent_mode || read_question "Удалить временный раздел со скачанными образами ВМ ('${config_base[mk_tmpfs_imgdir]}')?" \
+            $silent_mode || read_question "${c_warn}Удалить временный раздел со скачанными образами ВМ ('${c_val}${config_base[mk_tmpfs_imgdir]}${c_warn}')?" \
                 && { umount "${config_base[mk_tmpfs_imgdir]}"; rmdir "${config_base[mk_tmpfs_imgdir]}"; }
         }
         return 0
@@ -1433,8 +1433,8 @@ function run_cmd() {
     [[ "$1" == '' ]] && { echo_err 'Ошибка run_cmd: нет команды'; exit_clear; }
 
     if $opt_dry_run; then
-        ! $opt_verbose && [[ "$1" == pve_api_request || "$1" == pve_tapi_request ]] && set -- HTTP $3 "${config_base[pve_api_url]}$4" "${@:5}"
-        echo_tty "[${c_warning}Выполнение команды${c_null}] $@"
+        if ! $opt_verbose && [[ "$1" == pve_api_request || "$1" == pve_tapi_request ]]; then echo_tty "[${c_warning}Выполнение запроса API${c_null}] $3 ${config_base[pve_api_url]}$4 ${@:5}"
+        else echo_tty "[${c_warning}Выполнение команды${c_null}] $@"; fi
     else
         local return_cmd='' code
         if [[ "$1" == pve_api_request || "$1" == pve_tapi_request ]]; then
@@ -1445,7 +1445,10 @@ function run_cmd() {
             code=$?
         fi
         if [[ "$code" == 0 ]]; then
-            $opt_verbose && echo_tty "[${c_ok}Выполнена команда${c_null}] ${c_cyan}$@${c_null}"
+            $opt_verbose && {
+                if [[ "$1" == pve_api_request || "$1" == pve_tapi_request ]]; then echo_tty "[${c_ok}Выполнен запрос API${c_null}] ${c_cyan}$3 ${config_base[pve_api_url]}$4 ${@:5}${c_null}"
+                else echo_tty "[${c_ok}Выполнена команда${c_null}] ${c_cyan}$@${c_null}"; fi
+            }
         else
             ! $to_exit && {
                 echo_tty "[${c_warning}Выполнена команда${c_null}] ${c_info}$@${c_null}"
