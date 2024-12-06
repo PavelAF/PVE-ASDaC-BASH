@@ -1329,11 +1329,6 @@ function check_config() {
         for i in "${script_requirements_cmd[@]}"; do [[ -x "$( command -v $i )" ]] \
                 || { echo_err "Ошибка: не найдена команда '$i'. На этом хосте установлен PVE (Proxmox VE)?. Конфигурирование стендов невозможно."$'\n'"Необходимые команды для работы: ${script_requirements_cmd[*]}"; exit 1; }
         done
-        check_min_version 7.76 $( curl --version | grep -Po 'curl \K[0-9\.]+' ) || { echo_err "Ошибка: версия утилиты curl меньше требуемой ${c_val}7.76${c_err}. Обновите пакет/систему"; exit 1; }
-        configure_api_token init
-        check_min_version 7.2 "$data_pve_version" || { echo_err "Ошибка: версия PVE '$data_pve_version' уже устарела и установка ВМ данным скриптом не поддерживается."; exit_clear; }
-        create_access_network=$( check_min_version 8 "$data_pve_version" && echo true || echo false )
-        check_min_version 8.3 "$data_pve_version" && var_pve_passwd_min=8 || var_pve_passwd_min=5
 
         [[ "$( printf '%x' "'й" )" != 439 ]] && { LC_ALL="en_US.UTF-8"; echo_warn $'\n'"Предупреждение: установленная кодировка не поддерживает символы Unicode"; echo_info "Кодировка была изменена на '${c_val}en_US.UTF-8${c_info}'"$'\n'; }
         [[ "$( echo -n 'тест' | wc -m )" != 4 || "$( printf '%x' "'й" )" != 439 ]] && {
@@ -1344,6 +1339,13 @@ function check_config() {
             opt_rm_tmpfs=false
             ! $silent_mode && { read_question 'Вы хотите продолжить? Do you want to continue?' || exit_clear; }
         }
+
+        check_min_version 7.76 $( curl --version | grep -Po 'curl \K[0-9\.]+' ) || { echo_err "Ошибка: версия утилиты curl меньше требуемой ${c_val}7.76${c_err}. Обновите пакет/систему"; exit 1; }
+        configure_api_token init
+        check_min_version 7.2 "$data_pve_version" || { echo_err "Ошибка: версия PVE '$data_pve_version' уже устарела и установка стендов данным скриптом не поддерживается."$'\nМиннимально подерживаемая версия: PVE 7.2'; exit_clear; }
+        create_access_network=$( check_min_version 8 "$data_pve_version" && echo true || echo false )
+        check_min_version 8.3 "$data_pve_version" && var_pve_passwd_min=8 || var_pve_passwd_min=5
+
         return
     }
 
