@@ -584,8 +584,8 @@ function pve_tapi_request() {
 					return $?
 			  }
               ! [[ "$http_code" =~ ^(500|501|596)$ ]] && {
-                    echo_err "Ошибка: запрос к API (ticket) был обработан с ошибкой: ${c_val}${@:2:3}$( printf '%q\n' "${@:4}" | awk 'NF>0{ printf " " $0 }' )${c_err}"
-                    echo_err "API пользователь: ${c_val}$var_pve_ticket_user{var_}"
+                    echo_err "Ошибка: запрос к API (ticket) был обработан с ошибкой: ${c_val}${@:2}"
+                    echo_err "API пользователь: ${c_val}$var_pve_ticket_user"
                     echo_err "HTTP код ответа: ${c_val}$http_code"
                     echo_err "Ответ сервера: ${c_val}$( echo -n "$res" | sed '$d' )"
                     exit_clear
@@ -1785,11 +1785,15 @@ function deploy_access_passwd() {
         [[ "$val" != '' ]] && pve_url=$val
     }
 
-    local nl=$'\n' tab=$'\t' table username passwd header_html="<tr><th>Точка подключения к гипервизору <br>(IP или доменное имя:порт)</th><th>Учётная запись для входа в гипервизор <br>(логин | пароль)</th></tr>"
+    local nl=$'\n' tab=$'\t' table username passwd \
+            header_html="<tr><th>Точка подключения к гипервизору <br>(IP или доменное имя:порт)</th><th>Учётная запись для входа в гипервизор <br>(логин | пароль)</th></tr>" \
+            service_user_password=''
     case $format_opt in
         2) table+=$header_html;;
         4) table+="\"Точка подключения к гипервизору$nl(IP или доменное имя:порт)\";\"Учётная запись для входа в гипервизор$nl(логин | пароль)\"$nl";;
     esac
+
+    check_min_version 8.2 && service_user_password="'confirmation-password={ticket_user_pwd}'"
     for username in "${opt_stand_nums[@]}"; do
         [[ "$1" != set ]] && username="${config_base[access_user_name]/\{0\}/$username}@pve"
         [[ $format_opt == 3 ]] && table+="$header_html"
@@ -1800,7 +1804,7 @@ function deploy_access_passwd() {
             passwd+=${passwd_chars:RANDOM%${#passwd_chars}:1}
         done
 
-        run_cmd /noexit pve_tapi_request return_cmd PUT /access/password "'userid=$username' 'password=$passwd' 'confirmation-password={ticket_user_pwd}'" || { echo_err "Ошибка: не удалось установить пароль пользователю $username"; exit_clear; }
+        run_cmd /noexit pve_tapi_request return_cmd PUT /access/password "'userid=$username' 'password=$passwd' $service_user_password" || { echo_err "Ошибка: не удалось установить пароль пользователю $username"; exit_clear; }
         username=${username::-4}
         case $format_opt in
             1) table+="$username | $passwd$nl";;
