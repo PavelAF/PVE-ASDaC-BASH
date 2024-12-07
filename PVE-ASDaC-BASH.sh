@@ -709,10 +709,12 @@ function show_config() {
             [[ "$description" == '' ]] && description="Вариант $i (без названия)"
             pool_name="$( get_dict_value "$conf[stand_config]" pool_name )"
             [[ "$pool_name" == "" ]] && pool_name=${config_base[def_pool_name]}
-            description="$pool_name : $description"
+            description="$pool_name : ${c_val}$description${c_null}"
+            first_elem=true
+            echo -n $'\n  '"$((i++)). $description"$'\n  - ВМ: '
             for var in $( printf '%s\n' "${!ref_conf[@]}" | sort -V ); do
                 [[ "$var" == 'stand_config' ]] && continue
-                $first_elem && first_elem=false && echo -n $'\n  '"$((i++)). $description"$'\n  - ВМ: '
+                $first_elem && first_elem=false
                 no_elem=false
 
                 vm_name=''; description=''
@@ -728,8 +730,8 @@ function show_config() {
 
                 [[ "$vm_name" == '' ]] && vm_name="$var"
                 
-                echo -en "$vm_name"
-                [[ "$description" != "" ]] && echo -en "(\e[1;34m${description}\e[m) " || echo -n ' '
+                echo -en "${c_val}$vm_name${c_null}"
+                [[ "$description" != "" ]] && echo -en "(${description}) " || echo -n ' '
             done
             ! $first_elem && echo || echo '--- пустая конфигурация ---'
             first_elem=true
@@ -1000,7 +1002,7 @@ function configure_varnum() {
     fi
     set_varnum $var
 
-    echo_tty -n "Выбранный вариант инсталляции - ${var}: "
+    echo_tty -n $'\n'"Выбранный вариант инсталляции - ${var}: "
     var="$( get_dict_value "config_stand_${var}_var[stand_config]" description )"
     [[ "$var" == '' ]] && var="Вариант $i (без названия)"
     echo_tty "${c_value}$var"
@@ -1155,7 +1157,7 @@ function configure_imgdir() {
         { ! $opt_rm_tmpfs || $opt_not_tmpfs; } && [[ "$2" != 'force' ]] && return 0
         [[ $(findmnt -T "${config_base[mk_tmpfs_imgdir]}" -o FSTYPE -t tmpfs | wc -l) != 1 ]] && {
             echo_tty
-            $silent_mode || read_question "${c_warn}Удалить временный раздел со скачанными образами ВМ ('${c_val}${config_base[mk_tmpfs_imgdir]}${c_warn}')?" \
+            $silent_mode || read_question "${c_warn}Удалить временный раздел со скачанными образами ВМ (${c_val}${config_base[mk_tmpfs_imgdir]}${c_warn})?" \
                 && { umount "${config_base[mk_tmpfs_imgdir]}"; rmdir "${config_base[mk_tmpfs_imgdir]}"; }
         }
         return 0
@@ -1333,7 +1335,7 @@ function check_config() {
                 || { echo_err "Ошибка: не найдена команда '$i'. На этом хосте установлен PVE (Proxmox VE)?. Конфигурирование стендов невозможно."$'\n'"Необходимые команды для работы: ${script_requirements_cmd[*]}"; exit 1; }
         done
 
-        [[ "$( printf '%x' "'й" )" != 439 ]] && { LC_ALL=en_US.UTF-8; echo_warn $'\n'"Предупреждение: установленная кодировка не поддерживает символы Unicode"; echo_info "Кодировка была изменена на '${c_val}en_US.UTF-8${c_info}'"$'\n'; }
+        [[ "$( printf '%x' "'й" )" != 439 ]] && { LC_ALL=en_US.UTF-8; echo_warn $'\n'"Предупреждение: установленная кодировка не поддерживает символы Unicode"; echo_info "Кодировка была изменена на ${c_val}en_US.UTF-8${c_info}"$'\n'; }
         [[ "$( echo -n 'тест' | wc -m )" != 4 || "$( printf '%x' "'й" )" != 439 ]] && {
             echo_warn "Предупреждение: обнаружена проблема с кодировкой. Символы Юникода (в т.ч. кириллические буквы) не будут корректно обрабатываться и строки описаний будут заменены на символы '�'. Попробуйте запустить скрипт другим способом (SSH?)"
             echo_tty
@@ -1750,7 +1752,7 @@ function deploy_stand_config() {
 
         ${config_base[run_vm_after_installation]} && manage_bulk_vm_power --add "$(hostname -s)" "$vmid"
 
-        echo_ok "${c_info}Конфигурирование ВМ ${c_value}$vm_name${c_info}($vmid) завершено${c_null}"
+        echo_ok "Конфигурирование ВМ ${c_ok}$vm_name${c_null} (${c_info}$vmid${c_null}) завершено"
         ((vmid++))
     done
 
@@ -2196,7 +2198,7 @@ function manage_stands() {
                 vm_cmd_arg=" --vmstate '$vm_snap_state'"
                 [[ "$vm_type" != 'qemu' ]] && vm_cmd_arg=''
                 status=$( run_cmd /noexit "pvesh $(echo "$cmd_str" | sed "s/{node}/$vm_node/;s/{vmid}/$vmid/;s/{vm_state}/$vm_cmd_arg/;s/{type}/$vm_type/;s/{snap_name}/$vm_snap_name/;s/{snap_descr}/$vm_snap_description/" ) 2>&1" ) && {
-                    echo_ok "стенд ${c_value}$pool_name${c_null} машина ${c_ok}$name${c_null} (${c_info}$vmid${c_null})"
+                    echo_ok "Стенд ${c_value}$pool_name${c_null} машина ${c_ok}$name${c_null} (${c_info}$vmid${c_null})"
                     continue
                 }
 
@@ -2238,7 +2240,7 @@ function manage_stands() {
         function delete_if {
             [[ "$1" == '' || "$2" == '' ]] && exit_clear
             run_cmd /noexit pve_api_request "''" DELETE "/nodes/$vm_node/network/$2" "2>&1 | tail -1 | grep -Pq '^500$|^(?!\d*$)'" \
-                        && echo_ok "стенд ${c_value}$1${c_null}: удален сетевой интерфейс ${c_ok}$2${c_null}${3:+ ($3)}" \
+                        && echo_ok "Стенд ${c_value}$1${c_null}: удален сетевой интерфейс ${c_ok}$2${c_null}${3:+ ($3)}" \
                         || { echo_err "Ошибка: не удалось удалить сетевой интерфейс '$2'"; exit_clear; }
             eval "deny_ifaces_$(echo -n "$vm_nodes" | grep -c '^')+=' $2'"
         }
@@ -2294,14 +2296,14 @@ function manage_stands() {
                 vm_cmd_arg="--skiplock '1' --purge '1'"
                 [[ "$vm_type" != 'qemu' ]] && vm_cmd_arg="--force '1'"
                 run_cmd /noexit "( pvesh delete /nodes/$vm_node/$vm_type/$vmid $vm_cmd_arg 2>&1;echo) | grep -Pq '(^$|does not exist$)'" \
-                    && echo_ok "стенд ${c_value}$pool_name${c_null}: удалена машина ${c_ok}$name${c_null} (${c_info}$vmid${c_null})" \
+                    && echo_ok "Стенд ${c_value}$pool_name${c_null}: удалена машина ${c_ok}$name${c_null} (${c_info}$vmid${c_null})" \
                     || { echo_err "Ошибка: не удалось удалить ВМ '$vmid' стенда '$pool_name'"; exit_clear; }
             done
             local storages=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/storage}" | awk 'NR>1{printf " "}{printf $0}' )
             [[ "$storages" != '' ]] && { run_cmd /noexit pve_api_request "''" PUT "/pools/$pool_name delete=1 'storage=$storages' 2>&1 | tail -1 | grep -Pq '^500$|^(?!\d*$)'" \
                 || { echo_err "Ошибка: не удалось удалить привязку хранилищ от пула стенда '$pool_name'"; exit_clear; } }
             run_cmd /noexit pve_api_request "''" DELETE "/pools/$pool_name 2>&1 | tail -1 | grep -Pq '^500$|^(?!\d*$)'" \
-                    && echo_ok "стенд ${c_value}$pool_name${c_null}: пул удален" \
+                    && echo_ok "Стенд ${c_value}$pool_name${c_null}: пул удален" \
                     || { echo_err "Ошибка: не удалось удалить пул стенда '$pool_name'"; exit_clear; }
         done
 
@@ -2309,7 +2311,7 @@ function manage_stands() {
             user_name=$( echo -n "${user_list[$group_name]}" | sed -n "${i}p" )
             
             run_cmd /noexit pve_api_request return_cmd DELETE "/access/users/$user_name" \
-                && echo_ok "пользователь ${c_value}$user_name${c_null} удален" \
+                && echo_ok "Пользователь ${c_value}$user_name${c_null} удален" \
                 || { echo_err "Ошибка: не удалось удалить пользователя '$user_name' стенда '$pool_name'"; exit_clear; }
         done
 
@@ -2321,16 +2323,16 @@ function manage_stands() {
 
         for role in $( printf '%s\n' "${!acl_list[@]}" | grep -Po '^\d+,roleid' ); do
             echo "$roles_list_after" | grep -Fxq "${acl_list[$role]}" || {
-                [[ "$( get_numtable_val list_roles "roleid=${acl_list[$role]}" special )" == 0 ]] && run_cmd pve_api_request "''" DELETE "/access/roles/${acl_list[$role]}" "2>&1 | tail -1 | grep -Pq '^500$|^(?!\d*$)'" && echo_ok "роль ${c_value}${acl_list[$role]}${c_null} удалена"
+                [[ "$( get_numtable_val list_roles "roleid=${acl_list[$role]}" special )" == 0 ]] && run_cmd pve_api_request "''" DELETE "/access/roles/${acl_list[$role]}" "2>&1 | tail -1 | grep -Pq '^500$|^(?!\d*$)'" && echo_ok "Роль ${c_value}${acl_list[$role]}${c_null} удалена"
             }
         done
 
-        [[ "$del_all" == true ]] && run_cmd pve_api_request "''" DELETE "/access/groups/$group_name" "2>&1 | tail -1 | grep -Pq '^500$|^(?!\d*$)'" && echo_ok "группа стенда ${c_value}$group_name${c_null} удалена"
+        [[ "$del_all" == true ]] && run_cmd pve_api_request "''" DELETE "/access/groups/$group_name" "2>&1 | tail -1 | grep -Pq '^500$|^(?!\d*$)'" && echo_ok "Группа стенда ${c_value}$group_name${c_null} удалена"
 
         $restart_network && {
             for pve_host in $vm_nodes; do
                 run_cmd "pvesh set '/nodes/$pve_host/network'"
-                echo_ok "Перезагрузка сети хоста '$pve_host'"
+                echo_ok "Перезагрузка сети хоста ${c_val}$pve_host"
             done
         }
     fi
