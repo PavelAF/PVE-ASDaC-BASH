@@ -542,7 +542,7 @@ function configure_api_ticket() {
         return 0
     } || [[ "$1" != 'init' ]] && { echo_err 'Ошибка: нет подходящих аргументов configure_api_ticket'; exit_clear; }
     
-    [[ "$var_pve_ticket_user" == '' || "$var_pve_ticket_pass"  == '' ]] && ! pve_api_request '' GET "/access/users/$var_pve_ticket_user" 2>/dev/null >/dev/null && {
+    { [[ "$var_pve_ticket_user" == '' || "$var_pve_ticket_pass"  == '' ]] || ! pve_api_request '' GET "/access/users/$var_pve_ticket_user" 2>/dev/null >/dev/null; } && {
         var_pve_ticket_user="PVE-ASDaC-BASH_$( cat /proc/sys/kernel/random/uuid )@pve"
 		var_pve_ticket_pass=$( tr -dc 'a-zA-Z0-9' </dev/urandom | head -c 64 )
 		[[ "${#var_pve_ticket_pass}" -lt 32 ]] && { echo_err "Ошибка: не удалось сгенерировать пароль для служебного пользователя"; exit_clear; }
