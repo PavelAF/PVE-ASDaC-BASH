@@ -1440,7 +1440,7 @@ function run_cmd() {
     [[ "$1" == '' ]] && { echo_err 'Ошибка run_cmd: нет команды'; exit_clear; }
 
     if $opt_dry_run; then
-        if ! $opt_verbose && [[ "$1" == pve_api_request || "$1" == pve_tapi_request ]]; then echo_tty "[${c_warning}Выполнение запроса API${c_null}] $3 ${config_base[pve_api_url]}$4 ${@:5}"
+        if ! $opt_verbose && [[ "$1" == pve_api_request || "$1" == pve_tapi_request ]]; then echo_tty "[${c_warning}Выполнение запроса API${c_null}] ${@:3}"
         else echo_tty "[${c_warning}Выполнение команды${c_null}] $@"; fi
     else
         local return_cmd='' code
@@ -1453,15 +1453,16 @@ function run_cmd() {
         fi
         if [[ "$code" == 0 ]]; then
             $opt_verbose && {
-                if [[ "$1" == pve_api_request || "$1" == pve_tapi_request ]]; then echo_tty "[${c_ok}Выполнен запрос API${c_null}] ${c_cyan}$3 ${config_base[pve_api_url]}$4 ${@:5}${c_null}"
-                else echo_tty "[${c_ok}Выполнена команда${c_null}] ${c_cyan}$@${c_null}"; fi
+                if [[ "$1" == pve_api_request || "$1" == pve_tapi_request ]]; then echo_tty "[${c_ok}Выполнен запрос API${c_null}] ${c_info}${@:3}"
+                else echo_tty "[${c_ok}Выполнена команда${c_null}] ${c_info}$@${c_null}"; fi
             }
         else
             ! $to_exit && {
                 echo_tty "[${c_warning}Выполнена команда${c_null}] ${c_info}$@${c_null}"
                 echo_tty "${c_red}Error output: ${c_warning}$return_cmd${c_null}"
-                return 1
+                return $code
             }
+            [[ "$1" == pve_api_request || "$1" == pve_tapi_request ]] && echo_tty "[${c_err}Запрос API${c_null}] $3 ${config_base[pve_api_url]}${@:4}"
             echo_err "Ошибка выполнения команды: $@"
             echo_tty "${c_red}Error output: ${c_warning}$return_cmd${c_null}"
             exit_clear
@@ -1966,9 +1967,9 @@ function manage_bulk_vm_power() {
     [[ "$action" == 'startall' ]] && args=" --force '1'" && act_desc="${c_ok}включение${c_null}" || { act_desc="${c_error}выключение${c_null}"; isdigit_check "$2" && args=" --timeout '$2'"; }
     for pve_node in "${!bulk_vms_power_list[@]}"; do
         bulk_vms_power_list[$pve_node]=$( echo "${bulk_vms_power_list[$pve_node]}" | awk 'NF{printf $0}' | sed 's/ \|\;/,/g;s/,\+/,/g' )
-        echo_tty "[${c_ok}Задание${c_null}] запущено массовое $act_desc машин на узле '${c_value}$pve_node${c_null}'. ВМIDs: ${c_value}${bulk_vms_power_list[$pve_node]:1}${c_null}"
+        echo_tty "[${c_ok}Задание${c_null}] Запущено массовое $act_desc машин на узле ${c_value}$pve_node${c_null}. VMID: ${c_value}${bulk_vms_power_list[$pve_node]:1}${c_null}"
         run_cmd "pvesh create /nodes/$pve_node/$action --vms '${bulk_vms_power_list[$pve_node]:1}'$args"
-        echo_ok "$act_desc машин на узле '${c_value}$pve_node${c_null}'"
+        echo_ok "$act_desc машин на узле ${c_value}$pve_node${c_null}"
     done
 }
 
