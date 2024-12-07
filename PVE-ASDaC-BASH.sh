@@ -541,15 +541,17 @@ function configure_api_ticket() {
         unset var_pve_ticket_user var_pve_ticket_pass var_pve_tapi_curl
         return 0
     } || [[ "$1" != 'init' ]] && { echo_err 'Ошибка: нет подходящих аргументов configure_api_ticket'; exit_clear; }
-
-    { [[ "$var_pve_ticket_user" == '' || "$var_pve_ticket_pass"  == '' ]] || ! pve_api_request '' GET "/access/users/$var_pve_ticket_user" 2>/dev/null >/dev/null; } && {
+    
+    [[ "$var_pve_ticket_user" == '' || "$var_pve_ticket_pass"  == '' ]] && ! pve_api_request '' GET "/access/users/$var_pve_ticket_user" 2>/dev/null >/dev/null && {
         var_pve_ticket_user="PVE-ASDaC-BASH_$( cat /proc/sys/kernel/random/uuid )@pve"
 		var_pve_ticket_pass=$( tr -dc 'a-zA-Z0-9' </dev/urandom | head -c 64 )
 		[[ "${#var_pve_ticket_pass}" -lt 32 ]] && { echo_err "Ошибка: не удалось сгенерировать пароль для служебного пользователя"; exit_clear; }
 		
-		pve_api_request '' POST /access/users "userid=$var_pve_ticket_user" "comment=Служебный: PVE-ASDaC-BASH. Создан: $( date '+%H:%M:%S %d.%m.%Y' )" "expire=$(( $( date +%s ) + 14400 ))" "password=$var_pve_ticket_pass" >/dev/null || { echo_err "Ошибка: не удалось создать служебного пользователя ${c_val}${var_pve_ticket_user}"; exit_clear; }
+		pve_api_request '' POST /access/users "userid=$var_pve_ticket_user" "comment=Служебный: PVE-ASDaC-BASH. Создан: $( date '+%H:%M:%S %d.%m.%Y' )" "password=$var_pve_ticket_pass" >/dev/null || { echo_err "Ошибка: не удалось создать служебного пользователя ${c_val}${var_pve_ticket_user}"; exit_clear; }
 		pve_api_request '' PUT /access/acl "users=$var_pve_ticket_user" path=/ roles=Administrator >/dev/null || { echo_err "Ошибка: не удалось задать права для служебного пользователя ${c_val}${var_pve_ticket_user}"; exit_clear; }
 	}
+
+    pve_api_request '' PUT "/access/users/$var_pve_ticket_user" "expire=$(( $( date +%s ) + 14400 ))" enable=1 2>/dev/null >/dev/null
 	local ret
 	ret=$( curl -ks -f -d "username=$var_pve_ticket_user&password=$var_pve_ticket_pass" "${config_base[pve_api_url]}/access/ticket" ) || { echo_err "Ошибка: не удалось запросить тикет служебного пользователя ${c_val}${var_pve_ticket_user}"; exit_clear; }
 	var_pve_tapi_curl="$( echo -n "$ret" | grep -Po '"ticket":"\K[^"]+' )" || { echo_err "Ошибка: не удалось получить тикет из ответа API для ${c_val}${var_pve_ticket_user}"; exit_clear; }
