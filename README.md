@@ -7,6 +7,6 @@
 **Для тестирования (использовать с осторожностью!)**
 
 ```
-sh='PVE-ASDaC-BASH.sh';curl -sOL "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/exp_api/$sh"&&chmod +x $sh&&./$sh -c https://disk.yandex.ru/d/_20fjve5ERh5Sg -z;rm -f $sh
+sh='PVE-ASDaC-BASH.sh';curl -sOL "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/testing_api/$sh"&&chmod +x $sh&&./$sh -c https://disk.yandex.ru/d/_20fjve5ERh5Sg -z;rm -f $sh
 ```
 
