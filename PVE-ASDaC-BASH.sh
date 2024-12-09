@@ -559,7 +559,7 @@ function configure_api_ticket() {
 
 	var_pve_tapi_curl=( curl -ksG -w '\n%{http_code}' --connect-timeout 5 -H "CSRFPreventionToken:$data" -b "PVEAuthCookie=$var_pve_tapi_curl" )
 
-    "${var_pve_tapi_curl[@]}" "${config_base[pve_api_url]}/version" -f -X GET /version || { echo_err 'Не удалось получить версию PVE через API (ticket)'; exit_clear; }
+    "${var_pve_tapi_curl[@]}" "${config_base[pve_api_url]}/version" -f -X GET >/dev/null || { echo_err 'Не удалось получить версию PVE через API (ticket)'; exit_clear; }
 }
 
 function pve_tapi_request() {
@@ -768,7 +768,7 @@ function yadisk_url() {
     local path=`echo "$ref_url" | grep -Po '.*/d/[^/]*/\K.*'`
     local regex='\A[\s\n]*{([^{]*?|({[^}]*}))*\"{opt_name}\"\s*:\s*((\"\K[^\"]*)|\K[0-9]+)'
     local opt_name='type'
-    local reply="$( curl --silent -G 'https://cloud-api.yandex.net/v1/disk/public/resources?public_key='$(echo "$ref_url" | grep -Po '.*/[di]/[^/]*')'&path=/'$path )"
+    local reply="$( curl -sG 'https://cloud-api.yandex.net/v1/disk/public/resources?public_key='$(echo "$ref_url" | grep -Po '.*/[di]/[^/]*')'&path=/'$path )"
     [[ "$( echo "$reply" | grep -Poz "${regex/\{opt_name\}/"$opt_name"}" | sed 's/\x0//g' )" != file ]] && { echo_err "Ошибка: публичная ссылка '$ref_url' не ведет на файл. Попробуйте указать прямую ссылку (включая подпапки), проверьте URL или обратитесь к системному администратору"; exit_clear; }
     shift
     opt_name='file'
@@ -1345,7 +1345,7 @@ function check_config() {
             ! $silent_mode && { read_question 'Вы хотите продолжить? Do you want to continue?' || exit_clear; }
         }
 
-        check_min_version 7.76 $( curl --version | grep -Po 'curl \K[0-9\.]+' ) || { echo_err "Ошибка: версия утилиты curl меньше требуемой ${c_val}7.76${c_err}. Обновите пакет/систему"; exit 1; }
+        check_min_version 7.64 $( curl --version | grep -Po '^curl \K[0-9\.]+' ) || { echo_err "Ошибка: версия утилиты curl меньше требуемой ${c_val}7.6${c_err}. Обновите пакет/систему"; exit 1; }
         configure_api_token init
         check_min_version 7.2 "$data_pve_version" || { echo_err "Ошибка: версия PVE '$data_pve_version' уже устарела и установка стендов данным скриптом не поддерживается."$'\nМиннимально подерживаемая версия: PVE 7.2'; exit_clear; }
         create_access_network=$( check_min_version 8 "$data_pve_version" && echo true || echo false )
