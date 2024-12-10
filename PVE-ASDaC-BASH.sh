@@ -2133,7 +2133,7 @@ function manage_stands() {
                     manage_bulk_vm_power --add "$vm_node" "$vmid"
                     continue
                 }
-                [[ "$switch" == 6 || "$switch" == 9 ]] && [[ "$vm_status" == running ]] && {
+                [[ "$switch" == 7 ]] && [[ "$vm_status" == running ]] && {
                     $vm_poweroff_answer && {
                         vm_poweroff=$( read_question "Машина ${c_ok}$name${c_null} (${c_info}$vmid${c_null}) стенда ${c_value}$pool_name${c_null} включена. При создании снапшота рекомендуется выключить ВМ. "$'\n'"Выключать виртуальные машины перед созданием снапшота" && echo true || echo false)
                         ! $vm_poweroff && { read_question $'\n'"Сохранять включенное состояние виртуальных машин? Иначе будут сохранены только данные на дисках"$'\n'"Сохранять VM state" || vm_snap_state=false; }
