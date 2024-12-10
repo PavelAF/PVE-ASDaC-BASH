@@ -305,21 +305,6 @@ function indexOf() {
     done
 }
 
-function indexOfLine() {
-    [[ "$1" == '' || "$2" == '' ]] && exit_pid
-    echo -n "$1" | awk -v str="$2" '$0==str{printf NR;exit}'
-}
-
-function get_table_val() {
-    [[ "$1" == '' || "$2" == ''  || "$3" == '' ]] && return 2
-    local -n ref_search_arr=$1
-    local var="${2%=*}" value="${2#*=}" index
-    ! [[ -v ref_search_arr[$var] && -v ref_search_arr[$3] ]] && return 1
-    index=$( echo -n "${ref_search_arr[$var]}" | awk -v str="$value" '$0==str{printf NR;exit}' )
-    [[ "$index" -le 0 ]] && return 1
-    echo -n "${ref_search_arr[$3]}" | sed -n "${index}p"
-}
-
 function get_numtable_val() {
     [[ "$1" == '' || "$2" == ''  || "$3" == '' ]] && return 2
     local -n ref_search_arr=$1
@@ -342,42 +327,6 @@ function get_numtable_indexOf() {
         return 0
     done
     return 1
-}
-
-function parse_noborder_table() {
-    [[ "$1" == '' || "$2" == '' ]] && return 1
-    local _cmd="$1 --output-format text --noborder"
-    local -n ref_dict_table=$2
-    shift && shift
-    local _table
-    _table=$(eval "$_cmd") || { echo "Ошибка: не удалось выполнить команду $_cmd"; return 1; }
-	
-    local _index=0 _header='' _name='' _column='' i=0
-    while [[ "$(echo -n $_table)" != '' ]]; do
-		
-        _header=$(echo "$_table" | sed -n '1p')
-        _index=$(echo "$_header" | grep -Po '^\S+\ *' | wc -m)
-        [[ "$_index" == 0 ]] && break
-        _name=$(echo "$_header" | grep -Po '^\S+')
-        if echo "$_header" | grep -Piq '^\S+(?=\ +\S)';
-        then
-            ((_index-=2))
-            _column=$( echo -n "$_table" | sed -n '1!p' | grep -Po '^.{'$_index'}' | sed 's/ *$//'; printf x)
-            _column="${_column::-2}"
-            _table=$( echo -n "$_table" | sed 's/^.\{'$((++_index))'\}//')
-        else
-            _column=$( echo -n "$_table" | sed -n '1!p' | sed 's/ *$//'; printf x)
-            _column="${_column::-1}"
-            _table=''
-        fi
-        [[ $# != 0 ]] && { printf '%s\n' "$@" | grep -Fxq -- "$_name" || continue; }
-
-        if [[ $# == 0 || $# -gt 1 ]]; then
-            ref_dict_table["$_name"]=$_column || return 1r;
-        else
-            ref_dict_table=$_column; return
-        fi
-    done
 }
 
 function check_min_version { 
@@ -542,16 +491,16 @@ function configure_api_ticket() {
         return 0
     } || [[ "$1" != 'init' ]] && { echo_err 'Ошибка: нет подходящих аргументов configure_api_ticket'; exit_clear; }
     
-    { [[ "$var_pve_ticket_user" == '' || "$var_pve_ticket_pass"  == '' ]] || ! pve_api_request '' GET "/access/users/$var_pve_ticket_user" &>/dev/null; } && {
+    { [[ "$var_pve_ticket_user" == '' || "$var_pve_ticket_pass"  == '' ]] || ! pve_api_request '' GET "/access/users/$var_pve_ticket_user" 2>/dev/null; } && {
         var_pve_ticket_user="PVE-ASDaC-BASH_$( cat /proc/sys/kernel/random/uuid )@pve"
 		var_pve_ticket_pass=$( tr -dc 'a-zA-Z0-9' </dev/urandom | head -c 64 )
 		[[ "${#var_pve_ticket_pass}" -lt 32 ]] && { echo_err "Ошибка: не удалось сгенерировать пароль для служебного пользователя"; exit_clear; }
 		
-		pve_api_request '' POST /access/users "userid=$var_pve_ticket_user" "comment=Служебный: PVE-ASDaC-BASH. Создан: $( date '+%H:%M:%S %d.%m.%Y' )" "password=$var_pve_ticket_pass" >/dev/null || { echo_err "Ошибка: не удалось создать служебного пользователя ${c_val}${var_pve_ticket_user}"; exit_clear; }
-		pve_api_request '' PUT /access/acl "users=$var_pve_ticket_user" path=/ roles=Administrator >/dev/null || { echo_err "Ошибка: не удалось задать права для служебного пользователя ${c_val}${var_pve_ticket_user}"; exit_clear; }
+		pve_api_request '' POST /access/users "userid=$var_pve_ticket_user" "comment=Служебный: PVE-ASDaC-BASH. Создан: $( date '+%H:%M:%S %d.%m.%Y' )" "password=$var_pve_ticket_pass" || { echo_err "Ошибка: не удалось создать служебного пользователя ${c_val}${var_pve_ticket_user}"; exit_clear; }
+		pve_api_request '' PUT /access/acl "users=$var_pve_ticket_user" path=/ roles=Administrator || { echo_err "Ошибка: не удалось задать права для служебного пользователя ${c_val}${var_pve_ticket_user}"; exit_clear; }
 	}
 
-    pve_api_request '' PUT "/access/users/$var_pve_ticket_user" "expire=$(( $( date +%s ) + 14400 ))" enable=1 &>/dev/null || exit_clear
+    pve_api_request '' PUT "/access/users/$var_pve_ticket_user" "expire=$(( $( date +%s ) + 14400 ))" enable=1 || exit_clear
 	local data
 	data=$( curl -ksf -d "username=$var_pve_ticket_user&password=$var_pve_ticket_pass" "${config_base[pve_api_url]}/access/ticket" ) || { echo_err "Ошибка: не удалось запросить тикет служебного пользователя ${c_val}${var_pve_ticket_user}"; exit_clear; }
 	[[ "$data" =~ '"ticket":"'([^\"]+) ]] && var_pve_tapi_curl=${BASH_REMATCH[1]} || { echo_err "Ошибка: не удалось получить тикет из ответа API для ${c_val}${var_pve_ticket_user}"; exit_clear; }
@@ -559,7 +508,7 @@ function configure_api_ticket() {
 
 	var_pve_tapi_curl=( curl -ksG -w '\n%{http_code}' --connect-timeout 5 -H "CSRFPreventionToken:$data" -b "PVEAuthCookie=$var_pve_tapi_curl" )
 
-    "${var_pve_tapi_curl[@]}" "${config_base[pve_api_url]}/version" -f -X GET >/dev/null || { echo_err 'Не удалось получить версию PVE через API (ticket)'; exit_clear; }
+    "${var_pve_tapi_curl[@]}" "${config_base[pve_api_url]}/version" -f -X GET || { echo_err 'Не удалось получить версию PVE через API (ticket)'; exit_clear; }
 }
 
 function pve_tapi_request() {
@@ -798,17 +747,14 @@ function get_file() {
     [[ "$1" == '' ]] && exit_clear
 
     local -n url="$1"
-    local base_url="$url"
-    local md5=$(echo $url | md5sum)
+    local base_url="$url" md5=$(echo $url | md5sum)
     md5="h${md5::-3}"
 
     [[ -v list_img_files["$md5"] && -r "${list_url_files[$md5]}" ]] && url="${list_url_files[$md5]}" && return 0
 
 
-    local max_filesize=${2:-5368709120}
-    local filesize='' filename='' file_sha256=''
+    local max_filesize=${2:-5368709120} filesize='' filename='' file_sha256='' force=$( [[ "$3" == force ]] && echo true || echo false )
     isdigit_check "$max_filesize" || { echo_err "Ошибка get_file max_filesize=$max_filesize не число"; exit_clear; }
-    local force=$( [[ "$3" == force ]] && echo true || echo false )
 
     if [[ "$url" =~ ^https://disk\.yandex\.ru/ ]]; then
         yadisk_url url filesize=size filename=name file_sha256=sha256
@@ -2165,7 +2111,7 @@ function manage_stands() {
         for ((i=1; i<=$( echo -n "${pool_list[$group_name]}" | grep -c '^' ); i++)); do
             echo_tty
             pool_name=$( echo "${pool_list[$group_name]}" | sed -n "${i}p" )
-            pve_api_request pool_info GET "'/pools/$pool_name'" || { echo_err "Ошибка: не удалось получить информацию об стенде '$pool_name'"; exit_clear; }
+            pve_api_request pool_info GET "/pools/$pool_name" || { echo_err "Ошибка: не удалось получить информацию об стенде '$pool_name'"; exit_clear; }
             vmid_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/vmid}" )
             vmname_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/name}" )
             vm_node_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/node}" )
