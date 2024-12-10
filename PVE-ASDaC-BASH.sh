@@ -230,7 +230,7 @@ function echo_verbose() {
 }
 
 function echo_ok() {
-    echo_tty "[${c_success}Выполнено${c_null}] $*${c_null}"
+    echo_tty "[${c_ok}Выполнено${c_null}] $*${c_null}"
 }
 
 function read_question_select() {
@@ -1910,12 +1910,12 @@ function manage_bulk_vm_power() {
     }
     
     local pve_node args act_desc=''
-    [[ "$action" == 'startall' ]] && args=" --force '1'" && act_desc="${c_ok}включение${c_null}" || { act_desc="${c_error}выключение${c_null}"; isdigit_check "$2" && args=" --timeout '$2'"; }
+    [[ "$action" == 'startall' ]] && args=" --force '1'" && act_desc="${c_ok}включение${c_null}" || { act_desc="${c_err}выключение${c_null}"; isdigit_check "$2" && args=" --timeout '$2'"; }
     for pve_node in "${!bulk_vms_power_list[@]}"; do
-        bulk_vms_power_list[$pve_node]=$( echo "${bulk_vms_power_list[$pve_node]}" | awk 'NF{printf $0}' | sed 's/ \|\;/,/g;s/,\+/,/g' )
-        echo_tty "[${c_ok}Задание${c_null}] Запущено массовое $act_desc машин на узле ${c_value}$pve_node${c_null}. VMID: ${c_value}${bulk_vms_power_list[$pve_node]:1}${c_null}"
-        run_cmd "pvesh create /nodes/$pve_node/$action --vms '${bulk_vms_power_list[$pve_node]:1}'$args"
-        echo_ok "$act_desc машин на узле ${c_value}$pve_node${c_null}"
+        bulk_vms_power_list[$pve_node]=${bulk_vms_power_list[$pve_node]:1}
+        echo_tty "[${c_ok}Задание${c_null}] Запущено массовое $act_desc машин на узле ${c_val}$pve_node${c_null}. Список ВМ: ${c_val}${bulk_vms_power_list[$pve_node]// /"${c_null}, ${c_val}"}${c_null}"
+        run_cmd "pvesh create /nodes/$pve_node/$action --vms '${bulk_vms_power_list[$pve_node]}'$args"
+        echo_ok "${act_desc} машин на узле ${c_val}$pve_node${c_null}"
     done
 }
 
@@ -1952,7 +1952,7 @@ function manage_stands() {
         }
     done
 
-    [[ ${#print_list[@]} != 0 ]] && echo_tty $'\n\nСписок развернутых конфигураций:' || { echo_info $'\n'"Не найденно ни одной развернутой конфигурации"; return 0; }
+    [[ ${#print_list[@]} != 0 ]] && echo_tty $'\n\nСписок развернутых конфигураций:' || { echo_info $'\nНе найденно ни одной развернутой конфигурации'; return 0; }
     local i=0
     for item in "${!print_list[@]}"; do
         echo_tty "  $((++i)). ${print_list[$item]}"
@@ -2133,10 +2133,10 @@ function manage_stands() {
                     manage_bulk_vm_power --add "$vm_node" "$vmid"
                     continue
                 }
-                [[ "$switch" == 7 ]] && [[ "$vm_status" == running ]] && {
+                [[ "$switch" == 7 && "$vm_status" == running ]] && {
                     $vm_poweroff_answer && {
-                        vm_poweroff=$( read_question "Машина ${c_ok}$name${c_null} (${c_info}$vmid${c_null}) стенда ${c_value}$pool_name${c_null} включена. При создании снапшота рекомендуется выключить ВМ. "$'\n'"Выключать виртуальные машины перед созданием снапшота" && echo true || echo false)
-                        ! $vm_poweroff && { read_question $'\n'"Сохранять включенное состояние виртуальных машин? Иначе будут сохранены только данные на дисках"$'\n'"Сохранять VM state" || vm_snap_state=false; }
+                        vm_poweroff=$( read_question "Машина ${c_ok}$name${c_null} (${c_info}$vmid${c_null}) стенда ${c_value}$pool_name${c_null} включена. При создании снапшота рекомендуется выключить ВМ. "$'\nВыключать виртуальные машины перед созданием снапшота?' && echo true || echo false)
+                        ! $vm_poweroff && { read_question $'\n'"Сохранять включенное состояние виртуальных машин? Иначе будут сохранены только данные на дисках"$'\n'"Сохранять VM state?" || vm_snap_state=false; }
                         echo_tty 
                         vm_poweroff_answer=false
                     }
