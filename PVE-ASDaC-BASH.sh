@@ -557,6 +557,7 @@ function jq_data_to_array() {
 	[[ "$1" =~ ^var=(.+) ]] && data=${!BASH_REMATCH[1]} || pve_api_request data GET "$1"
 	data=$( echo -n "$data" | grep -Po '(?(DEFINE)(?<str>"[^"\\]*(?:\\.[^"\\]*)*")(?<other>null|true|false|[0-9\-\.Ee\+]+)(?<arr>\[[^\[\]]*+(?:(?-1)[^\[\]]*)*+\])(?<obj>{[^{}]*+(?:(?-1)[^{}]*)*+}))(?:^\s*{\s*(?:(?&str)\s*:\s*(?:(?&other)|(?&str)|(?&arr)|(?&obj))\s*,\s*)*?"data"\s*:\s*(?:\[|(?={))|\G\s*,\s*)(?:(?:(?&other)|(?&str)|(?&arr))\s*,\s*)*\K(?>(?&obj)|)(?=\s*(?:\]|})|\s*,[^,])' ) \
         || { echo_err "Ошибка jq_data_to_array: не удалось получить корректные JSON данные от API: ${c_val}GET '$1'"$'\n'"API_DATA: $data"; exit_clear; }
+    [[ "${#data}" == 0 ]] && return 0
 	local -n ref_dict_table=$2
 	while read -r line || [[ -n $line ]]; do
 		((i++))
@@ -1932,7 +1933,7 @@ function manage_stands() {
     local group_name pool_name comment users users_count=0 stands_count=0 max_count
 
     max_count=$( printf '%s\n' "${!acl_list[@]}" | sort -Vr | head -n 1 | grep -Po '^\d+' )
-    for ((i=0; i<=$max_count; i++)); do
+    for ((i=0; i<="$max_count"; i++)); do
         [[ "${acl_list[$i,type]}" != group ]] && continue
         group_name=${acl_list[$i,ugid]}
         pool_name=${acl_list[$i,path]}
@@ -1943,7 +1944,7 @@ function manage_stands() {
         fi
     done
     max_count=$( printf '%s\n' "${!group_list[@]}" | sort -Vr | head -n 1 | grep -Po '^\d+' )
-    for ((i=0; i<=$max_count; i++)); do
+    for ((i=0; i<="$max_count"; i++)); do
         group_name="${group_list[$i,groupid]}"
         [[ -v "print_list[$group_name]" ]] && {
             comment="${group_list[$i,comment]}"
