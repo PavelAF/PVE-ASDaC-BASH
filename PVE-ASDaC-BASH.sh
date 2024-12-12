@@ -2191,7 +2191,7 @@ function manage_stands() {
             run_cmd /noexit pve_api_request "''" DELETE "/nodes/$vm_node/network/$2";
             [[ $? =~ ^0$|^244$ ]] || { echo_err "Ошибка: не удалось удалить сетевой интерфейс '$2'"; exit_clear; }
             echo_ok "Стенд ${c_value}$1${c_null}: удален сетевой интерфейс ${c_ok}$2${c_null}${3:+ ($3)}"        
-            eval "deny_ifaces_$(echo -n "$vm_nodes" | grep -c '^')+=' $2'"
+            deny_ifaces+=" $2"
         }
 
         local ifname vm_nodes='' vm_netifs depend_if if_desc k restart_network=false vm_protection=0 vm_del_protection_answer=''
@@ -2229,11 +2229,11 @@ function manage_stands() {
                 for ((k=1; k<=$( echo -n "$vm_netifs" | grep -c '^' ); k++)); do
                     ifname=$( echo -n "$vm_netifs" | sed -n "${k}p" )
                     echo -n "$deny_ifaces" | grep -Pq '(?<=^| )'$ifname'(?=$| )' && continue
-                    [[ "$( get_numtable_val ifaces_info "iface=$ifname" iface )" == '' ]] && { deny_ifaces+=$'\n'$ifname; continue; }
+                    [[ "$( get_numtable_val ifaces_info "iface=$ifname" iface )" == '' ]] && { deny_ifaces+=" $ifname"; continue; }
                     if_desc=$( get_numtable_val ifaces_info "iface=$ifname" comments )
                     if_desc=$( printf '%b\n' "$if_desc" )
                     depend_if=$( get_numtable_val ifaces_info "vlan-raw-device=$ifname" iface )
-                    [[ "$depend_if" != '' ]] && ! echo "$deny_ifaces" | grep -Pq '(?<=^| )'$ifname'(?=$| )' && delete_if "$pool_name" "$depend_if"
+                    [[ "$depend_if" != '' ]] && ! echo -n "$deny_ifaces" | grep -Pq '(?<=^| )'$ifname'(?=$| )' && delete_if "$pool_name" "$depend_if"
                     delete_if "$pool_name" "$ifname" "$if_desc"
                     restart_network=true
                 done
