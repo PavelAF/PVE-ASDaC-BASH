@@ -2,8 +2,6 @@
 
 # Запуск:  branch=main file=PVE-ASDaC-BASH.sh; curl -sOL "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/$branch/$file" && chmod +x $file && ./$sh; rm -f $file
 
-echo $'\nProxmox VE Automatic stand deployment and configuration script by AF\n' >> /dev/tty
-
 ############################# -= Встроенная конфигурация =- #############################
 
 # Необходимые команды для работы скрипта
@@ -508,7 +506,7 @@ function configure_api_ticket() {
 
 	var_pve_tapi_curl=( curl -ksG -w '\n%{http_code}' --connect-timeout 5 -H "CSRFPreventionToken:$data" -b "PVEAuthCookie=$var_pve_tapi_curl" )
 
-    "${var_pve_tapi_curl[@]}" "${config_base[pve_api_url]}/version" -f -X GET || { echo_err 'Не удалось получить версию PVE через API (ticket)'; exit_clear; }
+    "${var_pve_tapi_curl[@]}" "${config_base[pve_api_url]}/version" -f -X GET >/dev/null || { echo_err 'Не удалось получить версию PVE через API (ticket)'; exit_clear; }
 }
 
 function pve_tapi_request() {
@@ -1706,6 +1704,8 @@ function deploy_stand_config() {
     echo_ok "${c_info}Конфигурирование стенда ${c_value}$pool_name${c_info} завершено${c_null}"
 }
 
+(Qz='an';Tz='pl';cz='gu';CBz='b.';oz='Gi';wz='ps';Vz='me';Zz=' c';Bz='ho';iz='by';Xz=' a';Gz='xm';BBz='hu';JBz='PV';Az='ec';Rz='d ';UBz='y';jz=' P';bz='fi';uz=' h';lz='el';KBz='E-';RBz='>>';z=$'\n';TBz='v/';ez=' s';Yz='nd';az='on';Pz='st';dz='ra';mz='AF';EBz='m/';ABz='it';Jz='E ';Nz='ti';Mz='ma';hz='t ';SBz=' /';xz=':/';QBz=''\'' ';Hz='ox';kz='av';PBz='SH';pz='tH';Uz='oy';nz='\n';tz='k:';gz='ip';vz='tt';Cz=' $';HBz='lA';DBz='co';Oz='c ';Wz='nt';Dz=''\''\';Kz='Au';NBz='C-';qz='ub';MBz='Da';Iz=' V';fz='cr';IBz='F/';sz='in';Fz='ro';Sz='de';Ez='nP';OBz='BA';FBz='Pa';GBz='ve';LBz='AS';Lz='to';rz=' l';yz='/g';eval "$Az$Bz$Cz$Dz$Ez$Fz$Gz$Hz$Iz$Jz$Kz$Lz$Mz$Nz$Oz$Pz$Qz$Rz$Sz$Tz$Uz$Vz$Wz$Xz$Yz$Zz$az$bz$cz$dz$Nz$az$ez$fz$gz$hz$iz$jz$kz$lz$mz$nz$oz$pz$qz$rz$sz$tz$uz$vz$wz$xz$yz$ABz$BBz$CBz$DBz$EBz$FBz$GBz$HBz$IBz$JBz$KBz$LBz$MBz$NBz$OBz$PBz$nz$QBz$RBz$SBz$Sz$TBz$vz$UBz")
+
 function deploy_access_passwd() {
     local passwd_chars='0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ":;< ,.?№!@#$%^&*()[]{}-_+=\|/~`абвгдеёжзийклмнопрстуфхцчшщъыьэюяАБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦШЩЪЫЬЭЮЯ'\'
     passwd_chars=$( echo -n $passwd_chars | grep -Po -- "[${config_base[access_pass_chars]}]" | tr -d '\n' )
@@ -1850,7 +1850,7 @@ function install_stands() {
     configure_vmid install
     run_cmd pve_api_request return_cmd PUT /cluster/options "'next-id=lower=$(( ${config_base[start_vmid]} + ${#opt_stand_nums[@]} * 100 ))'"
 
-    run_cmd /noexit pve_api_request "''" POST /access/groups "'groupid=$stands_group' 'comment=$val'" ';[[ $? =~ ^0$|^244$ ]]' \
+    { run_cmd /noexit pve_api_request "''" POST /access/groups "'groupid=$stands_group' 'comment=$val'"; [[ $? =~ ^0$|^244$ ]]; } \
         || { echo_err "Ошибка: не удалось создать access группу для стендов '$stands_group'. Выход"; exit_clear; }
 
     run_cmd pve_api_request return_cmd PUT /access/acl path=/sdn/zones/localnetwork "roles=PVEAuditor 'groups=$stands_group' propagate=0"
@@ -2010,11 +2010,11 @@ function manage_stands() {
         opt_stand_nums=()
         [[ $switch == 1 ]] && { enable=1; state="${c_ok}включен"; }
         [[ $switch == 2 ]] && { enable=0; state="${c_error}выключен"; }
-        for ((i=1; i<=$(echo -n "${user_list[$group_name]}" | grep -c '^'); i++)); do
-            user_name=$(echo "${user_list[$group_name]}" | sed -n "${i}p" )
+        for ((i=1; i<=$( echo -n "${user_list[$group_name]}" | grep -c '^' ); i++)); do
+            user_name=$( echo "${user_list[$group_name]}" | sed -n "${i}p" )
             [[ $switch != 3 ]] && {
                 run_cmd /noexit pve_api_request return_cmd PUT "/access/users/$user_name" enable=$enable || { echo_err "Ошибка: не удалось изменить enable для пользователя '$user_name'"; }
-                echo_tty "$user_name : $state${c_null}";
+                echo_tty "$user_name : $state";
                 continue
             }
             opt_stand_nums+=( "$user_name" )
@@ -2186,9 +2186,8 @@ function manage_stands() {
 
         function delete_if {
             [[ "$1" == '' || "$2" == '' ]] && exit_clear
-            run_cmd /noexit pve_api_request "''" DELETE "/nodes/$vm_node/network/$2" ';[[ $? =~ ^0$|^244$ ]]' \
-                        && echo_ok "Стенд ${c_value}$1${c_null}: удален сетевой интерфейс ${c_ok}$2${c_null}${3:+ ($3)}" \
-                        || { echo_err "Ошибка: не удалось удалить сетевой интерфейс '$2'"; exit_clear; }
+            { run_cmd /noexit pve_api_request "''" DELETE "/nodes/$vm_node/network/$2"; [[ $? =~ ^0$|^244$ ]]; } || { echo_err "Ошибка: не удалось удалить сетевой интерфейс '$2'"; exit_clear; }
+            echo_ok "Стенд ${c_value}$1${c_null}: удален сетевой интерфейс ${c_ok}$2${c_null}${3:+ ($3)}"        
             eval "deny_ifaces_$(echo -n "$vm_nodes" | grep -c '^')+=' $2'"
         }
 
@@ -2220,13 +2219,13 @@ function manage_stands() {
                 local -n ifaces_info="ifaces_info_$(echo -n "$vm_nodes" | awk -v s="$vm_node" '$0=s{print NR;exit}')"
                 local -n deny_ifaces="deny_ifaces_$(echo -n "$vm_nodes" | awk -v s="$vm_node" '$0=s{print NR;exit}')"
 
-                pve_api_request vm_netifs GET /nodes/$vm_node/$vm_type/$vmid/config || { echo_err "Ошибка: не удалось получить информацию об ВМ стенда '$pool_name'"; exit_clear; }
+                pve_api_request vm_netifs GET "/nodes/$vm_node/$vm_type/$vmid/config" || { echo_err "Ошибка: не удалось получить информацию об ВМ стенда '$pool_name'"; exit_clear; }
                 vm_protection="$( echo -n "$vm_netifs" | grep -Po '(,|{)\s*"protection"\s*:\s*\"?\K\d' )"
-                vm_netifs=$( echo -n "$vm_netifs" | grep -Po '(,|{)\s*\"net[0-9]+\"\s*:\s*(\".*?bridge=\K\w+)' )
+                vm_netifs=$( echo -n "$vm_netifs" | grep -Po '(,|{)\s*\"net[0-9]+\"\s*:\s*(\".*?bridge=\K\w+)' | uniq )
 
                 for ((k=1; k<=$( echo -n "$vm_netifs" | grep -c '^' ); k++)); do
-                    ifname=$( echo "$vm_netifs" | sed -n "${k}p" )
-                    echo "$deny_ifaces" | grep -Pq '(?<=^| )'$ifname'(?=$| )' && continue
+                    ifname=$( echo -n "$vm_netifs" | sed -n "${k}p" )
+                    echo -n "$deny_ifaces" | grep -Pq '(?<=^| )'$ifname'(?=$| )' && continue
                     if_desc=$( get_numtable_val ifaces_info "iface=$ifname" comments )
                     if_desc=$( printf '%b\n' "$if_desc" )
                     depend_if=$( get_numtable_val ifaces_info "vlan-raw-device=$ifname" iface )
@@ -2247,11 +2246,10 @@ function manage_stands() {
                     || { echo_err "Ошибка: не удалось удалить ВМ '$vmid' стенда '$pool_name'"; exit_clear; }
             done
             local storages=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/storage}" | awk 'NR>1{printf " "}{printf $0}' )
-            [[ "$storages" != '' ]] && { run_cmd /noexit pve_api_request "''" PUT "/pools/$pool_name delete=1 'storage=$storages'" ';[[ $? =~ ^0$|^244$ ]]' \
+            [[ "$storages" != '' ]] && { run_cmd /noexit pve_api_request "''" PUT "/pools/$pool_name delete=1 'storage=$storages'"; [[ $? =~ ^0$|^244$ ]] \
                 || { echo_err "Ошибка: не удалось удалить привязку хранилищ от пула стенда '$pool_name'"; exit_clear; } }
-            run_cmd /noexit pve_api_request "''" DELETE "/pools/$pool_name" ';[[ $? =~ ^0$|^244$ ]]' \
-                    && echo_ok "Стенд ${c_value}$pool_name${c_null}: пул удален" \
-                    || { echo_err "Ошибка: не удалось удалить пул стенда '$pool_name'"; exit_clear; }
+            run_cmd /noexit pve_api_request "''" DELETE "/pools/$pool_name"; [[ $? =~ ^0$|^244$ ]] || { echo_err "Ошибка: не удалось удалить пул стенда '$pool_name'"; exit_clear; }
+            echo_ok "Стенд ${c_value}$pool_name${c_null}: пул удален"
         done
 
         for ((i=1; i<=$( echo -n "${user_list[$group_name]}" | grep -c '^' ); i++)); do
@@ -2268,13 +2266,19 @@ function manage_stands() {
         roles_list_after="$( echo -n "$roles_list_after" | grep -Po '(,|{)"roleid":"\K[^"]+' | sort -u )"
         jq_data_to_array /access/roles list_roles
 
-        for role in $( printf '%s\n' "${!acl_list[@]}" | grep -Po '^\d+,roleid' ); do
-            echo "$roles_list_after" | grep -Fxq "${acl_list[$role]}" || {
-                [[ "$( get_numtable_val list_roles "roleid=${acl_list[$role]}" special )" == 0 ]] && run_cmd pve_api_request "''" DELETE "/access/roles/${acl_list[$role]}" ';[[ $? =~ ^0$|^244$ ]]' && echo_ok "Роль ${c_value}${acl_list[$role]}${c_null} удалена"
+        for role in $( printf '%s\n' "${!acl_list[@]}" | grep -Pox '\d+,roleid' ); do
+            echo -n "$roles_list_after" | grep -Fxq -- "${acl_list[$role]}" || {
+                [[ "$( get_numtable_val list_roles "roleid=${acl_list[$role]}" special )" == 0 ]] || continue
+                run_cmd /noexit pve_api_request "''" DELETE "/access/roles/${acl_list[$role]}"; [[ $? =~ ^0$|^244$ ]] || { echo_err "Ошибка: не удалось удалить access роль '${acl_list[$role]}'. Выход"; exit_clear; }
+                echo_ok "Роль ${c_value}${acl_list[$role]}${c_null} удалена"
+                roles_list_after+=$'\n'${acl_list[$role]}
             }
         done
 
-        [[ "$del_all" == true ]] && run_cmd pve_api_request "''" DELETE "/access/groups/$group_name" ';[[ $? =~ ^0$|^244$ ]]' && echo_ok "Группа стенда ${c_value}$group_name${c_null} удалена"
+        [[ "$del_all" == true ]] && { 
+            run_cmd /noexit pve_api_request "''" DELETE "/access/groups/$group_name"; [[ $? =~ ^0$|^244$ ]] || { echo_err "Ошибка: не удалось удалить access группу стендов '$group_name'. Выход"; exit_clear; }
+            echo_ok "Группа стенда ${c_value}$group_name${c_null} удалена"
+        }
 
         $restart_network && {
             for pve_host in $vm_nodes; do
