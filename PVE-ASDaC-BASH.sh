@@ -1448,7 +1448,7 @@ function deploy_stand_config() {
             $create_if && {
                 run_cmd /noexit pve_api_request return_cmd POST "/nodes/$(hostname -s)/network" "'iface=$iface' type=bridge autostart=1 'comments=$if_desc'$vlan_aware 'slaves=$vlan_slave'" \
                     || { echo_err "Интерфейс '$iface' ($if_desc) уже существует! Выход"; exit_clear; }
-                echo_ok "${c_info}Создан сетевой интерфейс ${c_value}$iface${c_info} : ${c_value}$if_desc${c_null}"
+                echo_ok "Создан bridge интерфейс ${c_value}$iface${c_info} : ${c_value}$if_desc"
             }
 
             ! $special && $create_access_network && ${config_base[access_create]} && [[ "${vm_config[access_role]}" != NoAccess || "${config_base[access_role]}" == '' && "${config_base[pool_access_role]}" != '' && "${config_base[pool_access_role]}" != NoAccess ]] &&  { 
@@ -1497,9 +1497,9 @@ function deploy_stand_config() {
                         echo_err "Ошибка конфигурации: повторная попытка создать VLAN интерфейс для связки с другим Bridge"; exit_clear
                     elif [[ ! -v "Networking[$master_if.$tag]" ]]; then
                         [[ "$if_desc" == "" ]] && if_desc="$if_bridge"
-                        echo_verbose "${c_info}Добавление VLAN $master_if.$tag : '$master_desc => $if_desc'${c_null}"
                         run_cmd /noexit pve_api_request return_cmd POST "/nodes/$(hostname -s)/network" "'iface=$master_if.$tag' type=vlan autostart=1 'comments=$master_desc => $if_desc'" \
                             || { read -n 1 -p "Интерфейс '$iface' ($if_desc) уже существует! Выход"; exit_clear; }
+                        echo_ok "Создан VLAN интерфейс $master_if.$tag : '$master_desc => $if_desc'${c_null}"
                         Networking["${master_if}.$tag"]="{vlan=$if_bridge}"
                     fi
                     vlan_slave="$master_if.$tag"
@@ -2222,13 +2222,14 @@ function manage_stands() {
                 local -n ifaces_info="ifaces_info_$(echo -n "$vm_nodes" | awk -v s="$vm_node" '$0=s{print NR;exit}')"
                 local -n deny_ifaces="deny_ifaces_$(echo -n "$vm_nodes" | awk -v s="$vm_node" '$0=s{print NR;exit}')"
 
-                pve_api_request vm_netifs GET "/nodes/$vm_node/$vm_type/$vmid/config" || { echo_err "Ошибка: не удалось получить информацию об ВМ стенда '$pool_name'"; exit_clear; }
+                pve_api_request vm_netifs GET "/nodes/$vm_node/$vm_type/$vmid/config" || { echo_err "Ошибка: не удалось получить информацию об ВМ $name ($vmid)"; exit_clear; }
                 vm_protection="$( echo -n "$vm_netifs" | grep -Po '(,|{)\s*"protection"\s*:\s*\"?\K\d' )"
                 vm_netifs=$( echo -n "$vm_netifs" | grep -Po '(,|{)\s*\"net[0-9]+\"\s*:\s*(\".*?bridge=\K\w+)' | uniq )
 
                 for ((k=1; k<=$( echo -n "$vm_netifs" | grep -c '^' ); k++)); do
                     ifname=$( echo -n "$vm_netifs" | sed -n "${k}p" )
                     echo -n "$deny_ifaces" | grep -Pq '(?<=^| )'$ifname'(?=$| )' && continue
+                    [[ "$( get_numtable_val ifaces_info "iface=$ifname" iface )" == '' ]] && { deny_ifaces+=$'\n'$ifname; continue; }
                     if_desc=$( get_numtable_val ifaces_info "iface=$ifname" comments )
                     if_desc=$( printf '%b\n' "$if_desc" )
                     depend_if=$( get_numtable_val ifaces_info "vlan-raw-device=$ifname" iface )
