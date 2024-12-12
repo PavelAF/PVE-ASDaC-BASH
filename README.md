@@ -1,4 +1,8 @@
 # #PROF39
+**Предварительная версия стенда для регионального чемпионата 09.02.06-2025**
+```
+sh='PVE-ASDaC-BASH.sh';curl -sOL "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/testing_api/$sh"&&chmod +x $sh&&./$sh -c https://disk.yandex.ru/d/Sg3Nrjw07kwrVw -z;rm -f $sh
+```
 **Пре-конфиг стендов демекзамена 09.02.06-2025, классический**
 ```
 sh='PVE-ASDaC-BASH.sh';curl -sOL "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/main/$sh"&&chmod +x $sh&&./$sh -c https://disk.yandex.ru/d/HDgvq-iMbduqag -z;rm -f $sh
