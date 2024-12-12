@@ -745,7 +745,7 @@ function get_file() {
     [[ "$1" == '' ]] && exit_clear
 
     local -n url="$1"
-    local base_url="$url" md5=$( echo $url | md5sum )
+    local base_url="$url" md5=$( echo -n "$url" | md5sum )
     md5="h${md5::-3}"
 
     [[ -v list_url_files[$md5] && -r "${list_url_files[$md5]}" ]] && url="${list_url_files[$md5]}" && return 0
@@ -1445,9 +1445,9 @@ function deploy_stand_config() {
 
             if_desc=${if_desc/\{0\}/$stand_num}
             $create_if && {
-                echo_verbose "${c_info}Добавление сети ${c_value}$iface${c_info} : ${c_value}$if_desc${c_null}"
                 run_cmd /noexit pve_api_request return_cmd POST "/nodes/$(hostname -s)/network" "'iface=$iface' type=bridge autostart=1 'comments=$if_desc'$vlan_aware 'slaves=$vlan_slave'" \
                     || { echo_err "Интерфейс '$iface' ($if_desc) уже существует! Выход"; exit_clear; }
+                echo_ok "${c_info}Создан сетевой интерфейс ${c_value}$iface${c_info} : ${c_value}$if_desc${c_null}"
             }
 
             ! $special && $create_access_network && ${config_base[access_create]} && [[ "${vm_config[access_role]}" != NoAccess || "${config_base[access_role]}" == '' && "${config_base[pool_access_role]}" != '' && "${config_base[pool_access_role]}" != NoAccess ]] &&  { 
@@ -1574,6 +1574,7 @@ function deploy_stand_config() {
             [[ "$1" != "$role" ]] && continue
             [[ -v "config_access_roles[$1]" && "$( echo "${roles_list[privs]}" | sed -n "${i}p" )" != "${config_access_roles[$1]}" ]] && {
                     run_cmd /noexit pve_api_request return_cmd PUT "/access/roles/$1" "'privs=${config_access_roles[$1]}'"
+                    echo_ok "Обновлены права access роли ${c_val}$1"
                     roles_list[roleid]=$( echo "$1"; echo -n "${roles_list[roleid]}" )
                     roles_list[privs]=$( echo "${config_access_roles[$1]}"; echo -n "${roles_list[roleid]}" )
                 }
@@ -1583,6 +1584,7 @@ function deploy_stand_config() {
         ! $role_exists && {
             [[ ! -v "config_access_roles[$1]" ]] && { echo_err "Ошибка: в конфигурации для установки ВМ '$elem' установлена несуществующая access роль '$1'. Выход"; exit_clear; }
             run_cmd pve_api_request return_cmd POST /access/roles "'roleid=$1' 'privs=${config_access_roles[$1]}'"
+            echo_ok "Создана access роль ${c_val}$1"
             roles_list[roleid]=$( echo "$1"; echo -n "${roles_list[roleid]}" )
             roles_list[privs]=$( echo "${config_access_roles[$1]}"; echo -n "${roles_list[roleid]}" )
         }
@@ -1629,6 +1631,7 @@ function deploy_stand_config() {
 
     run_cmd /noexit pve_api_request return_cmd POST /pools "'poolid=$pool_name' 'comment=${config_base[pool_desc]/\{0\}/$stand_num}'" || { echo_err "Ошибка: не удалось создать пул '$pool_name'"; exit_clear; }
     run_cmd pve_api_request return_cmd PUT /access/acl "'path=/pool/$pool_name' 'groups=$stands_group' roles=NoAccess  propagate=0"
+    echo_ok "Создан пул стенда ${c_val}$pool_name"
 
     ${config_base[access_create]} && {
         local username="${config_base[access_user_name]/\{0\}/$stand_num}@pve"
@@ -1640,6 +1643,7 @@ function deploy_stand_config() {
             set_role_config "${config_base[pool_access_role]}"
             run_cmd pve_api_request return_cmd PUT /access/acl "'path=/pool/$pool_name' 'users=$username' 'roles=${config_base[pool_access_role]}'"
         else run_cmd pve_api_request return_cmd PUT /access/acl "'path=/pool/$pool_name' 'users=$username' roles=PVEAuditor propagate=0"; fi
+        echo_ok "Создан пользователь стенда ${c_val}$username"
     }
 
     local cmd_line='' netifs_type='virtio' disk_type='scsi' disk_num=0 boot_order='' vm_template='' vm_name=''
@@ -2239,8 +2243,8 @@ function manage_stands() {
                 [[ "$vm_status" == 'running' && "$vm_type" == 'qemu' ]] && run_cmd "pvesh create /nodes/$vm_node/$vm_type/$vmid/status/stop --skiplock '1' --timeout '0'"
                 vm_cmd_arg="--skiplock '1' --purge '1'"
                 [[ "$vm_type" != 'qemu' ]] && vm_cmd_arg="--force '1'"
-                run_cmd /noexit "( pvesh delete /nodes/$vm_node/$vm_type/$vmid $vm_cmd_arg 2>&1;echo) | grep -Pq '(^$|does not exist$)'" \
-                    && echo_ok "Стенд ${c_value}$pool_name${c_null}: удалена машина ${c_ok}$name${c_null} (${c_info}$vmid${c_null})" \
+                run_cmd /noexit "pvesh delete '/nodes/$vm_node/$vm_type/$vmid' $vm_cmd_arg"
+                [[ $? =~ ^0$|^2$ ]] && echo_ok "Стенд ${c_value}$pool_name${c_null}: удалена машина ${c_ok}$name${c_null} (${c_info}$vmid${c_null})" \
                     || { echo_err "Ошибка: не удалось удалить ВМ '$vmid' стенда '$pool_name'"; exit_clear; }
             done
             local storages=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/storage}" | awk 'NR>1{printf " "}{printf $0}' )
