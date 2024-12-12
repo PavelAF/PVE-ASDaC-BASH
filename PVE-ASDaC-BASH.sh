@@ -2222,7 +2222,10 @@ function manage_stands() {
                 local -n ifaces_info="ifaces_info_$(echo -n "$vm_nodes" | awk -v s="$vm_node" '$0=s{print NR;exit}')"
                 local -n deny_ifaces="deny_ifaces_$(echo -n "$vm_nodes" | awk -v s="$vm_node" '$0=s{print NR;exit}')"
 
-                pve_api_request vm_netifs GET "/nodes/$vm_node/$vm_type/$vmid/config" || { echo_err "Ошибка: не удалось получить информацию об ВМ $name ($vmid)"; exit_clear; }
+                pve_api_request vm_netifs GET "/nodes/$vm_node/$vm_type/$vmid/config" || { 
+                    [[ $? == 244 ]] && { echo_warn "Предупреждение: Машина $name ($vmid) уже была удалена!"; continue; }
+                    echo_err "Ошибка: не удалось получить информацию о ВМ $name ($vmid)"; exit_clear; 
+                }
                 vm_protection="$( echo -n "$vm_netifs" | grep -Po '(,|{)\s*"protection"\s*:\s*\"?\K\d' )"
                 vm_netifs=$( echo -n "$vm_netifs" | grep -Po '(,|{)\s*\"net[0-9]+\"\s*:\s*(\".*?bridge=\K\w+)' | uniq )
 
