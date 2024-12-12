@@ -748,7 +748,7 @@ function get_file() {
     local base_url="$url" md5=$( echo $url | md5sum )
     md5="h${md5::-3}"
 
-    [[ -v list_img_files[$md5] && -r "${list_url_files[$md5]}" ]] && url="${list_url_files[$md5]}" && return 0
+    [[ -v list_url_files[$md5] && -r "${list_url_files[$md5]}" ]] && url="${list_url_files[$md5]}" && return 0
 
     local max_filesize=${2:-5368709120} filesize='' filename='' file_sha256='' force=$( [[ "$3" == force ]] && echo true || echo false )
     isdigit_check "$max_filesize" || { echo_err "Ошибка get_file max_filesize=$max_filesize не число"; exit_clear; }
