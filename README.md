@@ -1,5 +1,5 @@
 # #PROF39
-**Конфиг стенда для регионального чемпионата 09.02.06-2025**
+**Конфиг стенда для регионального чемпионата 09.02.06-2025 (модуль Б)**
 ```
 sh='PVE-ASDaC-BASH.sh';curl -sOL "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/testing_api/$sh"&&chmod +x $sh&&./$sh -c https://disk.yandex.ru/d/Sg3Nrjw07kwrVw -z;rm -f $sh
 ```
