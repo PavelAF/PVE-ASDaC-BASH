@@ -1753,7 +1753,7 @@ function deploy_access_passwd() {
 
         passwd=
         for ((i=0;i<${config_base[access_pass_length]};i++)); do
-            passwd+=${var_passwd_chars:RANDOM%${#var_asswd_chars}:1}
+            passwd+=${var_passwd_chars:RANDOM%${#var_passwd_chars}:1}
         done
 
         run_cmd /noexit pve_tapi_request return_cmd PUT /access/password "'userid=$username' 'password=$passwd' $service_user_password" || { echo_err "Ошибка: не удалось установить пароль пользователю $username"; exit_clear; }
@@ -1848,8 +1848,8 @@ function install_stands() {
     configure_vmid install
     run_cmd pve_api_request return_cmd PUT /cluster/options "'next-id=lower=$(( ${config_base[start_vmid]} + ${#opt_stand_nums[@]} * 100 ))'"
 
-    { run_cmd /noexit pve_api_request "''" POST /access/groups "'groupid=$stands_group' 'comment=$val'"; [[ $? =~ ^0$|^244$ ]]; } \
-        || { echo_err "Ошибка: не удалось создать access группу для стендов '$stands_group'. Выход"; exit_clear; }
+    run_cmd /noexit pve_api_request "''" POST /access/groups "'groupid=$stands_group' 'comment=$val'"
+    [[ $? =~ ^0$|^244$ ]] || { echo_err "Ошибка: не удалось создать access группу для стендов '$stands_group'. Выход"; exit_clear; }
 
     run_cmd pve_api_request return_cmd PUT /access/acl path=/sdn/zones/localnetwork "roles=PVEAuditor 'groups=$stands_group' propagate=0"
     
@@ -2184,7 +2184,8 @@ function manage_stands() {
 
         function delete_if {
             [[ "$1" == '' || "$2" == '' ]] && exit_clear
-            { run_cmd /noexit pve_api_request "''" DELETE "/nodes/$vm_node/network/$2"; [[ $? =~ ^0$|^244$ ]]; } || { echo_err "Ошибка: не удалось удалить сетевой интерфейс '$2'"; exit_clear; }
+            run_cmd /noexit pve_api_request "''" DELETE "/nodes/$vm_node/network/$2";
+            [[ $? =~ ^0$|^244$ ]] || { echo_err "Ошибка: не удалось удалить сетевой интерфейс '$2'"; exit_clear; }
             echo_ok "Стенд ${c_value}$1${c_null}: удален сетевой интерфейс ${c_ok}$2${c_null}${3:+ ($3)}"        
             eval "deny_ifaces_$(echo -n "$vm_nodes" | grep -c '^')+=' $2'"
         }
@@ -2244,8 +2245,8 @@ function manage_stands() {
                     || { echo_err "Ошибка: не удалось удалить ВМ '$vmid' стенда '$pool_name'"; exit_clear; }
             done
             local storages=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/storage}" | awk 'NR>1{printf " "}{printf $0}' )
-            [[ "$storages" != '' ]] && { run_cmd /noexit pve_api_request "''" PUT "/pools/$pool_name delete=1 'storage=$storages'"; [[ $? =~ ^0$|^244$ ]] \
-                || { echo_err "Ошибка: не удалось удалить привязку хранилищ от пула стенда '$pool_name'"; exit_clear; } }
+            [[ "$storages" != '' ]] && { run_cmd /noexit pve_api_request "''" PUT "/pools/$pool_name delete=1 'storage=$storages'"
+                [[ $? =~ ^0$|^244$ ]] || { echo_err "Ошибка: не удалось удалить привязку хранилищ от пула стенда '$pool_name'"; exit_clear; } }
             run_cmd /noexit pve_api_request "''" DELETE "/pools/$pool_name"; [[ $? =~ ^0$|^244$ ]] || { echo_err "Ошибка: не удалось удалить пул стенда '$pool_name'"; exit_clear; }
             echo_ok "Стенд ${c_value}$pool_name${c_null}: пул удален"
         done
