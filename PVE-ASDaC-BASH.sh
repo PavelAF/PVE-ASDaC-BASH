@@ -1932,8 +1932,8 @@ function manage_stands() {
 
     local group_name pool_name comment users users_count=0 stands_count=0 max_count
 
-    max_count=$( printf '%s\n' "${!acl_list[@]}" | sort -Vr | head -n 1 | grep -Po '^\d+' )
-    for ((i=0; i<="$max_count"; i++)); do
+    max_count=$( printf '%s\n' "${!acl_list[@]}" | sort -Vr | head -n 1 | grep -Po '^\d+' ) || max_count=0
+    for ((i=0; i<=$max_count; i++)); do
         [[ "${acl_list[$i,type]}" != group ]] && continue
         group_name=${acl_list[$i,ugid]}
         pool_name=${acl_list[$i,path]}
@@ -1943,8 +1943,8 @@ function manage_stands() {
             pool_list[$group_name]=$( echo "${pool_list[$group_name]}" | tr ' ' '\n' | sed '/^$/d' | sort -uV )
         fi
     done
-    max_count=$( printf '%s\n' "${!group_list[@]}" | sort -Vr | head -n 1 | grep -Po '^\d+' )
-    for ((i=0; i<="$max_count"; i++)); do
+    max_count=$( printf '%s\n' "${!group_list[@]}" | sort -Vr | head -n 1 | grep -Po '^\d+' ) || max_count=0
+    for ((i=0; i<=$max_count; i++)); do
         group_name="${group_list[$i,groupid]}"
         [[ -v "print_list[$group_name]" ]] && {
             comment="${group_list[$i,comment]}"
