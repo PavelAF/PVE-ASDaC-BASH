@@ -1,15 +1,15 @@
 # #PROF39
 **Конфиг стенда для регионального чемпионата 09.02.06-2025 (модуль Б)**
 ```
-sh='PVE-ASDaC-BASH.sh';curl -sOL "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/testing_api/$sh"&&chmod +x $sh&&./$sh -c https://disk.yandex.ru/d/Sg3Nrjw07kwrVw -z;rm -f $sh
+b=testing_api sh=PVE-ASDaC-BASH.sh c='https://disk.yandex.ru/d/Sg3Nrjw07kwrVw';curl -sOL "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/$b/$sh"&&{ chmod +x $sh&&./$sh -c "$c" -z;rm -f $sh;true;}||echo -e "\n\e[1;33mОшибка скачивания: проверьте подключение к Интернету и настройки DNS\ncurl exit code: $?\n\e[m">&2
 ```
 **Пре-конфиг стендов демекзамена 09.02.06-2025, классический**
 ```
-sh='PVE-ASDaC-BASH.sh';curl -sOL "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/main/$sh"&&chmod +x $sh&&./$sh -c https://disk.yandex.ru/d/HDgvq-iMbduqag -z;rm -f $sh
+b=main sh=PVE-ASDaC-BASH.sh c='https://disk.yandex.ru/d/HDgvq-iMbduqag';curl -sOL "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/$b/$sh"&&{ chmod +x $sh&&./$sh -c "$c" -z;rm -f $sh;true;}||echo -e "\n\e[1;33mОшибка скачивания: проверьте подключение к Интернету и настройки DNS\ncurl exit code: $?\n\e[m">&2
 ```
 **Пре-конфиг стендов демекзамена 09.02.06-2025, только ОС Альт**
 ```
-sh='PVE-ASDaC-BASH.sh';curl -sOL "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/main/$sh"&&chmod +x $sh&&./$sh -c https://disk.yandex.ru/d/259h8afDR9hqyQ -z;rm -f $sh
+b=main sh=PVE-ASDaC-BASH.sh c='https://disk.yandex.ru/d/259h8afDR9hqyQ';curl -sOL "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/$b/$sh"&&{ chmod +x $sh&&./$sh -c "$c" -z;rm -f $sh;true;}||echo -e "\n\e[1;33mОшибка скачивания: проверьте подключение к Интернету и настройки DNS\ncurl exit code: $?\n\e[m">&2
 ```
 <br>
 Скрипт простого авторазвертывания стендов с виртуальной ИТ-инфраструктурой на базе гипервизора Proxmox VE и Альт Сервер Виртуализация (PVE)
