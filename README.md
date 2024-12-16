@@ -1,15 +1,23 @@
 # #PROF39
+<details>
+  <summary><b>Предупреждение для пользователей Альт Виртуализация PVE!</b></summary>
+ При развертке стендов, в конце установки скрипт перезагрузит сеть хоста для сохранения внесенных настроек и их применения (для создания виртуальных коммутаторов). Из-за бага, на <b>Альт Виртуализация PVE</b> все запущенные ранее машины потеряют коннект к своим бриджам! Это означает, что на всех ранее запущенных машинах сломается сеть и они не будут иметь сетевую связность! Единственный способ это пофиксить - выключить и включить эти машины, либо к каждой ВМ мануально переприменить сетевые настройки, дергая каждый интерфейс!
+  
+</details>
+
+<br>
+
 **Конфиг стенда для регионального чемпионата 09.02.06-2025 (модуль Б)**
-```
-b=testing_api sh=PVE-ASDaC-BASH.sh c='https://disk.yandex.ru/d/Sg3Nrjw07kwrVw';curl -sOL "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/$b/$sh"&&{ chmod +x $sh&&./$sh -c "$c" -z;rm -f $sh;true;}||echo -e "\n\e[1;33mОшибка скачивания: проверьте подключение к Интернету и настройки DNS\ncurl exit code: $?\n\e[m">&2
+```bash
+b=testing_api sh=PVE-ASDaC-BASH.sh c='https://disk.yandex.ru/d/Sg3Nrjw07kwrVw';curl -sOL "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/$b/$sh"&&{ chmod +x $sh&&./$sh -c "$c" -z;rm -f $sh;true;}||echo -e "\e[1;33m\nОшибка скачивания: проверьте подключение к Интернету и настройки DNS\ncurl exit code: $?\n\e[m">&2
 ```
 **Пре-конфиг стендов демекзамена 09.02.06-2025, классический**
-```
-b=main sh=PVE-ASDaC-BASH.sh c='https://disk.yandex.ru/d/HDgvq-iMbduqag';curl -sOL "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/$b/$sh"&&{ chmod +x $sh&&./$sh -c "$c" -z;rm -f $sh;true;}||echo -e "\n\e[1;33mОшибка скачивания: проверьте подключение к Интернету и настройки DNS\ncurl exit code: $?\n\e[m">&2
+```bash
+b=main sh=PVE-ASDaC-BASH.sh c='https://disk.yandex.ru/d/HDgvq-iMbduqag';curl -sOL "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/$b/$sh"&&{ chmod +x $sh&&./$sh -c "$c" -z;rm -f $sh;true;}||echo -e "\e[1;33m\nОшибка скачивания: проверьте подключение к Интернету и настройки DNS\ncurl exit code: $?\n\e[m">&2
 ```
 **Пре-конфиг стендов демекзамена 09.02.06-2025, только ОС Альт**
-```
-b=main sh=PVE-ASDaC-BASH.sh c='https://disk.yandex.ru/d/259h8afDR9hqyQ';curl -sOL "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/$b/$sh"&&{ chmod +x $sh&&./$sh -c "$c" -z;rm -f $sh;true;}||echo -e "\n\e[1;33mОшибка скачивания: проверьте подключение к Интернету и настройки DNS\ncurl exit code: $?\n\e[m">&2
+```bash
+b=main sh=PVE-ASDaC-BASH.sh c='https://disk.yandex.ru/d/259h8afDR9hqyQ';curl -sOL "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/$b/$sh"&&{ chmod +x $sh&&./$sh -c "$c" -z;rm -f $sh;true;}||echo -e "\e[1;33m\nОшибка скачивания: проверьте подключение к Интернету и настройки DNS\ncurl exit code: $?\n\e[m">&2
 ```
 <br>
 Скрипт простого авторазвертывания стендов с виртуальной ИТ-инфраструктурой на базе гипервизора Proxmox VE и Альт Сервер Виртуализация (PVE)
