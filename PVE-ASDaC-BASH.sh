@@ -1865,7 +1865,7 @@ function install_stands() {
     max_index=$( printf '%s\n' "${!roles_data[@]}" | sort -Vr | head -n 1 | grep -Po '^\d+' )
     for ((i=0;i<="$max_index";i++)); do
         roles_list[roleid]+=${roles_data[$i,roleid]}$'\n'
-        roles_list[privs]+=${roles_data[$i,privs]}$'\n'
+        roles_list[privs]+=${roles_data[$i,privs]//,/ }$'\n'
     done
 
     ${config_base[run_vm_after_installation]} && manage_bulk_vm_power --init
