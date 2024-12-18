@@ -1318,14 +1318,12 @@ function check_config() {
     done
 
     for desc in pool_desc access_user_desc access_auth_pam_desc access_auth_pve_desc; do
-        echo_verbose "Проверка строки описания на валидность: $desc"
         ! descr_string_check "${config_base[$desc]}" && { echo_err "Ошибка: описание '$desc' некорректно. Выход"; exit_clear; }
     done
 
     [[ "${config_base[access_auth_pam_desc]}" != '' && "${config_base[access_auth_pam_desc]}" == "${config_base[access_auth_pve_desc]}" ]] && { echo_err 'Ошибка: выводимое имя типов аутентификации не должны быть одинаковыми'; exit_clear; }
 
     for val in take_snapshots access_create access_user_enable run_vm_after_installation create_templates_pool create_linked_clones; do
-        echo_verbose "Проверка значения конфигурации $val на валидость типу bool"
         ! isbool_check "${config_base[$val]}" && { echo_err "Ошибка: значение переменной конфигурации $val должна быть bool и равляться true или false. Выход"; exit_clear; }
     done
     ! isdigit_check "${config_base[access_pass_length]}" 5 20 && { echo_err "Ошибка: значение переменной конфигурации access_pass_length должнно быть числом от $var_pve_passwd_min до 20. Выход"; exit_clear; }
@@ -1887,7 +1885,7 @@ function install_stands() {
 
     ${config_base[access_create]} && deploy_access_passwd
 
-    echo_tty $'\n'"${c_success}Установка закочена.${c_null} Выход"
+    echo_tty $'\n'"${c_ok}Установка закочена.${c_null} Выход"
     exit_clear
 }
 
