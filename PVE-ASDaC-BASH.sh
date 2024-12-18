@@ -1439,7 +1439,7 @@ function deploy_stand_config() {
                 done
             fi
 
-            Networking["$iface"]="$if_desc"
+            Networking[$iface]="$if_desc"
             ! $special && cmd_line+=" --net$if_num '${netifs_type:-virtio},bridge=$iface$net_options'"
 
             if_desc=${if_desc/\{0\}/$stand_num}
@@ -1959,7 +1959,7 @@ function manage_stands() {
     [[ ${#print_list[@]} != 0 ]] && echo_tty $'\n\nСписок развернутых конфигураций:' || { echo_info $'\nНе найденно ни одной развернутой конфигурации'; return 0; }
     local i=0
     for item in "${!print_list[@]}"; do
-        echo_tty "  $((++i)). ${print_list[$item]}"
+        echo_tty "  $((++i)). ${print_list[$item]//\\\"/\"}"
     done
     [[ $i -gt 1 ]] && i=$( read_question_select 'Выберите номер конфигурации' '^[0-9]+$' 1 $i '' 2 )
     [[ "$i" == '' ]] && return 0
