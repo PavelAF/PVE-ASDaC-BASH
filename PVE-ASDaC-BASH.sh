@@ -657,7 +657,7 @@ function show_config() {
             [[ "$description" == '' ]] && description="Вариант $i (без названия)"
             pool_name="$( get_dict_value "$conf[stand_config]" pool_name )"
             [[ "$pool_name" == "" ]] && pool_name=${config_base[def_pool_name]}
-            description="$pool_name : ${c_val}$description${c_null}"
+            description="$pool_name : ${c_val}${description//'\n'/$'\n\t'}${c_null}"
             first_elem=true
             echo -n $'\n  '"$((i++)). $description"$'\n  - ВМ: '
             for var in $( printf '%s\n' "${!ref_conf[@]}" | sort -V ); do
@@ -938,9 +938,9 @@ function configure_varnum() {
     [[ $count == 0 ]] && { echo_info $'\n'"Варианты конфигураций развертывания не найдены"$'\n'; return 1; }
 
     [[ "$is_show_config" == 'false' ]] && { is_show_config=true; echo_2out "$( show_config var )"; }
-
     local var=0
     if [[ $count -gt 1 ]]; then
+        echo_tty
         var=$( read_question_select 'Вариант развертывания стендов' '^[0-9]+$' 1 $(compgen -v | grep -P '^config_stand_[1-9][0-9]{0,3}_var$' | wc -l) )
     else var=1
     fi
@@ -1401,7 +1401,7 @@ function run_cmd() {
         else
             ! $to_exit && {
                 echo_tty "[${c_warning}Выполнена команда${c_null}] ${c_info}$@${c_null}"
-                echo_tty "${c_red}Error output: ${c_warning}$return_cmd${c_null}"
+                [[ "$return_cmd" != '' ]] && echo_tty "${c_red}Error output: ${c_warning}$return_cmd${c_null}"
                 return $code
             }
             [[ "$1" == pve_api_request || "$1" == pve_tapi_request ]] && echo_tty "[${c_err}Запрос API${c_null}] $3 ${config_base[pve_api_url]}${@:4}"
@@ -1439,7 +1439,7 @@ function deploy_stand_config() {
                 done
             fi
 
-            Networking["$iface"]="$if_desc"
+            Networking[$iface]="$if_desc"
             ! $special && cmd_line+=" --net$if_num '${netifs_type:-virtio},bridge=$iface$net_options'"
 
             if_desc=${if_desc/\{0\}/$stand_num}
@@ -1449,9 +1449,9 @@ function deploy_stand_config() {
                 echo_ok "Создан bridge интерфейс ${c_value}$iface${c_info} : ${c_value}$if_desc"
             }
 
-            ! $special && $create_access_network && ${config_base[access_create]} && [[ "${vm_config[access_role]}" != NoAccess || "${config_base[access_role]}" == '' && "${config_base[pool_access_role]}" != '' && "${config_base[pool_access_role]}" != NoAccess ]] &&  { 
-                $create_if && { run_cmd /noexit pve_api_request return_cmd PUT /access/acl "'path=/sdn/zones/localnetwork/$iface' 'users=$username' roles=PVEAuditor" || { echo_err "Не удалось создать ACL правило для сетевого интерфейса '$iface' и пользователя '$username'"; exit_clear; } } \
-                    || run_cmd /noexit pve_api_request return_cmd PUT /access/acl "'path=/sdn/zones/localnetwork/$iface' 'groups=$stands_group' roles=PVEAuditor" || { echo_err "Не удалось создать ACL правило для сетевого интерфейса '$iface' и пользователя '$username'"; exit_clear; }
+            ! $special && $create_access_network && ${config_base[access_create]} && [[ "${vm_config[access_role]}" != NoAccess || "${config_base[access_role]}" == '' && "${config_base[pool_access_role]}" != '' && "${config_base[pool_access_role]}" != NoAccess ]] && [[ "$access_role" != NoAccess ]] && { 
+                $create_if && { run_cmd /noexit pve_api_request return_cmd PUT /access/acl "'path=/sdn/zones/localnetwork/$iface' 'users=$username' 'roles=${access_role:-PVEAuditor}'" || { echo_err "Не удалось создать ACL правило для сетевого интерфейса '$iface' и пользователя '$username'"; exit_clear; } } \
+                    || run_cmd /noexit pve_api_request return_cmd PUT /access/acl "'path=/sdn/zones/localnetwork/$iface' 'groups=$stands_group' 'roles=${access_role:-PVEAuditor}'" || { echo_err "Не удалось создать ACL правило для сетевого интерфейса '$iface' и пользователя '$username'"; exit_clear; }
             }
             
             $special && eval "$4=$iface"
@@ -1472,7 +1472,7 @@ function deploy_stand_config() {
             fi
         }
 
-        local if_num=${BASH_REMATCH[1]} if_config="$2" if_desc="$2" create_if=false net_options='' master='' iface='' vlan_aware='' vlan_slave=''
+        local if_num=${BASH_REMATCH[1]} if_config="$2" if_desc="$2" create_if=false net_options='' master='' iface='' vlan_aware='' vlan_slave='' access_role=''
 
         if [[ "$if_config" =~ ^\{\ *bridge\ *=\ *([0-9\.a-z]+|\"\ *((\\\"|[^\"])+)\")\ *(,.*)?\}$ ]]; then
             if_bridge="${BASH_REMATCH[1]/\\\"/\"}"
@@ -1480,6 +1480,7 @@ function deploy_stand_config() {
             if_config="${BASH_REMATCH[4]}"
             [[ "$if_config" =~ ,\ *firewall\ *=\ *1\ *($|,.+$) ]] && net_options+=',firewall=1'
             [[ "$if_config" =~ ,\ *state\ *=\ *down\ *($|,.+$) ]] && net_options+=',link_down=1'
+            [[ "$if_config" =~ ,\ *access_role\ *=\ *([a-zA-Z0-9_\-]+)\ *($|,.+$) ]] && { access_role=${BASH_REMATCH[1]}; set_role_config $access_role; }
             [[ "$if_config" =~ ,\ *trunks\ *=\ *([0-9\;]*[0-9])\ *($|,.+$) ]] && net_options+=",trunks=${BASH_REMATCH[1]}" && vlan_aware=' bridge_vlan_aware=1'
             [[ "$if_config" =~ ,\ *tag\ *=\ *([1-9][0-9]{0,2}|[1-3][0-9]{3}|40([0-8][0-9]|9[0-4]))\ *($|,.+$) ]] && net_options+=",tag=${BASH_REMATCH[1]}" && vlan_aware=" bridge_vlan_aware=1"
             [[ "$if_config" =~ ,\ *vtag\ *=\ *([1-9][0-9]{0,2}|[1-3][0-9]{3}|40([0-8][0-9]|9[0-4]))\ *($|,.+$) ]] && {
@@ -1958,7 +1959,7 @@ function manage_stands() {
     [[ ${#print_list[@]} != 0 ]] && echo_tty $'\n\nСписок развернутых конфигураций:' || { echo_info $'\nНе найденно ни одной развернутой конфигурации'; return 0; }
     local i=0
     for item in "${!print_list[@]}"; do
-        echo_tty "  $((++i)). ${print_list[$item]}"
+        echo_tty "  $((++i)). ${print_list[$item]//\\\"/\"}"
     done
     [[ $i -gt 1 ]] && i=$( read_question_select 'Выберите номер конфигурации' '^[0-9]+$' 1 $i '' 2 )
     [[ "$i" == '' ]] && return 0
