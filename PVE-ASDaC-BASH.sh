@@ -1576,13 +1576,13 @@ function deploy_stand_config() {
         for ((i=1; i<=$(echo -n "${roles_list[roleid]}" | grep -c '^'); i++)); do
             role=$( echo "${roles_list[roleid]}" | sed -n "${i}p" )
             [[ "$1" != "$role" ]] && continue
+            echo_verbose "roles_old=$( echo "${roles_list[privs]}" | sed -n "${i}p" )"
             [[ -v "config_access_roles[$1]" && "$( echo "${roles_list[privs]}" | sed -n "${i}p" )" != "${config_access_roles[$1]}" ]] && {
-                    echo_verbose "roles_old=$( echo "${roles_list[privs]}" | sed -n "${i}p" )"
                     run_cmd pve_api_request return_cmd PUT "/access/roles/$1" "'privs=${config_access_roles[$1]}'"
                     echo_ok "Обновлены права access роли ${c_val}$1"
                     roles_list[roleid]=$( echo "$1"; echo -n "${roles_list[roleid]}" )
                     roles_list[privs]=$( echo "${config_access_roles[$1]}"; echo -n "${roles_list[roleid]}" )
-                }
+            }
             role_exists=true
             break
         done
