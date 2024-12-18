@@ -1021,10 +1021,10 @@ function configure_wan_vmbr() {
             config_base[inet_bridge]='{auto}'
         fi
     fi
-    [[ $(echo -n "$bridge_ifs" | grep -c '^') == 1 && "$1" != manual ]] && { config_base[inet_bridge]=$( echo "$bridge_ifs" | sed -n 1p ); echo_info "Информация: внешний bridge интерфейс для ВМ установлен автоматически на значение '${config_base[inet_bridge]}', т.к. на хостовой машине это был единственный внешний bridge интерфейс"; return; }
-    [[ $(echo -n "$all_bridge_ifs" | grep -c '^') == 1 && "$1" != manual ]] && { config_base[inet_bridge]=$( echo "$all_bridge_ifs" | sed -n 1p ); echo_info "Информация: внешний bridge интерфейс для ВМ установлен автоматически на значение '${config_base[inet_bridge]}', т.к. на хостовой машине это был единственный bridge интерфейс"; return; }
+    [[ $( echo -n "$bridge_ifs" | grep -c '^' ) == 1 && "$1" != manual ]] && { config_base[inet_bridge]=$( echo "$bridge_ifs" | sed -n 1p ); return; }
+    [[ $( echo -n "$all_bridge_ifs" | grep -c '^' ) == 1 && "$1" != manual ]] && { config_base[inet_bridge]=$( echo "$all_bridge_ifs" | sed -n 1p ); return; }
 
-    [[ $(echo -n "$all_bridge_ifs" | grep -c '^') == 0 ]] && { echo_err "Ошибка: не найдено ни одного активного Linux|OVS bridge сетевого интерфейса в системе. Выход"; exit_clear; }
+    [[ $( echo -n "$all_bridge_ifs" | grep -c '^' ) == 0 ]] && { echo_err "Ошибка: не найдено ни одного активного Linux|OVS bridge сетевого интерфейса в системе. Выход"; exit_clear; }
 
     case "${config_base[inet_bridge]}" in
         \{manual\}) set_vmbr_menu;;
@@ -1579,7 +1579,7 @@ function deploy_stand_config() {
                     run_cmd pve_api_request return_cmd PUT "/access/roles/$1" "'privs=${config_access_roles[$1]}'"
                     echo_ok "Обновлены права access роли ${c_val}$1"
                     roles_list[roleid]=$( echo "$1"; echo -n "${roles_list[roleid]}" )
-                    roles_list[privs]=$( echo "${config_access_roles[$1]}"; echo -n "${roles_list[roleid]}" )
+                    roles_list[privs]=$( echo "${config_access_roles[$1]}"; echo -n "${roles_list[privs]}" )
             }
             role_exists=true
             break
@@ -1589,7 +1589,7 @@ function deploy_stand_config() {
             run_cmd pve_api_request return_cmd POST /access/roles "'roleid=$1' 'privs=${config_access_roles[$1]}'"
             echo_ok "Создана access роль ${c_val}$1"
             roles_list[roleid]=$( echo "$1"; echo -n "${roles_list[roleid]}" )
-            roles_list[privs]=$( echo "${config_access_roles[$1]}"; echo -n "${roles_list[roleid]}" )
+            roles_list[privs]=$( echo "${config_access_roles[$1]}"; echo -n "${roles_list[privs]}" )
         }
     }
 
