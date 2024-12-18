@@ -1574,6 +1574,8 @@ function deploy_stand_config() {
         for ((i=1; i<=$(echo -n "${roles_list[roleid]}" | grep -c '^'); i++)); do
             role=$( echo "${roles_list[roleid]}" | sed -n "${i}p" )
             [[ "$1" != "$role" ]] && continue
+            echo_verbose "role_name=$1"
+            echo_verbose "roles_conf_privs=${config_access_roles[$1]}"
             echo_verbose "roles_old=$( echo "${roles_list[privs]}" | sed -n "${i}p" )"
             [[ -v "config_access_roles[$1]" && "$( echo "${roles_list[privs]}" | sed -n "${i}p" )" != "${config_access_roles[$1]}" ]] && {
                     run_cmd pve_api_request return_cmd PUT "/access/roles/$1" "'privs=${config_access_roles[$1]}'"
