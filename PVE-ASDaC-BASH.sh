@@ -5,7 +5,7 @@
 ############################# -= Встроенная конфигурация =- #############################
 
 # Необходимые команды для работы скрипта
-script_requirements_cmd=( curl qm pvesh qemu-img kvm md5sum )
+script_requirements_cmd=( curl qm pvesh qemu-img kvm md5sum sha256sum )
 
 # Приоритет параметров: значения в этом файле -> значения из импортированного файла конфигурации -> переопределенные значения из аргуметов командной строки
 
@@ -1446,8 +1446,8 @@ function deploy_stand_config() {
 
             if_desc=${if_desc/\{0\}/$stand_num}
             $create_if && {
-                run_cmd /noexit pve_api_request return_cmd POST "/nodes/$(hostname -s)/network" "'iface=$iface' type=bridge autostart=1 'comments=$if_desc'$vlan_aware 'slaves=$vlan_slave'" \
-                    || { echo_err "Интерфейс '$iface' ($if_desc) уже существует! Выход"; exit_clear; }
+                run_cmd /noexit pve_api_request return_cmd POST "/nodes/$(hostname -s)/network" "'iface=$iface' type=bridge autostart=1 'comments=$if_desc'${vlan_aware}${vlan_slave:+" 'bridge_ports=${$vlan_slave}'"}" \
+                    || { echo_err "Интерфейс '$iface' ($if_desc) уже существует! Выход"; exit_clear; } 
                 echo_ok "Создан bridge интерфейс ${c_value}$iface${c_info} : ${c_value}$if_desc"
             }
 
@@ -1498,7 +1498,7 @@ function deploy_stand_config() {
                     elif [[ ! -v "Networking[$master_if.$tag]" ]]; then
                         [[ "$if_desc" == "" ]] && if_desc="$if_bridge"
                         run_cmd /noexit pve_api_request return_cmd POST "/nodes/$(hostname -s)/network" "'iface=$master_if.$tag' type=vlan autostart=1 'comments=$master_desc => $if_desc'" \
-                            || { read -n 1 -p "Интерфейс '$iface' ($if_desc) уже существует! Выход"; exit_clear; }
+                            || { echo_err "Интерфейс '$iface' ($if_desc) уже существует! Выход"; exit_clear; }
                         echo_ok "Создан VLAN интерфейс $master_if.$tag : '$master_desc => $if_desc'${c_null}"
                         Networking["${master_if}.$tag"]="{vlan=$if_bridge}"
                     fi
@@ -1519,15 +1519,18 @@ function deploy_stand_config() {
             [[ "${Networking["$net"]}" != "$if_desc" ]] && continue
             cmd_line+=" --net$if_num '${netifs_type:-virtio},bridge=$net$net_options'"
             ! $opt_dry_run && [[ "$vlan_slave" != '' || "$vlan_aware" != '' ]] && ! [[ "$vlan_slave" != '' && "$vlan_aware" != '' ]] && {
-                local port_info
-                pve_api_request port_info GET "/nodes/$(hostname -s)/network/$net" || { echo_err "Ошибка: не удалось взять параметры сетевого интерфейса ${c_val}$net"; exit_clear; }
-                local if_options=''
-                if [[ "$vlan_slave" != '' ]]; then
-                    echo -n "$port_info" | grep -Pq '(,|{)"bridge_vlan_aware":1(,|})' && if_options='bridge_vlan_aware=1'
-                else
-                    if_options="'slaves=$( echo "$port_info" | grep -Po '(,|{)"bridge_ports":"\K[^"]+(?="(,|}))' )'" || if_options=''
-                fi
-                [[ "$if_options" != '' ]] && run_cmd pve_api_request return_cmd PUT "/nodes/$(hostname -s)/network/$net" "type=bridge $if_options"
+                local port_info if_update=false
+                pve_api_request port_info GET "/nodes/$(hostname -s)/network/$net" || { echo_err "Ошибка: не удалось получить параметры сетевого интерфейса ${c_val}$net"; exit_clear; }
+
+                [[ "$port_info" =~ (,|\{)\"bridge_vlan_aware\":1(,|\}) ]] && vlan_aware=' bridge_vlan_aware=1' || [[ "$vlan_aware" != '' ]] && if_update=true
+                [[ "$port_info" =~ (,|\{)\"bridge_ports\":\"([^\"]+)\" ]] && {
+                    { [[ "$vlan_slave" == '' ]] || printf '%s\n' ${BASH_REMATCH[2]} | grep -Fxq -- "$vlan_slave"; } && vlan_slave="${BASH_REMATCH[2]}" || {
+                        vlan_slave="$vlan_slave ${BASH_REMATCH[2]}"
+                        if_update=true
+                    }
+                } || [[ "$vlan_slave" != '' ]] && if_update=true
+                
+                $if_update && run_cmd pve_api_request return_cmd PUT "/nodes/$(hostname -s)/network/$net" "type=bridge${vlan_aware}${vlan_slave:+" 'bridge_ports=${$vlan_slave}'"}"
             }
             return 0
         done
@@ -1574,7 +1577,7 @@ function deploy_stand_config() {
             role=$( echo "${roles_list[roleid]}" | sed -n "${i}p" )
             [[ "$1" != "$role" ]] && continue
             [[ -v "config_access_roles[$1]" && "$( echo "${roles_list[privs]}" | sed -n "${i}p" )" != "${config_access_roles[$1]}" ]] && {
-                    run_cmd /noexit pve_api_request return_cmd PUT "/access/roles/$1" "'privs=${config_access_roles[$1]}'"
+                    run_cmd pve_api_request return_cmd PUT "/access/roles/$1" "'privs=${config_access_roles[$1]}'"
                     echo_ok "Обновлены права access роли ${c_val}$1"
                     roles_list[roleid]=$( echo "$1"; echo -n "${roles_list[roleid]}" )
                     roles_list[privs]=$( echo "${config_access_roles[$1]}"; echo -n "${roles_list[roleid]}" )
@@ -2223,7 +2226,7 @@ function manage_stands() {
                 local -n deny_ifaces="deny_ifaces_$(echo -n "$vm_nodes" | awk -v s="$vm_node" '$0=s{print NR;exit}')"
 
                 pve_api_request vm_netifs GET "/nodes/$vm_node/$vm_type/$vmid/config" || { 
-                    [[ $? == 244 ]] && { echo_warn "Предупреждение: Машина $name ($vmid) уже была удалена!"; continue; }
+                    [[ $? == 244 ]] && { echo_warn "Предупреждение: Машина ${c_ok}$name${c_warn} (${c_info}$vmid${c_warn}) уже была удалена!"; continue; }
                     echo_err "Ошибка: не удалось получить информацию о ВМ $name ($vmid)"; exit_clear; 
                 }
                 vm_protection="$( echo -n "$vm_netifs" | grep -Po '(,|{)\s*"protection"\s*:\s*\"?\K\d' )"
@@ -2284,7 +2287,7 @@ function manage_stands() {
 
         [[ "$del_all" == true ]] && { 
             run_cmd /noexit pve_api_request "''" DELETE "/access/groups/$group_name"; [[ $? =~ ^0$|^244$ ]] || { echo_err "Ошибка: не удалось удалить access группу стендов '$group_name'. Выход"; exit_clear; }
-            echo_ok "Группа стенда ${c_value}$group_name${c_null} удалена"
+            echo_ok "Служебная группа ${c_value}$group_name${c_null} удалена"
         }
 
         $restart_network && {
