@@ -11,7 +11,7 @@ ___
 
 <br>
 
-**Конфиг стенда для регионального чемпионата 09.02.06-2025 (модуль Б)**
+**Конфиг стенда для регионального чемпионата 09.02.06-2025 (модуль Б, варианты для ALT PVE и Proxmox VE 8+)**
 ```bash
 b=testing_api sh=PVE-ASDaC-BASH.sh c='https://disk.yandex.ru/d/1-vlJJU_0mzefA';curl -sfOL "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/$b/$sh"&&{ chmod +x $sh&&./$sh -c "$c" -z -v;rm -f $sh;true;}||echo -e "\e[1;33m\nОшибка скачивания: проверьте подключение к Интернету, настройки DNS и URL адрес\ncurl exit code: $?\n\e[m">&2
 ```
