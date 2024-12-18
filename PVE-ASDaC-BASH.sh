@@ -1021,10 +1021,10 @@ function configure_wan_vmbr() {
             config_base[inet_bridge]='{auto}'
         fi
     fi
-    [[ $(echo -n "$bridge_ifs" | grep -c '^') == 1 && "$1" != manual ]] && { config_base[inet_bridge]=$( echo "$bridge_ifs" | sed -n 1p ); echo_info "Информация: внешний bridge интерфейс для ВМ установлен автоматически на значение '${config_base[inet_bridge]}', т.к. на хостовой машине это был единственный внешний bridge интерфейс"; return; }
-    [[ $(echo -n "$all_bridge_ifs" | grep -c '^') == 1 && "$1" != manual ]] && { config_base[inet_bridge]=$( echo "$all_bridge_ifs" | sed -n 1p ); echo_info "Информация: внешний bridge интерфейс для ВМ установлен автоматически на значение '${config_base[inet_bridge]}', т.к. на хостовой машине это был единственный bridge интерфейс"; return; }
+    [[ $( echo -n "$bridge_ifs" | grep -c '^' ) == 1 && "$1" != manual ]] && { config_base[inet_bridge]=$( echo "$bridge_ifs" | sed -n 1p ); return; }
+    [[ $( echo -n "$all_bridge_ifs" | grep -c '^' ) == 1 && "$1" != manual ]] && { config_base[inet_bridge]=$( echo "$all_bridge_ifs" | sed -n 1p ); return; }
 
-    [[ $(echo -n "$all_bridge_ifs" | grep -c '^') == 0 ]] && { echo_err "Ошибка: не найдено ни одного активного Linux|OVS bridge сетевого интерфейса в системе. Выход"; exit_clear; }
+    [[ $( echo -n "$all_bridge_ifs" | grep -c '^' ) == 0 ]] && { echo_err "Ошибка: не найдено ни одного активного Linux|OVS bridge сетевого интерфейса в системе. Выход"; exit_clear; }
 
     case "${config_base[inet_bridge]}" in
         \{manual\}) set_vmbr_menu;;
@@ -1318,14 +1318,12 @@ function check_config() {
     done
 
     for desc in pool_desc access_user_desc access_auth_pam_desc access_auth_pve_desc; do
-        echo_verbose "Проверка строки описания на валидность: $desc"
         ! descr_string_check "${config_base[$desc]}" && { echo_err "Ошибка: описание '$desc' некорректно. Выход"; exit_clear; }
     done
 
     [[ "${config_base[access_auth_pam_desc]}" != '' && "${config_base[access_auth_pam_desc]}" == "${config_base[access_auth_pve_desc]}" ]] && { echo_err 'Ошибка: выводимое имя типов аутентификации не должны быть одинаковыми'; exit_clear; }
 
     for val in take_snapshots access_create access_user_enable run_vm_after_installation create_templates_pool create_linked_clones; do
-        echo_verbose "Проверка значения конфигурации $val на валидость типу bool"
         ! isbool_check "${config_base[$val]}" && { echo_err "Ошибка: значение переменной конфигурации $val должна быть bool и равляться true или false. Выход"; exit_clear; }
     done
     ! isdigit_check "${config_base[access_pass_length]}" 5 20 && { echo_err "Ошибка: значение переменной конфигурации access_pass_length должнно быть числом от $var_pve_passwd_min до 20. Выход"; exit_clear; }
@@ -1522,7 +1520,7 @@ function deploy_stand_config() {
                 local port_info if_update=false
                 pve_api_request port_info GET "/nodes/$(hostname -s)/network/$net" || { echo_err "Ошибка: не удалось получить параметры сетевого интерфейса ${c_val}$net"; exit_clear; }
 
-                [[ "$port_info" =~ (,|\{)\"bridge_vlan_aware\":1(,|\}) ]] && vlan_aware=' bridge_vlan_aware=1' || [[ "$vlan_aware" != '' ]] && if_update=true
+                [[ "$port_info" =~ (,|\{)\"bridge_vlan_aware\":1(,|\}) ]] && vlan_aware=' bridge_vlan_aware=1' || { [[ "$vlan_aware" != '' ]] && if_update=true; }
                 [[ "$port_info" =~ (,|\{)\"bridge_ports\":\"([^\"]+)\" ]] && {
                     { [[ "$vlan_slave" == '' ]] || printf '%s\n' ${BASH_REMATCH[2]} | grep -Fxq -- "$vlan_slave"; } && vlan_slave="${BASH_REMATCH[2]}" || {
                         vlan_slave="$vlan_slave ${BASH_REMATCH[2]}"
@@ -1580,8 +1578,8 @@ function deploy_stand_config() {
                     run_cmd pve_api_request return_cmd PUT "/access/roles/$1" "'privs=${config_access_roles[$1]}'"
                     echo_ok "Обновлены права access роли ${c_val}$1"
                     roles_list[roleid]=$( echo "$1"; echo -n "${roles_list[roleid]}" )
-                    roles_list[privs]=$( echo "${config_access_roles[$1]}"; echo -n "${roles_list[roleid]}" )
-                }
+                    roles_list[privs]=$( echo "${config_access_roles[$1]}"; echo -n "${roles_list[privs]}" )
+            }
             role_exists=true
             break
         done
@@ -1590,7 +1588,7 @@ function deploy_stand_config() {
             run_cmd pve_api_request return_cmd POST /access/roles "'roleid=$1' 'privs=${config_access_roles[$1]}'"
             echo_ok "Создана access роль ${c_val}$1"
             roles_list[roleid]=$( echo "$1"; echo -n "${roles_list[roleid]}" )
-            roles_list[privs]=$( echo "${config_access_roles[$1]}"; echo -n "${roles_list[roleid]}" )
+            roles_list[privs]=$( echo "${config_access_roles[$1]}"; echo -n "${roles_list[privs]}" )
         }
     }
 
@@ -1866,7 +1864,7 @@ function install_stands() {
     max_index=$( printf '%s\n' "${!roles_data[@]}" | sort -Vr | head -n 1 | grep -Po '^\d+' )
     for ((i=0;i<="$max_index";i++)); do
         roles_list[roleid]+=${roles_data[$i,roleid]}$'\n'
-        roles_list[privs]+=${roles_data[$i,privs]}$'\n'
+        roles_list[privs]+=${roles_data[$i,privs]//,/ }$'\n'
     done
 
     ${config_base[run_vm_after_installation]} && manage_bulk_vm_power --init
@@ -1886,7 +1884,7 @@ function install_stands() {
 
     ${config_base[access_create]} && deploy_access_passwd
 
-    echo_tty $'\n'"${c_success}Установка закочена.${c_null} Выход"
+    echo_tty $'\n'"${c_ok}Установка завершена.${c_null} Выход"
     exit_clear
 }
 
