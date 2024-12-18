@@ -1522,7 +1522,7 @@ function deploy_stand_config() {
                 local port_info if_update=false
                 pve_api_request port_info GET "/nodes/$(hostname -s)/network/$net" || { echo_err "Ошибка: не удалось получить параметры сетевого интерфейса ${c_val}$net"; exit_clear; }
 
-                [[ "$port_info" =~ (,|\{)\"bridge_vlan_aware\":1(,|\}) ]] && vlan_aware=' bridge_vlan_aware=1' || [[ "$vlan_aware" != '' ]] && if_update=true
+                [[ "$port_info" =~ (,|\{)\"bridge_vlan_aware\":1(,|\}) ]] && vlan_aware=' bridge_vlan_aware=1' || { [[ "$vlan_aware" != '' ]] && if_update=true; }
                 [[ "$port_info" =~ (,|\{)\"bridge_ports\":\"([^\"]+)\" ]] && {
                     { [[ "$vlan_slave" == '' ]] || printf '%s\n' ${BASH_REMATCH[2]} | grep -Fxq -- "$vlan_slave"; } && vlan_slave="${BASH_REMATCH[2]}" || {
                         vlan_slave="$vlan_slave ${BASH_REMATCH[2]}"
