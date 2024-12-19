@@ -1916,7 +1916,7 @@ function manage_bulk_vm_power() {
     local pve_node args act_desc=''
     [[ "$action" == 'startall' ]] && args=" --force '1'" && act_desc="${c_ok}включение${c_null}" || { act_desc="${c_err}выключение${c_null}"; isdigit_check "$2" && args=" --timeout '$2'"; }
     for pve_node in "${!bulk_vms_power_list[@]}"; do
-        bulk_vms_power_list[$pve_node]=${bulk_vms_power_list[$pve_node]:1}
+        bulk_vms_power_list[$pve_node]=${bulk_vms_power_list[$pve_node]/# /}
         echo_tty "[${c_ok}Задание${c_null}] Запущено массовое $act_desc машин на узле ${c_val}$pve_node${c_null}. Список ВМ: ${c_val}${bulk_vms_power_list[$pve_node]// /"${c_null}, ${c_val}"}${c_null}"
         run_cmd "pvesh create /nodes/$pve_node/$action --vms '${bulk_vms_power_list[$pve_node]}'$args"
         echo_ok "${act_desc} машин на узле ${c_val}$pve_node${c_null}"
