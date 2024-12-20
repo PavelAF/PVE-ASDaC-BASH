@@ -717,7 +717,7 @@ function yadisk_url() {
     local regex='\A[\s\n]*{([^{]*?|({[^}]*}))*\"{opt_name}\"\s*:\s*((\"\K[^\"]*)|\K[0-9]+)'
     local opt_name='type'
     local reply="$( curl -sG 'https://cloud-api.yandex.net/v1/disk/public/resources?public_key='$(echo "$ref_url" | grep -Po '.*/[di]/[^/]*')'&path=/'$path )"
-    [[ "$( echo "$reply" | grep -Poz "${regex/\{opt_name\}/"$opt_name"}" | sed 's/\x0//g' )" != file ]] && { echo_err "Ошибка: публичная ссылка '$ref_url' не ведет на файл. Попробуйте указать прямую ссылку (включая подпапки), проверьте URL или обратитесь к системному администратору"; exit_clear; }
+    [[ "$( echo "$reply" | grep -Poz "${regex/\{opt_name\}/"$opt_name"}" | sed 's/\x0//g' )" != file ]] && { echo_err "Ошибка: публичная ссылка '$ref_url' не ведет на файл. Попробуйте указать прямую ссылку (включая подпапки), проверьте URL или обратитесь к системному администратору"$'\nОтвет сервера: '"$reply"; exit_clear; }
     shift
     opt_name='file'
     ref_url="$(echo "$reply" | grep -Poz "${regex/\{opt_name\}/$opt_name}" | sed 's/\x0//g')"
