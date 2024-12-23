@@ -431,7 +431,7 @@ function pve_api_request() {
               return $http_code;;
         7|28) echo_err "Ошибка: не удалось подключиться к PVE API. PVE запущен/работает?";;
         2)    echo_err "Ошибка: неизвестная опция curl. Старая версия?";;
-        *)    echo_err "Ошибка: не удалось выполнить запрос к API: ${c_val}$*${c_err}. Токен ${c_val}${var_pve_token_id}${c_err}. Код ошибки curl: ${c_val}$?";;
+        *)    echo_err "Ошибка: не удалось выполнить запрос к API: ${c_val}${@:2}${c_err}. Токен ${c_val}${var_pve_token_id}${c_err}. Код ошибки curl: ${c_val}$?";;
     esac
     configure_api_token clear force
     exit_clear
@@ -545,7 +545,7 @@ function pve_tapi_request() {
               return $http_code;;
         7|28) echo_err "Не удалось подключиться к PVE API. PVE запущен/работает?";;
         2)    echo_err "Неизвестная опция curl. Старая версия";;
-        *)    echo_err "Ошибка: не удалось выполнить запрос к API (ticket): ${c_val}$@${c_err}. API пользователь: ${c_val}${var_pve_ticket_user}${c_err}. Код ошибки curl: $?"
+        *)    echo_err "Ошибка: не удалось выполнить запрос к API (ticket): ${c_val}${@:2}${c_err}. API пользователь: ${c_val}${var_pve_ticket_user}${c_err}. Код ошибки curl: $?"
     esac
     exit_clear
 }
@@ -711,17 +711,27 @@ function isurl_check() {
 }
 
 function yadisk_url() {
-    local -n ref_url="$1"
+    local -n ref_url="$1"; shift
     isurl_check "$ref_url" yadisk || { echo_err "Ошибка yadisk_url: указанный URL '$ref_url' не является валидным. Выход"; exit_clear; }
-    [[ "$1" =~ ^https\://disk\.yandex\.ru/i/ ]] && { echo_err "Ошибка yadisk_url: указанный URL ЯДиска '$ref_url' не является валидным, т.к. файл защищен паролем. Скачивание файлов ЯДиска защищенные паролем на даный момент недоступно. Выход"; exit_clear; }
-    local path=`echo "$ref_url" | grep -Po '.*/d/[^/]*/\K.*'`
-    local regex='\A[\s\n]*{([^{]*?|({[^}]*}))*\"{opt_name}\"\s*:\s*((\"\K[^\"]*)|\K[0-9]+)'
-    local opt_name='type'
-    local reply="$( curl -sG 'https://cloud-api.yandex.net/v1/disk/public/resources?public_key='$(echo "$ref_url" | grep -Po '.*/[di]/[^/]*')'&path=/'$path )"
-    [[ "$( echo "$reply" | grep -Poz "${regex/\{opt_name\}/"$opt_name"}" | sed 's/\x0//g' )" != file ]] && { echo_err "Ошибка: публичная ссылка '$ref_url' не ведет на файл. Попробуйте указать прямую ссылку (включая подпапки), проверьте URL или обратитесь к системному администратору"$'\nОтвет сервера: '"$reply"; exit_clear; }
-    shift
-    opt_name='file'
-    ref_url="$(echo "$reply" | grep -Poz "${regex/\{opt_name\}/$opt_name}" | sed 's/\x0//g')"
+    [[ "$ref_url" =~ ^https\://disk\.yandex\.ru/i/ ]] && { echo_err "Ошибка yadisk_url: указанный URL ЯДиска '$ref_url' не является валидным, т.к. файл защищен паролем. Скачивание файлов ЯДиска защищенные паролем на даный момент недоступно. Выход"; exit_clear; }
+    local path=$( echo -n "$ref_url" | grep -Po '.*/d/[^/]*/\K.*' ) \
+        regex='\A[\s\n]*{([^{]*?|({[^}]*}))*\"{opt_name}\"\s*:\s*((\"\K[^\"]*)|\K[0-9]+)' \
+        opt_name='' reply=''
+
+    reply=$( curl -sGf 'https://cloud-api.yandex.net/v1/disk/public/resources?public_key='"$( echo -n "$ref_url" | grep -Po '.*/[di]/[^/]*' )&path=/$path" ) || {
+        case $? in
+            5) echo_err "Ошибка запроса к Яндекс API: на хосте некорректные настройки прокси";;
+            6|7|28) echo_err "Ошибка запроса к Яндекс API: не удалось связаться с API. Проверьте подключение к интернету/настройки DNS"$'\n'"Код ошибки curl: $?";;
+            22) echo_err "Ошибка запроса к Яндекс API: сервер ответил ошибкой. Проверьте правильность URL";;
+            *) echo_err "Ошибка: не удалось выполнить запрос Яндекс API для ${c_val}$ref_url${c_err}"$'\n'"Код ошибки curl: $?";;
+        esac
+    }
+
+    opt_name=type
+    [[ "$( echo -n "$reply" | grep -Poz "${regex/\{opt_name\}/"$opt_name"}" | sed 's/\x0//g' )" != file ]] && { echo_err "Ошибка: публичная ссылка '$ref_url' не ведет на файл. Проверьте URL, попробуйте указать прямую ссылку (включая подпапки)"$'\nОтвет сервера: '"$reply"; exit_clear; }
+    opt_name=file
+    ref_url="$( echo -n "$reply" | grep -Poz "${regex/\{opt_name\}/$opt_name}" | sed 's/\x0//g' )"
+
     while [[ "$1" != '' ]]; do
         [[ "$1" =~ ^[a-zA-Z][0-9a-zA-Z_]{0,32}\=(name|size|antivirus_status|mime_type|sha256|md5)$ ]] || { echo_err "Ошибка yadisk_url: некорректый аргумент '$1'"; exit_clear; }
         opt_name="${1#*=}"
@@ -734,12 +744,12 @@ function yadisk_url() {
 
 function get_url_filesize() {
     isurl_check "$1" || { echo_err "Ошибка get_url_filesize: указанный URL '$1' не является валидным. Выход"; exit_pid; }
-    local return=$( curl -s -L -I "$1" | grep -Poi '^Content-Length: \K[0-9]+(?=\s*$)' )
+    curl -s -L -f -I "$1" | grep -Poi '^Content-Length: \K[0-9]+(?=\s*$)' || exit_pid
 }
 #TODO
 function get_url_filename() {
     isurl_check "$1" || { echo_err "Ошибка get_url_filename: указанный URL '$1' не является валидным. Выход"; exit_pid; }
-    local return=$( curl -L --head -w '%{url_effective}' "$1" 2>/dev/null | tail -n1 )
+    curl -L --head -f -w '%{url_effective}' "$1" 2>/dev/null | tail -n1 || exit_pid
 }
 
 function get_file() {
@@ -758,8 +768,8 @@ function get_file() {
     if [[ "$url" =~ ^https://disk\.yandex\.ru/ ]]; then
         yadisk_url url filesize=size filename=name file_sha256=sha256
     elif isurl_check "$url"; then
-        filesize=$(get_url_filesize $url)
-        filename=$(get_url_filename $url)
+        filesize=$( get_url_filesize $url )
+        filename=$( get_url_filename $url )
     fi
     if isurl_check "$url"; then
         isdigit_check $filesize && [[ "$filesize" -gt 0 ]] && maxfilesize=$filesize || filesize='0'
