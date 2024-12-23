@@ -8,13 +8,20 @@
   
 ___
 </details>
-
 <br>
 
 **Конфиг стенда для регионального чемпионата 09.02.06-2025 (модуль Б, варианты для ALT PVE и Proxmox VE версии 8+)**
 ```bash
 b=testing_api sh=PVE-ASDaC-BASH.sh c='https://disk.yandex.ru/d/1-vlJJU_0mzefA';curl -sfOL "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/$b/$sh"&&{ chmod +x $sh&&./$sh -c "$c" -z -v;rm -f $sh;true;}||echo -e "\e[1;33m\nОшибка скачивания: проверьте подключение к Интернету, настройки DNS и URL адрес\ncurl exit code: $?\n\e[m">&2
 ```
+<details>
+  <summary>Системные требования</summary>
+  <br>
+  
+![image](https://github.com/user-attachments/assets/eb105561-d312-4c71-94c1-37d01cd88453)
+___
+</details>
+
 **Пре-конфиг стендов демекзамена 09.02.06-2025, классический**
 ```bash
 b=main sh=PVE-ASDaC-BASH.sh c='https://disk.yandex.ru/d/HDgvq-iMbduqag';curl -sfOL "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/$b/$sh"&&{ chmod +x $sh&&./$sh -c "$c" -z -v;rm -f $sh;true;}||echo -e "\e[1;33m\nОшибка скачивания: проверьте подключение к Интернету, настройки DNS и URL адрес\ncurl exit code: $?\n\e[m">&2
