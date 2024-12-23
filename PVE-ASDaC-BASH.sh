@@ -725,6 +725,7 @@ function yadisk_url() {
             22) echo_err "Ошибка запроса к Яндекс API: сервер ответил ошибкой. Проверьте правильность URL";;
             *) echo_err "Ошибка: не удалось выполнить запрос Яндекс API для ${c_val}$ref_url${c_err}"$'\n'"Код ошибки curl: $?";;
         esac
+        exit_clear
     }
 
     opt_name=type
