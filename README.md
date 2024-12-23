@@ -12,7 +12,7 @@ ___
 
 **Конфиг стенда для регионального чемпионата 09.02.06-2025 (модуль Б, варианты для ALT PVE и Proxmox VE версии 8+)**
 ```bash
-b=testing_api sh=PVE-ASDaC-BASH.sh c='https://disk.yandex.ru/d/1-vlJJU_0mzefA';curl -sfOL "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/$b/$sh"&&{ chmod +x $sh&&./$sh -c "$c" -z -v;rm -f $sh;true;}||echo -e "\e[1;33m\nОшибка скачивания: проверьте подключение к Интернету, настройки DNS и URL адрес\ncurl exit code: $?\n\e[m">&2
+b=testing_api sh=PVE-ASDaC-BASH.sh c='https://disk.yandex.ru/d/1-vlJJU_0mzefA';curl -sfOL "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/$b/$sh"&&{ chmod +x $sh&&./$sh -c "$c" -z;rm -f $sh;true;}||echo -e "\e[1;33m\nОшибка скачивания: проверьте подключение к Интернету, настройки DNS и URL адрес\ncurl exit code: $?\n\e[m">&2
 ```
 <details>
   <summary>Системные требования</summary>
@@ -24,11 +24,11 @@ ___
 
 **Пре-конфиг стендов демекзамена 09.02.06-2025, классический**
 ```bash
-b=main sh=PVE-ASDaC-BASH.sh c='https://disk.yandex.ru/d/HDgvq-iMbduqag';curl -sfOL "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/$b/$sh"&&{ chmod +x $sh&&./$sh -c "$c" -z -v;rm -f $sh;true;}||echo -e "\e[1;33m\nОшибка скачивания: проверьте подключение к Интернету, настройки DNS и URL адрес\ncurl exit code: $?\n\e[m">&2
+b=main sh=PVE-ASDaC-BASH.sh c='https://disk.yandex.ru/d/HDgvq-iMbduqag';curl -sfOL "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/$b/$sh"&&{ chmod +x $sh&&./$sh -c "$c" -z;rm -f $sh;true;}||echo -e "\e[1;33m\nОшибка скачивания: проверьте подключение к Интернету, настройки DNS и URL адрес\ncurl exit code: $?\n\e[m">&2
 ```
 **Пре-конфиг стендов демекзамена 09.02.06-2025, только ОС Альт**
 ```bash
-b=main sh=PVE-ASDaC-BASH.sh c='https://disk.yandex.ru/d/259h8afDR9hqyQ';curl -sfOL "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/$b/$sh"&&{ chmod +x $sh&&./$sh -c "$c" -z -v;rm -f $sh;true;}||echo -e "\e[1;33m\nОшибка скачивания: проверьте подключение к Интернету, настройки DNS и URL адрес\ncurl exit code: $?\n\e[m">&2
+b=main sh=PVE-ASDaC-BASH.sh c='https://disk.yandex.ru/d/259h8afDR9hqyQ';curl -sfOL "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/$b/$sh"&&{ chmod +x $sh&&./$sh -c "$c" -z;rm -f $sh;true;}||echo -e "\e[1;33m\nОшибка скачивания: проверьте подключение к Интернету, настройки DNS и URL адрес\ncurl exit code: $?\n\e[m">&2
 ```
 <br>
 Скрипт простого авторазвертывания стендов с виртуальной ИТ-инфраструктурой на базе гипервизора Proxmox VE и Альт Сервер Виртуализация (PVE)
