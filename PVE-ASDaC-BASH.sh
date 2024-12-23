@@ -72,7 +72,7 @@ declare -A config_base=(
 
     [_pool_access_role]='Роль, устанавливаемая для пула по умолчанию'
 
-    [_pve_api_url]='Локальный URL адрес для PVE API, с которым скрипт будет взаимодействовать. НЕ ИЗМЕНЯТЬ ЕСЛИ РАБОТАЕТ!'
+    [_pve_api_url]='Локальный URL адрес для PVE API, с которым скрипт будет взаимодействовать. Формат: https://%ADDR%:%PORT%/api2/json. НЕ ИЗМЕНЯТЬ ЕСЛИ РАБОТАЕТ!'
     [pve_api_url]='https://127.0.0.1:8006/api2/json'
 )
 
@@ -390,8 +390,9 @@ function show_help() {
         -l, --pass-length [integer]$t${config_base[_access_pass_length]}
         -char, --pass-chars [string]$t${config_base[_access_pass_chars]}
         -si, --silent-install$t$_opt_silent_install
-        -c, --config [in-file]$tИмпорт конфигурации из файла или URL
+        -c, --config [in-file]${t}Импорт конфигурации из файла или URL
         -z, --clear-vmconfig$t$_opt_zero_vms
+        -api,--pve-api-url$t${config_base[_pve_api_url]}
 EOL
 }
 
@@ -467,7 +468,7 @@ function configure_api_token() {
 
         [[ ${#data} -lt 30 || ${#var_pve_api_curl} -lt 30 ]] && { echo_err "Ошибка: непредвиденные значения API token (${c_val}${var_pve_api_curl}${c_err}) и/или token ID (${c_val}${data}${c_err})"; configure_api_token clear force; exit_clear; }
 
-        var_pve_api_curl=( curl -ksG -w '\n%{http_code}' --connect-timeout 5 -H "Authorization: PVEAPIToken=$data=$var_pve_api_curl" )
+        var_pve_api_curl=( curl -ksG  -x '' -w '\n%{http_code}' --connect-timeout 5 -H "Authorization: PVEAPIToken=$data=$var_pve_api_curl" )
     }
     pve_api_request data_pve_version GET /version
     [[ "$data_pve_version" =~ '"release":"'([^\"]+) ]] && data_pve_version=${BASH_REMATCH[1]} || { echo_err 'Не удалось получить версию PVE через API'; configure_api_token clear force; exit_clear; }
@@ -500,11 +501,11 @@ function configure_api_ticket() {
 
     pve_api_request '' PUT "/access/users/$var_pve_ticket_user" "expire=$(( $( date +%s ) + 14400 ))" enable=1 || exit_clear
 	local data
-	data=$( curl -ksf -d "username=$var_pve_ticket_user&password=$var_pve_ticket_pass" "${config_base[pve_api_url]}/access/ticket" ) || { echo_err "Ошибка: не удалось запросить тикет служебного пользователя ${c_val}${var_pve_ticket_user}"; exit_clear; }
+	data=$( curl -ksf -x '' -d "username=$var_pve_ticket_user&password=$var_pve_ticket_pass" "${config_base[pve_api_url]}/access/ticket" ) || { echo_err "Ошибка: не удалось запросить тикет служебного пользователя ${c_val}${var_pve_ticket_user}"; exit_clear; }
 	[[ "$data" =~ '"ticket":"'([^\"]+) ]] && var_pve_tapi_curl=${BASH_REMATCH[1]} || { echo_err "Ошибка: не удалось получить тикет из ответа API для ${c_val}${var_pve_ticket_user}"; exit_clear; }
 	[[ "$data" =~ '"CSRFPreventionToken":"'([^\"]+) ]] && data=${BASH_REMATCH[1]} || { echo_err "Ошибка: не удалось получить тикет из ответа API для ${c_val}${var_pve_ticket_user}"; exit_clear; }
 
-	var_pve_tapi_curl=( curl -ksG -w '\n%{http_code}' --connect-timeout 5 -H "CSRFPreventionToken:$data" -b "PVEAuthCookie=$var_pve_tapi_curl" )
+	var_pve_tapi_curl=( curl -ksG -x '' -w '\n%{http_code}' --connect-timeout 5 -H "CSRFPreventionToken:$data" -b "PVEAuthCookie=$var_pve_tapi_curl" )
 
     "${var_pve_tapi_curl[@]}" "${config_base[pve_api_url]}/version" -f -X GET >/dev/null || { echo_err 'Не удалось получить версию PVE через API (ticket)'; exit_clear; }
 }
@@ -1680,7 +1681,7 @@ function deploy_stand_config() {
 
         for opt in $( printf '%s\n' "${!vm_config[@]}" | sort -V ); do
             case "$opt" in
-                startup|tags|ostype|serial0|serial1|serial2|serial3|agent|scsihw|cpu|cores|memory|bwlimit|description|args|arch|vga|kvm|rng0|acpi|tablet|reboot|startdate|tdf|cpulimit|balloon)
+                startup|tags|ostype|serial0|serial1|serial2|serial3|agent|scsihw|cpu|cores|memory|bwlimit|description|args|arch|vga|kvm|rng0|acpi|tablet|reboot|startdate|tdf|cpulimit|balloon|hotplug)
                     cmd_line+=" --$opt '${vm_config[$opt]}'";;
                 network*) set_netif_conf "$opt" "${vm_config[$opt]}";;
                 bios) [[ "${vm_config[$opt]}" == ovmf ]] && cmd_line+=" --bios 'ovmf' --efidisk0 '${config_base[storage]}:0,format=$config_disk_format'" || cmd_line+=" --$opt '${vm_config[$opt]}'";;
@@ -2364,6 +2365,7 @@ while [ $# != 0 ]; do
                 -l|--pass-length)       check_arg "$2"; config_base[access_pass_length]="$2"; shift;;
                 -char|--pass-chars)     check_arg "$2"; config_base[access_pass_chars]="$2"; shift;;
                 -sctl|--silent-control) opt_silent_control=true;;
+                -api|--pve-api-url) check_arg "$2"; config_base[pve_api_url]="$2"; shift;;
                 *) echo_err "Ошибка: некорректный аргумент: '$1'"; opt_show_help=true;;
             esac
             shift;;
