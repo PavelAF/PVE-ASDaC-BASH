@@ -1706,11 +1706,8 @@ function deploy_stand_config() {
         [[ "$boot_order" != '' ]] && cmd_line+=" --boot 'order=$boot_order'"
 
         run_cmd /noexit "$cmd_line" || { echo_err "Ошибка: не удалось создать ВМ '$vm_name' стенда '$pool_name'. Выход"; exit_clear; }
-        echo_verbose "firewall_opt="$( get_dict_value config_stand_${opt_sel_var}_var[$elem] firewall_opt )
-        echo_verbose "vm_config=""${!vm_config[@]}"
-        echo_verbose "conf=config_stand_${opt_sel_var}_var[$elem]"
-        echo_verbose "firewall_opt__=${vm_config[firewall_opt]}"
-        set_firewall_opt "$( get_dict_value config_stand_${opt_sel_var}_var[$elem] firewall_opt )"
+        
+        set_firewall_opt "${vm_config[firewall_opt]}"
 
         ${config_base[access_create]} && [[ "${vm_config[access_role]}" != '' ]] && run_cmd pve_api_request return_cmd PUT /access/acl "'path=/vms/$vmid' 'roles=${vm_config[access_role]}' 'users=$username'"
 
