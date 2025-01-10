@@ -1671,7 +1671,7 @@ function deploy_stand_config() {
         disk_num=0
         boot_order=''
         vm_config=()
-        vm_template="$( get_dict_value config_stand_${opt_sel_var}_var[$elem] config_template; exit 1 )"
+        vm_template="$( get_dict_value config_stand_${opt_sel_var}_var[$elem] config_template )"
 
         [[ "$vm_template" != '' ]] && {
             [[ -v "config_templates[$vm_template]" ]] || { echo_err "Ошибка: шаблон конфигурации '$vm_template' для ВМ '$elem' не найден. Выход"; exit_clear; }
@@ -1707,7 +1707,7 @@ function deploy_stand_config() {
 
         run_cmd /noexit "$cmd_line" || { echo_err "Ошибка: не удалось создать ВМ '$vm_name' стенда '$pool_name'. Выход"; exit_clear; }
 
-        set_firewall_opt "$( get_dict_value config_stand_${opt_sel_var}_var[$elem] firewall_opt )"
+        set_firewall_opt "${vm_config[firewall_opt]}"
 
         ${config_base[access_create]} && [[ "${vm_config[access_role]}" != '' ]] && run_cmd pve_api_request return_cmd PUT /access/acl "'path=/vms/$vmid' 'roles=${vm_config[access_role]}' 'users=$username'"
 
