@@ -72,7 +72,7 @@ declare -A config_base=(
 
     [_pool_access_role]='Роль, устанавливаемая для пула по умолчанию'
 
-    [_pve_api_url]='Локальный URL адрес для PVE API, с которым скрипт будет взаимодействовать. НЕ ИЗМЕНЯТЬ ЕСЛИ РАБОТАЕТ!'
+    [_pve_api_url]='Локальный URL адрес для PVE API, с которым скрипт будет взаимодействовать. Формат: https://%ADDR%:%PORT%/api2/json. НЕ ИЗМЕНЯТЬ ЕСЛИ РАБОТАЕТ!'
     [pve_api_url]='https://127.0.0.1:8006/api2/json'
 )
 
@@ -390,8 +390,9 @@ function show_help() {
         -l, --pass-length [integer]$t${config_base[_access_pass_length]}
         -char, --pass-chars [string]$t${config_base[_access_pass_chars]}
         -si, --silent-install$t$_opt_silent_install
-        -c, --config [in-file]$tИмпорт конфигурации из файла или URL
+        -c, --config [in-file]${t}Импорт конфигурации из файла или URL
         -z, --clear-vmconfig$t$_opt_zero_vms
+        -api,--pve-api-url$t${config_base[_pve_api_url]}
 EOL
 }
 
@@ -430,7 +431,7 @@ function pve_api_request() {
               return $http_code;;
         7|28) echo_err "Ошибка: не удалось подключиться к PVE API. PVE запущен/работает?";;
         2)    echo_err "Ошибка: неизвестная опция curl. Старая версия?";;
-        *)    echo_err "Ошибка: не удалось выполнить запрос к API: ${c_val}$*${c_err}. Токен ${c_val}${var_pve_token_id}${c_err}. Код ошибки curl: ${c_val}$?";;
+        *)    echo_err "Ошибка: не удалось выполнить запрос к API: ${c_val}${@:2}${c_err}. Токен ${c_val}${var_pve_token_id}${c_err}. Код ошибки curl: ${c_val}$?";;
     esac
     configure_api_token clear force
     exit_clear
@@ -467,7 +468,7 @@ function configure_api_token() {
 
         [[ ${#data} -lt 30 || ${#var_pve_api_curl} -lt 30 ]] && { echo_err "Ошибка: непредвиденные значения API token (${c_val}${var_pve_api_curl}${c_err}) и/или token ID (${c_val}${data}${c_err})"; configure_api_token clear force; exit_clear; }
 
-        var_pve_api_curl=( curl -ksG -w '\n%{http_code}' --connect-timeout 5 -H "Authorization: PVEAPIToken=$data=$var_pve_api_curl" )
+        var_pve_api_curl=( curl -ksG  -x '' -w '\n%{http_code}' --connect-timeout 5 -H "Authorization: PVEAPIToken=$data=$var_pve_api_curl" )
     }
     pve_api_request data_pve_version GET /version
     [[ "$data_pve_version" =~ '"release":"'([^\"]+) ]] && data_pve_version=${BASH_REMATCH[1]} || { echo_err 'Не удалось получить версию PVE через API'; configure_api_token clear force; exit_clear; }
@@ -500,11 +501,11 @@ function configure_api_ticket() {
 
     pve_api_request '' PUT "/access/users/$var_pve_ticket_user" "expire=$(( $( date +%s ) + 14400 ))" enable=1 || exit_clear
 	local data
-	data=$( curl -ksf -d "username=$var_pve_ticket_user&password=$var_pve_ticket_pass" "${config_base[pve_api_url]}/access/ticket" ) || { echo_err "Ошибка: не удалось запросить тикет служебного пользователя ${c_val}${var_pve_ticket_user}"; exit_clear; }
+	data=$( curl -ksf -x '' -d "username=$var_pve_ticket_user&password=$var_pve_ticket_pass" "${config_base[pve_api_url]}/access/ticket" ) || { echo_err "Ошибка: не удалось запросить тикет служебного пользователя ${c_val}${var_pve_ticket_user}"; exit_clear; }
 	[[ "$data" =~ '"ticket":"'([^\"]+) ]] && var_pve_tapi_curl=${BASH_REMATCH[1]} || { echo_err "Ошибка: не удалось получить тикет из ответа API для ${c_val}${var_pve_ticket_user}"; exit_clear; }
 	[[ "$data" =~ '"CSRFPreventionToken":"'([^\"]+) ]] && data=${BASH_REMATCH[1]} || { echo_err "Ошибка: не удалось получить тикет из ответа API для ${c_val}${var_pve_ticket_user}"; exit_clear; }
 
-	var_pve_tapi_curl=( curl -ksG -w '\n%{http_code}' --connect-timeout 5 -H "CSRFPreventionToken:$data" -b "PVEAuthCookie=$var_pve_tapi_curl" )
+	var_pve_tapi_curl=( curl -ksG -x '' -w '\n%{http_code}' --connect-timeout 5 -H "CSRFPreventionToken:$data" -b "PVEAuthCookie=$var_pve_tapi_curl" )
 
     "${var_pve_tapi_curl[@]}" "${config_base[pve_api_url]}/version" -f -X GET >/dev/null || { echo_err 'Не удалось получить версию PVE через API (ticket)'; exit_clear; }
 }
@@ -544,7 +545,7 @@ function pve_tapi_request() {
               return $http_code;;
         7|28) echo_err "Не удалось подключиться к PVE API. PVE запущен/работает?";;
         2)    echo_err "Неизвестная опция curl. Старая версия";;
-        *)    echo_err "Ошибка: не удалось выполнить запрос к API (ticket): ${c_val}$@${c_err}. API пользователь: ${c_val}${var_pve_ticket_user}${c_err}. Код ошибки curl: $?"
+        *)    echo_err "Ошибка: не удалось выполнить запрос к API (ticket): ${c_val}${@:2}${c_err}. API пользователь: ${c_val}${var_pve_ticket_user}${c_err}. Код ошибки curl: $?"
     esac
     exit_clear
 }
@@ -710,17 +711,28 @@ function isurl_check() {
 }
 
 function yadisk_url() {
-    local -n ref_url="$1"
+    local -n ref_url="$1"; shift
     isurl_check "$ref_url" yadisk || { echo_err "Ошибка yadisk_url: указанный URL '$ref_url' не является валидным. Выход"; exit_clear; }
-    [[ "$1" =~ ^https\://disk\.yandex\.ru/i/ ]] && { echo_err "Ошибка yadisk_url: указанный URL ЯДиска '$ref_url' не является валидным, т.к. файл защищен паролем. Скачивание файлов ЯДиска защищенные паролем на даный момент недоступно. Выход"; exit_clear; }
-    local path=`echo "$ref_url" | grep -Po '.*/d/[^/]*/\K.*'`
-    local regex='\A[\s\n]*{([^{]*?|({[^}]*}))*\"{opt_name}\"\s*:\s*((\"\K[^\"]*)|\K[0-9]+)'
-    local opt_name='type'
-    local reply="$( curl -sG 'https://cloud-api.yandex.net/v1/disk/public/resources?public_key='$(echo "$ref_url" | grep -Po '.*/[di]/[^/]*')'&path=/'$path )"
-    [[ "$( echo "$reply" | grep -Poz "${regex/\{opt_name\}/"$opt_name"}" | sed 's/\x0//g' )" != file ]] && { echo_err "Ошибка: публичная ссылка '$ref_url' не ведет на файл. Попробуйте указать прямую ссылку (включая подпапки), проверьте URL или обратитесь к системному администратору"; exit_clear; }
-    shift
-    opt_name='file'
-    ref_url="$(echo "$reply" | grep -Poz "${regex/\{opt_name\}/$opt_name}" | sed 's/\x0//g')"
+    [[ "$ref_url" =~ ^https\://disk\.yandex\.ru/i/ ]] && { echo_err "Ошибка yadisk_url: указанный URL ЯДиска '$ref_url' не является валидным, т.к. файл защищен паролем. Скачивание файлов ЯДиска защищенные паролем на даный момент недоступно. Выход"; exit_clear; }
+    local path=$( echo -n "$ref_url" | grep -Po '.*/d/[^/]*/\K.*' ) \
+        regex='\A[\s\n]*{([^{]*?|({[^}]*}))*\"{opt_name}\"\s*:\s*((\"\K[^\"]*)|\K[0-9]+)' \
+        opt_name='' reply=''
+
+    reply=$( curl -sGf 'https://cloud-api.yandex.net/v1/disk/public/resources?public_key='"$( echo -n "$ref_url" | grep -Po '.*/[di]/[^/]*' )&path=/$path" ) || {
+        case $? in
+            5) echo_err "Ошибка запроса к Яндекс API: на хосте некорректные настройки прокси";;
+            6|7|28) echo_err "Ошибка запроса к Яндекс API: не удалось связаться с API. Проверьте подключение к интернету/настройки DNS"$'\n'"Код ошибки curl: $?";;
+            22) echo_err "Ошибка запроса к Яндекс API: сервер ответил ошибкой. Проверьте правильность URL";;
+            *) echo_err "Ошибка: не удалось выполнить запрос Яндекс API для ${c_val}$ref_url${c_err}"$'\n'"Код ошибки curl: $?";;
+        esac
+        exit_clear
+    }
+
+    opt_name=type
+    [[ "$( echo -n "$reply" | grep -Poz "${regex/\{opt_name\}/"$opt_name"}" | sed 's/\x0//g' )" != file ]] && { echo_err "Ошибка: публичная ссылка '$ref_url' не ведет на файл. Проверьте URL, попробуйте указать прямую ссылку (включая подпапки)"$'\nОтвет сервера: '"$reply"; exit_clear; }
+    opt_name=file
+    ref_url="$( echo -n "$reply" | grep -Poz "${regex/\{opt_name\}/$opt_name}" | sed 's/\x0//g' )"
+
     while [[ "$1" != '' ]]; do
         [[ "$1" =~ ^[a-zA-Z][0-9a-zA-Z_]{0,32}\=(name|size|antivirus_status|mime_type|sha256|md5)$ ]] || { echo_err "Ошибка yadisk_url: некорректый аргумент '$1'"; exit_clear; }
         opt_name="${1#*=}"
@@ -733,12 +745,12 @@ function yadisk_url() {
 
 function get_url_filesize() {
     isurl_check "$1" || { echo_err "Ошибка get_url_filesize: указанный URL '$1' не является валидным. Выход"; exit_pid; }
-    local return=$( curl -s -L -I "$1" | grep -Poi '^Content-Length: \K[0-9]+(?=\s*$)' )
+    curl -s -L -f -I "$1" | grep -Poi '^Content-Length: \K[0-9]+(?=\s*$)' || exit_pid
 }
 #TODO
 function get_url_filename() {
     isurl_check "$1" || { echo_err "Ошибка get_url_filename: указанный URL '$1' не является валидным. Выход"; exit_pid; }
-    local return=$( curl -L --head -w '%{url_effective}' "$1" 2>/dev/null | tail -n1 )
+    curl -L --head -f -w '%{url_effective}' "$1" 2>/dev/null | tail -n1 || exit_pid
 }
 
 function get_file() {
@@ -757,8 +769,8 @@ function get_file() {
     if [[ "$url" =~ ^https://disk\.yandex\.ru/ ]]; then
         yadisk_url url filesize=size filename=name file_sha256=sha256
     elif isurl_check "$url"; then
-        filesize=$(get_url_filesize $url)
-        filename=$(get_url_filename $url)
+        filesize=$( get_url_filesize $url )
+        filename=$( get_url_filename $url )
     fi
     if isurl_check "$url"; then
         isdigit_check $filesize && [[ "$filesize" -gt 0 ]] && maxfilesize=$filesize || filesize='0'
@@ -1480,7 +1492,7 @@ function deploy_stand_config() {
             if_config="${BASH_REMATCH[4]}"
             [[ "$if_config" =~ ,\ *firewall\ *=\ *1\ *($|,.+$) ]] && net_options+=',firewall=1'
             [[ "$if_config" =~ ,\ *state\ *=\ *down\ *($|,.+$) ]] && net_options+=',link_down=1'
-            [[ "$if_config" =~ ,\ *access_role\ *=\ *([a-zA-Z_\-]+)\ *($|,.+$) ]] && access_role=${BASH_REMATCH[1]}
+            [[ "$if_config" =~ ,\ *access_role\ *=\ *([a-zA-Z0-9_\-]+)\ *($|,.+$) ]] && $create_access_network && { access_role=${BASH_REMATCH[1]}; set_role_config $access_role; }
             [[ "$if_config" =~ ,\ *trunks\ *=\ *([0-9\;]*[0-9])\ *($|,.+$) ]] && net_options+=",trunks=${BASH_REMATCH[1]}" && vlan_aware=' bridge_vlan_aware=1'
             [[ "$if_config" =~ ,\ *tag\ *=\ *([1-9][0-9]{0,2}|[1-3][0-9]{3}|40([0-8][0-9]|9[0-4]))\ *($|,.+$) ]] && net_options+=",tag=${BASH_REMATCH[1]}" && vlan_aware=" bridge_vlan_aware=1"
             [[ "$if_config" =~ ,\ *vtag\ *=\ *([1-9][0-9]{0,2}|[1-3][0-9]{3}|40([0-8][0-9]|9[0-4]))\ *($|,.+$) ]] && {
@@ -1680,7 +1692,7 @@ function deploy_stand_config() {
 
         for opt in $( printf '%s\n' "${!vm_config[@]}" | sort -V ); do
             case "$opt" in
-                startup|tags|ostype|serial0|serial1|serial2|serial3|agent|scsihw|cpu|cores|memory|bwlimit|description|args|arch|vga|kvm|rng0|acpi|tablet|reboot|startdate|tdf)
+                startup|tags|ostype|serial0|serial1|serial2|serial3|agent|scsihw|cpu|cores|memory|bwlimit|description|args|arch|vga|kvm|rng0|acpi|tablet|reboot|startdate|tdf|cpulimit|balloon|hotplug)
                     cmd_line+=" --$opt '${vm_config[$opt]}'";;
                 network*) set_netif_conf "$opt" "${vm_config[$opt]}";;
                 bios) [[ "${vm_config[$opt]}" == ovmf ]] && cmd_line+=" --bios 'ovmf' --efidisk0 '${config_base[storage]}:0,format=$config_disk_format'" || cmd_line+=" --$opt '${vm_config[$opt]}'";;
@@ -1694,7 +1706,7 @@ function deploy_stand_config() {
         [[ "$boot_order" != '' ]] && cmd_line+=" --boot 'order=$boot_order'"
 
         run_cmd /noexit "$cmd_line" || { echo_err "Ошибка: не удалось создать ВМ '$vm_name' стенда '$pool_name'. Выход"; exit_clear; }
-
+        echo_verbose "firewall_opt="$( get_dict_value config_stand_${opt_sel_var}_var[$elem] firewall_opt )
         set_firewall_opt "$( get_dict_value config_stand_${opt_sel_var}_var[$elem] firewall_opt )"
 
         ${config_base[access_create]} && [[ "${vm_config[access_role]}" != '' ]] && run_cmd pve_api_request return_cmd PUT /access/acl "'path=/vms/$vmid' 'roles=${vm_config[access_role]}' 'users=$username'"
@@ -1916,7 +1928,7 @@ function manage_bulk_vm_power() {
     local pve_node args act_desc=''
     [[ "$action" == 'startall' ]] && args=" --force '1'" && act_desc="${c_ok}включение${c_null}" || { act_desc="${c_err}выключение${c_null}"; isdigit_check "$2" && args=" --timeout '$2'"; }
     for pve_node in "${!bulk_vms_power_list[@]}"; do
-        bulk_vms_power_list[$pve_node]=${bulk_vms_power_list[$pve_node]:1}
+        bulk_vms_power_list[$pve_node]=${bulk_vms_power_list[$pve_node]/# /}
         echo_tty "[${c_ok}Задание${c_null}] Запущено массовое $act_desc машин на узле ${c_val}$pve_node${c_null}. Список ВМ: ${c_val}${bulk_vms_power_list[$pve_node]// /"${c_null}, ${c_val}"}${c_null}"
         run_cmd "pvesh create /nodes/$pve_node/$action --vms '${bulk_vms_power_list[$pve_node]}'$args"
         echo_ok "${act_desc} машин на узле ${c_val}$pve_node${c_null}"
@@ -2364,6 +2376,7 @@ while [ $# != 0 ]; do
                 -l|--pass-length)       check_arg "$2"; config_base[access_pass_length]="$2"; shift;;
                 -char|--pass-chars)     check_arg "$2"; config_base[access_pass_chars]="$2"; shift;;
                 -sctl|--silent-control) opt_silent_control=true;;
+                -api|--pve-api-url) check_arg "$2"; config_base[pve_api_url]="$2"; shift;;
                 *) echo_err "Ошибка: некорректный аргумент: '$1'"; opt_show_help=true;;
             esac
             shift;;
