@@ -65,7 +65,7 @@ declare -A config_base=(
     [access_pass_chars]='A-Z0-9'
 
     [_access_auth_pam_desc]='Изменение отображаемого названия аутентификации PAM'
-    [access_auth_pam_desc]='System'
+    [access_auth_pam_desc]='System (PAM)'
 
     [_access_auth_pve_desc]='Изменение отображаемого названия аутентификации PVE'
     [access_auth_pve_desc]='Аутентификация участника'
