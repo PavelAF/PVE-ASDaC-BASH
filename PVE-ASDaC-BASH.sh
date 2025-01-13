@@ -65,10 +65,10 @@ declare -A config_base=(
     [access_pass_chars]='A-Z0-9'
 
     [_access_auth_pam_desc]='Изменение отображаемого названия аутентификации PAM'
-    [access_auth_pam_desc]='System (PAM)'
+    [access_auth_pam_desc]='System (PAM auth)'
 
     [_access_auth_pve_desc]='Изменение отображаемого названия аутентификации PVE'
-    [access_auth_pve_desc]='Аутентификация участника'
+    [access_auth_pve_desc]='Аутентификация участника (PVE auth)'
 
     [_pool_access_role]='Роль, устанавливаемая для пула по умолчанию'
 
@@ -672,7 +672,13 @@ function show_config() {
 
                 [[ "$vm_name" == '' || "$description" == '' ]] && {
                     vm_template="$( get_dict_value "$conf[$var]" config_template )"
-                    [[ ! -v "config_templates[$vm_template]" ]] && { echo_err "Ошибка: шаблон конфигурации '$vm_template' для ВМ '$var' не найден. Выход"; return 1; } 
+                    [[ ! -v "config_templates[$vm_template]" ]] && { 
+                        echo_tty "config_templates[$vm_template]"
+                        echo_tty "exists=$( [[ -v "config_templates[$vm_template]" ]]; echo $? )"
+                        echo_tty "value=${config_templates[$vm_template]}"
+                        echo_tty "indexes=${!config_templates[@]}"
+                        echo_err "Ошибка: шаблон конфигурации '$vm_template' для ВМ '$var' не найден. Выход"; exit_pid; 
+                        } 
                     [[ "$vm_name" == '' ]] && vm_name="$( get_dict_value "config_templates[$vm_template]" name )"
                     [[ "$description" == '' ]] && description="$( get_dict_value "config_templates[$vm_template]" os_descr )"
                 }
@@ -895,7 +901,7 @@ function set_configfile() {
 
     if [[ "$( file -bi "$file" )" == 'text/plain; charset=utf-8' ]]; then
         source <( sed -r "s/\x1B\[([0-9]{1,3}(;[0-9]{1,2};?)?)?[mGK]//g;s/\r//g" "$file" \
-            | grep -Pzo '(\R|^)\s*config_(((access_roles|templates)\[_?[a-zA-Z][a-zA-Z0-9\_\-\.]+\])|(base\[('$( printf '%q\n' "${!config_base[@]}" | grep -Pv '^_' | awk '{if (NR>1) printf "|";printf $0}' )')\]))=(([^\ "'\'']|\\["'\''\ ])*|(['\''][^'\'']*['\'']))(?=\s*($|\R))' | sed 's/\x0//g' ) \
+            | grep -Pzo '(\R|^)\s*config_(((access_roles|templates)\[_?[a-zA-Z0-9][a-zA-Z0-9\_\-\.]+\])|(base\[('$( printf '%q\n' "${!config_base[@]}" | grep -Pv '^_' | awk '{if (NR>1) printf "|";printf $0}' )')\]))=(([^\ "'\'']|\\["'\''\ ])*|(['\''][^'\'']*['\'']))(?=\s*($|\R))' | sed 's/\x0//g' ) \
         || { echo_err 'Ошибка при импорте файла конфигурации. Выход'; exit 1; }
 
         start_var=$(compgen -v | grep -Po '^config_stand_\K[1-9][0-9]{0,3}(?=_var$)' | awk 'BEGIN{max=0}{if ($1>max) max=$1}END{print max}')
@@ -1120,8 +1126,8 @@ function configure_imgdir() {
     }
 
     if [[ "$1" == 'check-only' ]]; then
-        awk '/MemAvailable/ {if($2<16777216) {exit 1} }' /proc/meminfo || \
-            { echo_err $'Ошибка: Недостаточно свободной оперативной памяти!\nДля развертывания стенда необходимо как минимум 16 ГБ свободоной ОЗУ'; exit_clear; }
+        awk '/MemAvailable/ {if($2<8388608) {exit 1} }' /proc/meminfo || \
+            { echo_err $'Ошибка: Недостаточно свободной оперативной памяти!\nДля развертывания стенда необходимо как минимум 8 ГБ свободоной ОЗУ'; exit_clear; }
         return 0
     fi
 
