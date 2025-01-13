@@ -54,8 +54,8 @@
     <br>
     Разработчик: Рачеев А.В.<br>
     Под редакцией <a href="https://github.com/PavelAF">@PavelAF</a>
-    <br><br>Ссылка на инструкцию <a href="https://disk.yandex.ru/d/YR3eelCZR_JVXQ/Script-Images/README.txt">README</a>
-    <br>Ссылка общую папку с файлами по заданию: <a style="font-size:48;" href="https://disk.yandex.ru/d/YR3eelCZR_JVXQ">https://disk.yandex.ru/d/YR3eelCZR_JVXQ</a>
+    <br><br>Ссылка на инструкцию <a href="https://disk.yandex.ru/d/YR3eelCZR_JVXQ/Script-Images/README.txt" target="_blank">README</a>
+    <br>Ссылка общую папку с файлами по заданию: <a style="font-size:48;" href="https://disk.yandex.ru/d/YR3eelCZR_JVXQ" target="_blank">https://disk.yandex.ru/d/YR3eelCZR_JVXQ</a>
     
   </details>
   
