@@ -672,13 +672,7 @@ function show_config() {
 
                 [[ "$vm_name" == '' || "$description" == '' ]] && {
                     vm_template="$( get_dict_value "$conf[$var]" config_template )"
-                    [[ ! -v "config_templates[$vm_template]" ]] && { 
-                        echo_tty "config_templates[$vm_template]"
-                        echo_tty "exists=$( [[ -v "config_templates[$vm_template]" ]]; echo $? )"
-                        echo_tty "value=${config_templates[$vm_template]}"
-                        echo_tty "indexes=${!config_templates[@]}"
-                        echo_err "Ошибка: шаблон конфигурации '$vm_template' для ВМ '$var' не найден. Выход"; exit_pid; 
-                        } 
+                    [[ ! -v "config_templates[$vm_template]" ]] && { echo_err "Ошибка: шаблон конфигурации '$vm_template' для ВМ '$var' не найден. Выход"; exit_pid; } 
                     [[ "$vm_name" == '' ]] && vm_name="$( get_dict_value "config_templates[$vm_template]" name )"
                     [[ "$description" == '' ]] && description="$( get_dict_value "config_templates[$vm_template]" os_descr )"
                 }
