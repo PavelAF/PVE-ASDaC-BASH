@@ -18,7 +18,7 @@
   
   &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;**Стенды для регионального чемпионата СиСА 2025 (модуль Б)**
   ```bash
-  (b=testing_api opts=(PVE-ASDaC-BASH.sh -c 'https://disk.yandex.ru/d/1-vlJJU_0mzefA' -z) ;curl -sfOL "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/$b/${opts[0]}"&&{ chmod +x ${opts[0]}&&./"${opts[@]}";rm -f ${opts[0]};:;}||echo -e "\e[1;33m\nОшибка скачивания: проверьте подключение к Интернету, настройки DNS, прокси и URL адрес\ncurl exit code: $?\n\e[m">&2)
+  (b=testing_api opts=( PVE-ASDaC-BASH.sh -c 'https://disk.yandex.ru/d/1-vlJJU_0mzefA' -z ) ;curl -sfOL "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/$b/${opts[0]}"&&{ chmod +x ${opts[0]}&&./"${opts[@]}";rm -f ${opts[0]};:;}||echo -e "\e[1;33m\nОшибка скачивания: проверьте подключение к Интернету, настройки DNS, прокси и URL адрес\ncurl exit code: $?\n\e[m">&2)
   ```
   <details>
     <summary>👉 Стенд РЧ: системные требования и <b>особенности установки на Альт PVE и Proxmox VE <=7.4</b></summary>
@@ -33,11 +33,11 @@
   
   &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;**Стенды демекзамена 09.02.06-2025, классический**
   ```bash
-  (b=testing_api opts=(PVE-ASDaC-BASH.sh -c 'https://disk.yandex.ru/d/HDgvq-iMbduqag' -z) ;curl -sfOL "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/$b/${opts[0]}"&&{ chmod +x ${opts[0]}&&./"${opts[@]}";rm -f ${opts[0]};:;}||echo -e "\e[1;33m\nОшибка скачивания: проверьте подключение к Интернету, настройки DNS, прокси и URL адрес\ncurl exit code: $?\n\e[m">&2)
+  (b=testing_api opts=( PVE-ASDaC-BASH.sh -c 'https://disk.yandex.ru/d/HDgvq-iMbduqag' -z ) ;curl -sfOL "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/$b/${opts[0]}"&&{ chmod +x ${opts[0]}&&./"${opts[@]}";rm -f ${opts[0]};:;}||echo -e "\e[1;33m\nОшибка скачивания: проверьте подключение к Интернету, настройки DNS, прокси и URL адрес\ncurl exit code: $?\n\e[m">&2)
   ```
   &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;**Стенды демекзамена 09.02.06-2025, только ОС Альт**
   ```bash
-  (b=testing_api opts=(PVE-ASDaC-BASH.sh -c 'https://disk.yandex.ru/d/259h8afDR9hqyQ' -z) ;curl -sfOL "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/$b/${opts[0]}"&&{ chmod +x ${opts[0]}&&./"${opts[@]}";rm -f ${opts[0]};:;}||echo -e "\e[1;33m\nОшибка скачивания: проверьте подключение к Интернету, настройки DNS, прокси и URL адрес\ncurl exit code: $?\n\e[m">&2)
+  (b=testing_api opts=( PVE-ASDaC-BASH.sh -c 'https://disk.yandex.ru/d/259h8afDR9hqyQ' -z ) ;curl -sfOL "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/$b/${opts[0]}"&&{ chmod +x ${opts[0]}&&./"${opts[@]}";rm -f ${opts[0]};:;}||echo -e "\e[1;33m\nОшибка скачивания: проверьте подключение к Интернету, настройки DNS, прокси и URL адрес\ncurl exit code: $?\n\e[m">&2)
   ```
   ___
 </details>
@@ -47,7 +47,7 @@
   
   &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;**[Ред., Бета-версия] Стенды для регионального чемпионата ССА Юниоры 2025 (модуль Б и Г)**
   ```bash
-  (b=testing_api opts=(PVE-ASDaC-BASH.sh -c 'https://disk.yandex.ru/d/OWNaDolGzl2vcw' -z) ;curl -sfOL "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/$b/${opts[0]}"&&{ chmod +x ${opts[0]}&&./"${opts[@]}";rm -f ${opts[0]};:;}||echo -e "\e[1;33m\nОшибка скачивания: проверьте подключение к Интернету, настройки DNS, прокси и URL адрес\ncurl exit code: $?\n\e[m">&2)
+  (b=testing_api opts=( PVE-ASDaC-BASH.sh -c 'https://disk.yandex.ru/d/OWNaDolGzl2vcw' -z ) ;curl -sfOL "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/$b/${opts[0]}"&&{ chmod +x ${opts[0]}&&./"${opts[@]}";rm -f ${opts[0]};:;}||echo -e "\e[1;33m\nОшибка скачивания: проверьте подключение к Интернету, настройки DNS, прокси и URL адрес\ncurl exit code: $?\n\e[m">&2)
   ```
   <details>
     <summary>👉 <b>Информация</b>: автор конфигурации, инструкция по развертыванию</summary>
