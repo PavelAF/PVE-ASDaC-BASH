@@ -658,7 +658,7 @@ function show_config() {
             [[ "$description" == '' ]] && description="Вариант $i (без названия)"
             pool_name="$( get_dict_value "$conf[stand_config]" pool_name )"
             [[ "$pool_name" == "" ]] && pool_name=${config_base[def_pool_name]}
-            description="$pool_name : ${c_val}${description//'\n'/$'\n\t'}${c_null}"
+            description="$pool_name : ${c_val}${description//'\n'/$'\n\t'$c_lyellow}${c_null}"
             first_elem=true
             echo -n $'\n  '"$((i++)). $description"$'\n  - ВМ: '
             for var in $( printf '%s\n' "${!ref_conf[@]}" | sort -V ); do
