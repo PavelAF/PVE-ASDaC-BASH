@@ -47,7 +47,7 @@
   
   &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;**[Ред., Бета-версия] Стенды для регионального чемпионата ССА Юниоры 2025 (модуль Б и Г)**
   ```bash
-  (b=testing_api opts=( PVE-ASDaC-BASH.sh -c 'https://disk.yandex.ru/d/OWNaDolGzl2vcw' -z ) ;curl -sfOL "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/$b/${opts[0]}"&&{ chmod +x ${opts[0]}&&./"${opts[@]}";rm -f ${opts[0]};:;}||echo -e "\e[1;33m\nОшибка скачивания: проверьте подключение к Интернету, настройки DNS, прокси и URL адрес\ncurl exit code: $?\n\e[m">&2)
+  (b=testing_api opts=( PVE-ASDaC-BASH.sh -c 'https://disk.yandex.ru/d/YR3eelCZR_JVXQ/Script-Images/ASDaC_RCJ-2025_multi.conf_v2.txt' -z ) ;curl -sfOL "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/$b/${opts[0]}"&&{ chmod +x ${opts[0]}&&./"${opts[@]}";rm -f ${opts[0]};:;}||echo -e "\e[1;33m\nОшибка скачивания: проверьте подключение к Интернету, настройки DNS, прокси и URL адрес\ncurl exit code: $?\n\e[m">&2)
   ```
   <details>
     <summary>👉 <b>Информация</b>: автор конфигурации, инструкция по развертыванию</summary>
