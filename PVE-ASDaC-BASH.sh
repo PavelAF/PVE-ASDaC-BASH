@@ -78,9 +78,6 @@ declare -A config_base=(
 
 _config_base='Список ролей прав доступа'
 declare -A config_access_roles=(
-    [Competitor]='Pool.Audit VM.Audit VM.Console VM.PowerMgmt VM.Snapshot.Rollback VM.Config.Network'
-    [Competitor_DE]='Pool.Audit VM.Audit VM.Console VM.PowerMgmt'
-    [Competitor_ISP]='VM.Audit VM.Console VM.PowerMgmt VM.Snapshot.Rollback'
     [test]='VM.Audit     VM.Console   ,   VM.PowerMgmt,VM.Snapshot.Rollback;VM.Snapshot.Rollback'
 )
 
@@ -794,7 +791,7 @@ function get_file() {
             configure_imgdir add-size $max_filesize
             echo_tty "[${c_info}Info${c_null}] Скачивание файла ${c_value}$filename${c_null} Размер: ${c_value}$( echo "$filesize" | awk 'BEGIN{split("Б|КБ|МБ|ГБ|ТБ",x,"|")}{for(i=1;$1>=1024&&i<length(x);i++)$1/=1024;printf("%3.1f %s", $1, x[i]) }' )${c_null} URL: ${c_value}$base_url${c_null}"
             echo_verbose "SIZE: ${c_value}$filesize${c_null} SHA-256: ${c_value}$file_sha256${c_null}"
-            curl --max-filesize $max_filesize -GL "$url" -o "$filename" || { echo_err "Ошибка скачивания файла ${c_value}$filename${c_null} URL: ${c_value}$url${c_null}. Выход"; exit_clear; }
+            curl --max-filesize $max_filesize -fGL "$url" -o "$filename" || { echo_err "Ошибка скачивания файла ${c_value}$filename${c_null} URL: ${c_value}$url${c_null} curl exit code: $?"; exit_clear; }
             # | iconv -f windows-1251 -t utf-8 > $tempfile
         }
         url="$filename"
