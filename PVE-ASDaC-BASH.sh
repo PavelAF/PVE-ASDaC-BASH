@@ -785,12 +785,12 @@ function get_file() {
                 exit_clear
             fi
         fi
+        echo_verbose "{YADISK API REQUEST} FILE: ${c_value}$( basename $filename )${c_null} SIZE: ${c_value}$filesize${c_null} SHA-256: ${c_value}$file_sha256${c_null}"
         [[ -e "$filename" && ! -f "$filename" ]] && { echo_err "Ошибка: Попытка скачать файл в '$filename': этот файловый путь уже используется"; exit_clear; }
         [[ -r "$filename" ]] && [[ "$filesize" == '0' || "$( wc -c "$filename" | awk '{printf $1;exit}' )" == "$filesize" ]] \
         && [[ "$filesize" -gt 102400 || "${#file_sha256}" == 64 && "$( sha256sum "$filename" | awk '{printf $1}' )" == "$file_sha256" ]] || {
             configure_imgdir add-size $max_filesize
             echo_tty "[${c_info}Info${c_null}] Скачивание файла ${c_value}$filename${c_null} Размер: ${c_value}$( echo "$filesize" | awk 'BEGIN{split("Б|КБ|МБ|ГБ|ТБ",x,"|")}{for(i=1;$1>=1024&&i<length(x);i++)$1/=1024;printf("%3.1f %s", $1, x[i]) }' )${c_null} URL: ${c_value}$base_url${c_null}"
-            echo_verbose "SIZE: ${c_value}$filesize${c_null} SHA-256: ${c_value}$file_sha256${c_null}"
             curl --max-filesize $max_filesize -fGL "$url" -o "$filename" || { echo_err "Ошибка скачивания файла ${c_value}$filename${c_null} URL: ${c_value}$url${c_null} curl exit code: $?"; exit_clear; }
             # | iconv -f windows-1251 -t utf-8 > $tempfile
         }
@@ -886,8 +886,7 @@ function set_configfile() {
 
     $opt_zero_vms && del_vmconfig && opt_zero_vms=false
 
-    local file="$1"
-    local error=false
+    local file="$1" error=false
     get_file file 655360
 
     if [[ "$( file -bi "$file" )" == 'text/plain; charset=utf-8' ]]; then
