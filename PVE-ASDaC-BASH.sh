@@ -65,10 +65,10 @@ declare -A config_base=(
     [access_pass_chars]='A-Z0-9'
 
     [_access_auth_pam_desc]='Изменение отображаемого названия аутентификации PAM'
-    [access_auth_pam_desc]='System'
+    [access_auth_pam_desc]='System (PAM auth)'
 
     [_access_auth_pve_desc]='Изменение отображаемого названия аутентификации PVE'
-    [access_auth_pve_desc]='Аутентификация участника'
+    [access_auth_pve_desc]='Аутентификация участника (PVE auth)'
 
     [_pool_access_role]='Роль, устанавливаемая для пула по умолчанию'
 
@@ -78,9 +78,6 @@ declare -A config_base=(
 
 _config_base='Список ролей прав доступа'
 declare -A config_access_roles=(
-    [Competitor]='Pool.Audit VM.Audit VM.Console VM.PowerMgmt VM.Snapshot.Rollback VM.Config.Network'
-    [Competitor_DE]='Pool.Audit VM.Audit VM.Console VM.PowerMgmt'
-    [Competitor_ISP]='VM.Audit VM.Console VM.PowerMgmt VM.Snapshot.Rollback'
     [test]='VM.Audit     VM.Console   ,   VM.PowerMgmt,VM.Snapshot.Rollback;VM.Snapshot.Rollback'
 )
 
@@ -658,7 +655,7 @@ function show_config() {
             [[ "$description" == '' ]] && description="Вариант $i (без названия)"
             pool_name="$( get_dict_value "$conf[stand_config]" pool_name )"
             [[ "$pool_name" == "" ]] && pool_name=${config_base[def_pool_name]}
-            description="$pool_name : ${c_val}${description//'\n'/$'\n\t'}${c_null}"
+            description="$pool_name : ${c_val}${description//'\n'/$'\n\t'$c_lyellow}${c_null}"
             first_elem=true
             echo -n $'\n  '"$((i++)). $description"$'\n  - ВМ: '
             for var in $( printf '%s\n' "${!ref_conf[@]}" | sort -V ); do
@@ -672,7 +669,7 @@ function show_config() {
 
                 [[ "$vm_name" == '' || "$description" == '' ]] && {
                     vm_template="$( get_dict_value "$conf[$var]" config_template )"
-                    [[ ! -v "config_templates[$vm_template]" ]] && { echo_err "Ошибка: шаблон конфигурации '$vm_template' для ВМ '$var' не найден. Выход"; return 1; } 
+                    [[ ! -v "config_templates[$vm_template]" ]] && { echo_err "Ошибка: шаблон конфигурации '$vm_template' для ВМ '$var' не найден. Выход"; exit_pid; } 
                     [[ "$vm_name" == '' ]] && vm_name="$( get_dict_value "config_templates[$vm_template]" name )"
                     [[ "$description" == '' ]] && description="$( get_dict_value "config_templates[$vm_template]" os_descr )"
                 }
@@ -768,6 +765,7 @@ function get_file() {
 
     if [[ "$url" =~ ^https://disk\.yandex\.ru/ ]]; then
         yadisk_url url filesize=size filename=name file_sha256=sha256
+        echo_verbose "<YADISK API REQUEST> FILE: ${c_value}$filename${c_null} SIZE: ${c_value}$filesize${c_null} SHA-256: ${c_value}$file_sha256${c_null}"
     elif isurl_check "$url"; then
         filesize=$( get_url_filesize $url )
         filename=$( get_url_filename $url )
@@ -793,8 +791,10 @@ function get_file() {
         && [[ "$filesize" -gt 102400 || "${#file_sha256}" == 64 && "$( sha256sum "$filename" | awk '{printf $1}' )" == "$file_sha256" ]] || {
             configure_imgdir add-size $max_filesize
             echo_tty "[${c_info}Info${c_null}] Скачивание файла ${c_value}$filename${c_null} Размер: ${c_value}$( echo "$filesize" | awk 'BEGIN{split("Б|КБ|МБ|ГБ|ТБ",x,"|")}{for(i=1;$1>=1024&&i<length(x);i++)$1/=1024;printf("%3.1f %s", $1, x[i]) }' )${c_null} URL: ${c_value}$base_url${c_null}"
-            echo_verbose "SIZE: ${c_value}$filesize${c_null} SHA-256: ${c_value}$file_sha256${c_null}"
-            curl --max-filesize $max_filesize -GL "$url" -o "$filename" || { echo_err "Ошибка скачивания файла ${c_value}$filename${c_null} URL: ${c_value}$url${c_null}. Выход"; exit_clear; }
+            curl --max-filesize $max_filesize -fGL "$url" -o "$filename" || { echo_err "Ошибка скачивания файла ${c_value}$filename${c_err} URL: ${c_value}$url${c_err} curl exit code: $?"; exit_clear; }
+            
+            [[ "$filesize" == '0' || "$( wc -c "$filename" | awk '{printf $1;exit}' )" == "$filesize" ]] || { echo_warn "Ошибка скачивания файла ${c_value}$filename${c_err}: размер файла не совпадает со значением, которое отправил сервер. URL: ${c_value}$url${c_err}"$'\n'"Размер скачанного файла: ${c_value}$( wc -c "$filename" | awk '{printf $1;exit}' )${c_err} Ожидалось: ${c_value}$filesize${c_err}"; $filesize=0; }
+            [[ "$filesize" -gt 102400 || "${#file_sha256}" == 64 && "$( sha256sum "$filename" | awk '{printf $1}' )" == "$file_sha256" ]] || { echo_err "Ошибка скачивания файла ${c_value}$filename${c_err}: хеш сумма SHA-256 не совпадает с заявленной. URL: ${c_value}$url${c_err}"$'\n'"Хеш скачанного файла: ${c_value}$( sha256sum "$filename" | awk '{printf $1}' )${c_err} Ожидалось: ${c_value}$file_sha256${c_err}"; exit_clear; }
             # | iconv -f windows-1251 -t utf-8 > $tempfile
         }
         url="$filename"
@@ -889,13 +889,12 @@ function set_configfile() {
 
     $opt_zero_vms && del_vmconfig && opt_zero_vms=false
 
-    local file="$1"
-    local error=false
+    local file="$1" error=false
     get_file file 655360
 
     if [[ "$( file -bi "$file" )" == 'text/plain; charset=utf-8' ]]; then
         source <( sed -r "s/\x1B\[([0-9]{1,3}(;[0-9]{1,2};?)?)?[mGK]//g;s/\r//g" "$file" \
-            | grep -Pzo '(\R|^)\s*config_(((access_roles|templates)\[_?[a-zA-Z][a-zA-Z0-9\_\-\.]+\])|(base\[('$( printf '%q\n' "${!config_base[@]}" | grep -Pv '^_' | awk '{if (NR>1) printf "|";printf $0}' )')\]))=(([^\ "'\'']|\\["'\''\ ])*|(['\''][^'\'']*['\'']))(?=\s*($|\R))' | sed 's/\x0//g' ) \
+            | grep -Pzo '(\R|^)\s*config_(((access_roles|templates)\[_?[a-zA-Z0-9][a-zA-Z0-9\_\-\.]+\])|(base\[('$( printf '%q\n' "${!config_base[@]}" | grep -Pv '^_' | awk '{if (NR>1) printf "|";printf $0}' )')\]))=(([^\ "'\'']|\\["'\''\ ])*|(['\''][^'\'']*['\'']))(?=\s*($|\R))' | sed 's/\x0//g' ) \
         || { echo_err 'Ошибка при импорте файла конфигурации. Выход'; exit 1; }
 
         start_var=$(compgen -v | grep -Po '^config_stand_\K[1-9][0-9]{0,3}(?=_var$)' | awk 'BEGIN{max=0}{if ($1>max) max=$1}END{print max}')
@@ -1120,8 +1119,8 @@ function configure_imgdir() {
     }
 
     if [[ "$1" == 'check-only' ]]; then
-        awk '/MemAvailable/ {if($2<16777216) {exit 1} }' /proc/meminfo || \
-            { echo_err $'Ошибка: Недостаточно свободной оперативной памяти!\nДля развертывания стенда необходимо как минимум 16 ГБ свободоной ОЗУ'; exit_clear; }
+        awk '/MemAvailable/ {if($2<8388608) {exit 1} }' /proc/meminfo || \
+            { echo_err $'Ошибка: Недостаточно свободной оперативной памяти!\nДля развертывания стенда необходимо как минимум 8 ГБ свободоной ОЗУ'; exit_clear; }
         return 0
     fi
 
