@@ -30,6 +30,7 @@
   ![image](https://github.com/user-attachments/assets/eb105561-d312-4c71-94c1-37d01cd88453)
   ___
   </details>
+  <br>
   
   &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;**Стенды демекзамена 09.02.06-2025, классический**
   ```bash
