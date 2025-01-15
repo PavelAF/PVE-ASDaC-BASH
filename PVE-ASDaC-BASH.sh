@@ -765,6 +765,7 @@ function get_file() {
 
     if [[ "$url" =~ ^https://disk\.yandex\.ru/ ]]; then
         yadisk_url url filesize=size filename=name file_sha256=sha256
+        echo_verbose "{YADISK API REQUEST} FILE: ${c_value}$filename${c_null} SIZE: ${c_value}$filesize${c_null} SHA-256: ${c_value}$file_sha256${c_null}"
     elif isurl_check "$url"; then
         filesize=$( get_url_filesize $url )
         filename=$( get_url_filename $url )
@@ -785,7 +786,6 @@ function get_file() {
                 exit_clear
             fi
         fi
-        echo_verbose "{YADISK API REQUEST} FILE: ${c_value}$( basename $filename )${c_null} SIZE: ${c_value}$filesize${c_null} SHA-256: ${c_value}$file_sha256${c_null}"
         [[ -e "$filename" && ! -f "$filename" ]] && { echo_err "Ошибка: Попытка скачать файл в '$filename': этот файловый путь уже используется"; exit_clear; }
         [[ -r "$filename" ]] && [[ "$filesize" == '0' || "$( wc -c "$filename" | awk '{printf $1;exit}' )" == "$filesize" ]] \
         && [[ "$filesize" -gt 102400 || "${#file_sha256}" == 64 && "$( sha256sum "$filename" | awk '{printf $1}' )" == "$file_sha256" ]] || {
