@@ -956,7 +956,7 @@ function configure_varnum() {
     local var=0
     if [[ $count -gt 1 ]]; then
         echo_tty
-        var=$( read_question_select 'Вариант развертывания стендов' '^[0-9]*$' 1 $(compgen -v | grep -P '^config_stand_[1-9][0-9]{0,3}_var$' | wc -l) '' 2 )
+        var=$( read_question_select 'Вариант развертывания стендов' '^[0-9]+$' 1 $(compgen -v | grep -P '^config_stand_[1-9][0-9]{0,3}_var$' | wc -l) '' 2 )
         [[ "$var" == '' ]] && return 1
     else var=1
     fi
@@ -1169,8 +1169,9 @@ function configure_poolname() {
     }
     [[ "$1" == 'set' ]] && {
         echo 'Введите шаблон имени PVE пула стенда. Прим: DE_stand_training_{0}'
-        config_base[pool_name]=$( read_question_select 'Шаблон имени пула' '^[\-0-9a-zA-Z\_\.]*(\{0\})?[\-0-9a-zA-Z\_\.]*$' '' '' "${config_base[pool_name]}" )
+        config_base[pool_name]=$( read_question_select 'Шаблон имени пула' '^[\-0-9a-zA-Z\_\.]*(\{0\})?[\-0-9a-zA-Z\_\.]*$' '' '' "${config_base[pool_name]}" 2 )
         shift
+        [[  "${config_base[pool_name]}" == '' ]] && config_base[pool_name]=$def_value
         [[ "${config_base[pool_name]}" == "$def_value" ]] && return 0
     }
     check_name 'config_base[pool_name]' ||  { echo_err "Ошибка: шаблон имён пулов некорректный: '${config_base[pool_name]}'. Запрещенные символы или длина больше 32 или меньше 3"; ${3:-true} && exit_clear || { config_base[pool_name]=$def_value; return 1; } }
@@ -1199,8 +1200,9 @@ function configure_username() {
     }
     [[ "$1" == 'set' ]] && {
         echo 'Введите шаблон имени пользователя стенда. Прим: Student{0}'
-        config_base[access_user_name]=$( read_question_select 'Шаблон имени пользователя' '^[\-0-9a-zA-Z\_\.]*(\{0\})?[\-0-9a-zA-Z\_\.]*$' '' '' "${config_base[access_user_name]}" )
+        config_base[access_user_name]=$( read_question_select 'Шаблон имени пользователя' '^[\-0-9a-zA-Z\_\.]*(\{0\})?[\-0-9a-zA-Z\_\.]*$' '' '' "${config_base[access_user_name]}" 2 )
         shift
+        [[ "${config_base[access_user_name]}" == '' ]] && config_base[access_user_name]=$def_value
         [[ "${config_base[access_user_name]}" == "$def_value" ]] && return 0
     }
     check_name 'config_base[access_user_name]' ||  { echo_err "Ошибка: шаблон имён пользователей некорректный: '${config_base[access_user_name]}'. Запрещенные символы или длина больше 32 или меньше 3. Выход"; ${3:-true} && exit_clear || { config_base[access_user_name]=$def_value; return 1; } }
@@ -1742,7 +1744,7 @@ function deploy_access_passwd() {
         echo_tty '  4. CSV: универсальный табличный вариант'
         echo_tty '  5. CSV: универсальный табличный вариант (с заголовками к каждой записи)'
         echo_tty
-        format_opt=$(read_question_select 'Вариант отображения' '^([1-5]|)$' )
+        format_opt=$( read_question_select 'Вариант отображения' '^[1-5]$' '' '' '' 2 )
     }
 
     [[ $format_opt == '' ]] && format_opt=1
@@ -1816,7 +1818,7 @@ function install_stands() {
         while true; do
             echo_tty "$( show_config install-change )"
             echo_tty
-            local switch=$( read_question_select 'Выберите номер настройки для изменения' '^[0-9]*$' 0 $( ${config_base[access_create]} && echo 16 || echo 9 ) '' 2 )
+            local switch=$( read_question_select 'Выберите номер настройки для изменения' '^[0-9]+$' 0 $( ${config_base[access_create]} && echo 16 || echo 9 ) '' 2 )
             echo_tty
             [[ "$switch" == 0 ]] && break
             [[ "$switch" == '' ]] && { $_exit && break; _exit=true; continue; }
@@ -1999,9 +2001,9 @@ function manage_stands() {
     echo_tty "   8. Откатить снапшоты виртуальных машин"
     echo_tty "   9. Удалить снапшоты виртуальных машин"
     echo_tty "  10. Удаление стендов"
-    local switch=$( read_question_select $'\nВыберите действие' '^([0-9]{1,2}|)$' 1 10 )
+    local switch=$( read_question_select $'\nВыберите действие' '^[0-9]{1,2}$' 1 10 '' 2 )
 
-    [[ "$switch" == '' ]] && switch=$( read_question_select $'\nВыберите действие' '^([0-9]{1,2}|)$' 1 10 ) && [[ "$switch" == '' ]] && return 0
+    [[ "$switch" == '' ]] && return 0
     if [[ $switch =~ ^[1-3]$ ]]; then
         local user_name enable state usr_range='' usr_count=$(echo -n "${user_list[$group_name]}" | grep -c '^') usr_list=''
 
@@ -2013,7 +2015,7 @@ function manage_stands() {
             done
             echo_tty $'\nДля выбора всех пользователей нажмите Enter'
             while true; do
-                usr_range=$( read_question_select 'Введите номера выбранных пользователей (прим 1,2-10)' '\A^(([0-9]{1,3}((\-|\.\.)[0-9]{1,3})?([\,](?!$\Z)|(?![0-9])))+|)$\Z' )
+                usr_range=$( read_question_select 'Введите номера выбранных пользователей (прим 1,2-10)' '\A^(([0-9]{1,3}((\-|\.\.)[0-9]{1,3})?([\,](?!$\Z)|(?![0-9])))+)$\Z' '' '' '' 2 )
                 [[ "$usr_range" == '' ]] && { usr_list=${user_list[$group_name]}; break; }
 
                 usr_list=''
@@ -2044,7 +2046,7 @@ function manage_stands() {
             local switch=0 val='' opt=''
             while true; do
                 echo_tty "$( show_config passwd-change )"
-                switch=$( read_question_select 'Выбранный пункт конфигурации' '^([0-9]+|)$' 0 2 )
+                switch=$( read_question_select 'Выбранный пункт конфигурации' '^[0-9]+$' 0 2 '' 2 )
                 [[ "$switch" == 0 || "$switch" == '' ]] && break
                 case "$switch" in
                     1) opt='access_pass_length';;
@@ -2073,7 +2075,7 @@ function manage_stands() {
         done
         echo_tty $'\nДля выбора всех стендов группы нажмите Enter'
         while true; do
-            stand_range=$( read_question_select 'Введите номера выбранных стендов (прим 1,2-10)' '\A^(([0-9]{1,3}((\-|\.\.)[0-9]{1,3})?([\,](?!$\Z)|(?![0-9])))+|)$\Z' )
+            stand_range=$( read_question_select 'Введите номера выбранных стендов (прим 1,2-10)' '\A^(([0-9]{1,3}((\-|\.\.)[0-9]{1,3})?([\,](?!$\Z)|(?![0-9])))+)$\Z' '' '' '' 2 )
             stand_list=''
             usr_list=''
             [[ "$stand_range" == '' ]] && { stand_list=${pool_list[$group_name]}; usr_list=${user_list[$group_name]}; break; } 
@@ -2374,7 +2376,7 @@ function create_vmnetwork() {
         echo_tty "  8. Изоливовать ВМ друг от друга? [0|1]: ${c_val}${sdn_settings[isolate]}"
         echo_tty $'Введите "Y", чтобы создать интерфейс или номер настройки\n'
 
-        switch=$( read_question_select 'Выберите действие' '^([1-8]|Y|)$' '' '' '' 2 )
+        switch=$( read_question_select 'Выберите действие' '^([1-8]|Y)$' '' '' '' 2 )
 
         case $switch in
             Y) break;;
