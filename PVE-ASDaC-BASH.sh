@@ -953,7 +953,8 @@ function configure_varnum() {
     local var=0
     if [[ $count -gt 1 ]]; then
         echo_tty
-        var=$( read_question_select 'Вариант развертывания стендов' '^[0-9]+$' 1 $(compgen -v | grep -P '^config_stand_[1-9][0-9]{0,3}_var$' | wc -l) )
+        var=$( read_question_select 'Вариант развертывания стендов' '^[0-9]*$' 1 $(compgen -v | grep -P '^config_stand_[1-9][0-9]{0,3}_var$' | wc -l) '' 2 )
+        [[ "$var" == '' ]] && return 1
     else var=1
     fi
     set_varnum $var
