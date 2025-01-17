@@ -2364,7 +2364,7 @@ function create_vmnetwork() {
         [isolate]='1'
     )
     local -a menu_item=( zone vnet alias subnet gateway dns start-ip end-ip isolate ) \
-        item_regex=( regex_for_name regex_for_alias regex_for_name regex_cidr regex_ip regex_ip regex_ip regex_ip regex_bool )
+        item_regex=( regex_for_name regex_for_name regex_for_alias regex_cidr regex_ip regex_ip regex_ip regex_ip regex_bool )
 
     while true; do
         echo_tty 'Настройки:'
@@ -2377,7 +2377,7 @@ function create_vmnetwork() {
         echo_tty "  7. DHCP-пул: начальный IP адрес: ${c_val}${sdn_settings[start-ip]}"
         echo_tty "  8. DHCP-пул: конечный IP адрес:  ${c_val}${sdn_settings[end-ip]}"
         echo_tty "  9. Изоливовать ВМ друг от друга? [0|1]: ${c_val}${sdn_settings[isolate]}"
-        echo_tty $'Введите "Y", чтобы создать интерфейс или номер настройки\n'
+        echo_tty $'Введите "Y", чтобы создать интерфейс или введите номер настройки для изменения\n'
 
         switch=$( read_question_select 'Выберите действие' '^([1-8]|Y)$' '' '' '' 2 )
 
@@ -2392,17 +2392,17 @@ function create_vmnetwork() {
         [[ "$result" != '' ]] && sdn_settings[${menu_item[$switch]}]=$result
     done
 
-	pve_api_request '' GET "/cluster/sdn/zones/${sdn_settings[zone]}" && { echo_warn "SDN зона '${sdn_settings[zone]}' уже существует"; return 1; }
+	pve_api_request '' GET "/cluster/sdn/zones/${sdn_settings[zone]}" && { echo_warn $'\n'"SDN зона '${sdn_settings[zone]}' уже существует"; return 1; }
 
-	pve_api_request '' GET "/cluster/sdn/vnets/${sdn_settings[vnet]}" && { echo_warn "SDN vnet '${sdn_settings[vnet]}' уже существует"; return 1; }
+	pve_api_request '' GET "/cluster/sdn/vnets/${sdn_settings[vnet]}" && { echo_warn $'\n'"SDN vnet '${sdn_settings[vnet]}' уже существует"; return 1; }
 
-	run_cmd /noexit pve_api_request result POST /cluster/sdn/zones "type=simple zone=${sdn_settings[zone]} ipam=pve" || { echo_err "Не удалось создать SDN зону 'VMNet': $result"; return 1; }
+	run_cmd /noexit pve_api_request result POST /cluster/sdn/zones "type=simple zone=${sdn_settings[zone]} ipam=pve" || { echo_err $'\n'"Не удалось создать SDN зону 'VMNet': $result"; return 1; }
 
-	run_cmd /noexit pve_api_request result POST /cluster/sdn/vnets "'zone=${sdn_settings[zone]}' 'vnet=${sdn_settings[vnet]}' isolate-ports=${sdn_settings[isolate]} 'alias=${sdn_settings[alias]}'" || { echo_err "Не удалось создать SDN зону 'VMNet': $result"; run_cmd pve_api_request "''" DELETE "/cluster/sdn/zones/${sdn_settings[zone]}"; return 1; }
+	run_cmd /noexit pve_api_request result POST /cluster/sdn/vnets "'zone=${sdn_settings[zone]}' 'vnet=${sdn_settings[vnet]}' isolate-ports=${sdn_settings[isolate]} 'alias=${sdn_settings[alias]}'" || { echo_err $'\n'"Не удалось создать SDN зону 'VMNet': $result"; run_cmd pve_api_request "''" DELETE "/cluster/sdn/zones/${sdn_settings[zone]}"; return 1; }
 
-	run_cmd /noexit pve_api_request result POST "/cluster/sdn/vnets/${sdn_settings[vnet]}/subnets" "type=subnet snat=1 'subnet=${sdn_settings[subnet]}' 'gateway=${sdn_settings[gateway]}' 'dhcp-dns-server=${sdn_settings[dns]}' 'dhcp-range=start-address=${sdn_settings[start-ip]},end-address=${sdn_settings[end-ip]}'" || { echo_err "Не удалось создать SDN subnet для зоны 'VMNet': $result"; run_cmd pve_api_request "''" DELETE "/cluster/sdn/vnets/${sdn_settings[vnet]}"; run_cmd pve_api_request "''" DELETE "/cluster/sdn/zones/${sdn_settings[zone]}"; return 1; }
+	run_cmd /noexit pve_api_request result POST "/cluster/sdn/vnets/${sdn_settings[vnet]}/subnets" "type=subnet snat=1 'subnet=${sdn_settings[subnet]}' 'gateway=${sdn_settings[gateway]}' 'dhcp-dns-server=${sdn_settings[dns]}' 'dhcp-range=start-address=${sdn_settings[start-ip]},end-address=${sdn_settings[end-ip]}'" || { echo_err $'\n'"Не удалось создать SDN subnet для зоны 'VMNet': $result"; run_cmd pve_api_request "''" DELETE "/cluster/sdn/vnets/${sdn_settings[vnet]}"; run_cmd pve_api_request "''" DELETE "/cluster/sdn/zones/${sdn_settings[zone]}"; return 1; }
 
-	echo_ok "Bridge интерфейс для виртуальных машин '${sdn_settings[vnet]}' успешно создан"
+	echo_ok $'\n'"Bridge интерфейс для виртуальных машин '${sdn_settings[vnet]}' успешно создан"
 
 	run_cmd "pvesh set /cluster/sdn"
 
