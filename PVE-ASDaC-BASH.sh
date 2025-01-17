@@ -2350,11 +2350,12 @@ function create_vmnetwork() {
 	echo_tty
 	command -v dnsmasq >/dev/null || { read_question "Пакет dnsmasq не установлен. Установить автоматически?" && { apt-get update && apt-get install dnsmasq -y && systemctl disable --now dnsmasq; } || return; }
 
-	local switch= result= regex_for_name='^[A-Za-z][A-Za-z0-9]{1,7}$' regex_cidr='' regex_ip='' regex_bool='^(0|1)$'
+	local switch= result= regex_for_name='^[A-Za-z][A-Za-z0-9]{1,7}$' regex_for_alias='^[:?<>\[\]/\@^*()_+\-/\\=a-zA-Z0-9]+$' regex_cidr='' regex_ip='' regex_bool='^(0|1)$'
 
 	local -A sdn_settings=(
         [zone]='VMNet'
         [vnet]='VMNet'
+        [alias]='VM Network'
         [subnet]='172.30.0.0/16'
         [gateway]='172.30.0.1'
         [dns]='77.88.8.8'
@@ -2362,19 +2363,20 @@ function create_vmnetwork() {
         [end-ip]='172.30.199.254'
         [isolate]='1'
     )
-    local -a menu_item=( zone vnet subnet gateway dns start-ip end-ip isolate ) \
-        item_regex=( regex_for_name regex_for_name regex_cidr regex_ip regex_ip regex_ip regex_ip regex_bool )
+    local -a menu_item=( zone vnet alias subnet gateway dns start-ip end-ip isolate ) \
+        item_regex=( regex_for_name regex_for_alias regex_for_name regex_cidr regex_ip regex_ip regex_ip regex_ip regex_bool )
 
     while true; do
         echo_tty 'Настройки:'
         echo_tty "  1. Название зоны SDN: ${c_val}${sdn_settings[zone]}"
         echo_tty "  2. Название сетевого интерфейса: ${c_val}${sdn_settings[vnet]}"
-        echo_tty "  3. Сеть: ${c_val}${sdn_settings[subnet]}"
-        echo_tty "  4. Адрес шлюза: ${c_val}${sdn_settings[gateway]}"
-        echo_tty "  5. DHCP: адрес DNS сервера: ${c_val}${sdn_settings[dns]}"
-        echo_tty "  6. DHCP-пул: начальный IP адрес: ${c_val}${sdn_settings[start-ip]}"
-        echo_tty "  7. DHCP-пул: конечный IP адрес:  ${c_val}${sdn_settings[end-ip]}"
-        echo_tty "  8. Изоливовать ВМ друг от друга? [0|1]: ${c_val}${sdn_settings[isolate]}"
+        echo_tty "  3. Описание (Alias) сетевого интерфейса: ${c_val}${sdn_settings[alias]}"
+        echo_tty "  4. Сеть: ${c_val}${sdn_settings[subnet]}"
+        echo_tty "  5. Адрес шлюза: ${c_val}${sdn_settings[gateway]}"
+        echo_tty "  6. DHCP: адрес DNS сервера: ${c_val}${sdn_settings[dns]}"
+        echo_tty "  7. DHCP-пул: начальный IP адрес: ${c_val}${sdn_settings[start-ip]}"
+        echo_tty "  8. DHCP-пул: конечный IP адрес:  ${c_val}${sdn_settings[end-ip]}"
+        echo_tty "  9. Изоливовать ВМ друг от друга? [0|1]: ${c_val}${sdn_settings[isolate]}"
         echo_tty $'Введите "Y", чтобы создать интерфейс или номер настройки\n'
 
         switch=$( read_question_select 'Выберите действие' '^([1-8]|Y)$' '' '' '' 2 )
@@ -2383,10 +2385,11 @@ function create_vmnetwork() {
             Y) break;;
             '') return;;
             7) ((switch--)); 
-                sdn_settings[${menu_item[$switch]}]=$( read_question_select 'Введите значение' "${!item_regex[$switch]}" "${sdn_settings[start-ip]}" '' "${sdn_settings[${menu_item[$switch]}]}" 2 );;
+                result=$( read_question_select 'Введите значение' "${!item_regex[$switch]}" "${sdn_settings[start-ip]}" '' "${sdn_settings[${menu_item[$switch]}]}" 2 );;
             *) ((switch--));
-                sdn_settings[${menu_item[$switch]}]=$( read_question_select 'Введите значение' "${!item_regex[$switch]}" '' '' "${sdn_settings[${menu_item[$switch]}]}" 2 );;
+                result=$( read_question_select 'Введите значение' "${!item_regex[$switch]}" '' '' "${sdn_settings[${menu_item[$switch]}]}" 2 );;
         esac
+        [[ "$result" != '' ]] && sdn_settings[${menu_item[$switch]}]=$result
     done
 
 	pve_api_request '' GET "/cluster/sdn/zones/${sdn_settings[zone]}" && { echo_warn "SDN зона '${sdn_settings[zone]}' уже существует"; return 1; }
@@ -2395,7 +2398,7 @@ function create_vmnetwork() {
 
 	run_cmd /noexit pve_api_request result POST /cluster/sdn/zones "type=simple zone=${sdn_settings[zone]} ipam=pve" || { echo_err "Не удалось создать SDN зону 'VMNet': $result"; return 1; }
 
-	run_cmd /noexit pve_api_request result POST /cluster/sdn/vnets "'zone=${sdn_settings[zone]}' 'vnet=${sdn_settings[vnet]}' isolate-ports=${sdn_settings[isolate]} 'alias=VM Network'" || { echo_err "Не удалось создать SDN зону 'VMNet': $result"; run_cmd pve_api_request "''" DELETE "/cluster/sdn/zones/${sdn_settings[zone]}"; return 1; }
+	run_cmd /noexit pve_api_request result POST /cluster/sdn/vnets "'zone=${sdn_settings[zone]}' 'vnet=${sdn_settings[vnet]}' isolate-ports=${sdn_settings[isolate]} 'alias=${sdn_settings[alias]}'" || { echo_err "Не удалось создать SDN зону 'VMNet': $result"; run_cmd pve_api_request "''" DELETE "/cluster/sdn/zones/${sdn_settings[zone]}"; return 1; }
 
 	run_cmd /noexit pve_api_request result POST "/cluster/sdn/vnets/${sdn_settings[vnet]}/subnets" "type=subnet snat=1 'subnet=${sdn_settings[subnet]}' 'gateway=${sdn_settings[gateway]}' 'dhcp-dns-server=${sdn_settings[dns]}' 'dhcp-range=start-address=${sdn_settings[start-ip]},end-address=${sdn_settings[end-ip]}'" || { echo_err "Не удалось создать SDN subnet для зоны 'VMNet': $result"; run_cmd pve_api_request "''" DELETE "/cluster/sdn/vnets/${sdn_settings[vnet]}"; run_cmd pve_api_request "''" DELETE "/cluster/sdn/zones/${sdn_settings[zone]}"; return 1; }
 
