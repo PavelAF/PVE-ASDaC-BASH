@@ -231,7 +231,7 @@ function echo_ok() {
 function read_question_select() {
     local read enter=-1; [[ "$6" != "" ]] && enter=$6
     until read -p "$1: ${c_value}" -e -i "$5" read; echo_tty -n ${c_null}; [[ "$enter" == 1 && "$read" != '' ]] || ((enter--))
-        [[ "$enter" == 0 ]] || { [[ "$2" == '' || $( echo "$read" | grep -Pc "$2" ) == 1 ]] && { [[ "$3" == '' ]] || check_min_version "$read" "$3"; } && { [[ "$4" == '' ]] || ! check_min_version "$read" "$4" ]]; } }
+        [[ "$enter" == 0 ]] || { [[ "$2" == '' || $( echo "$read" | grep -Pc "$2" ) == 1 ]] && { [[ "$3" == '' ]] || check_min_version "$3" "$read"; } && { [[ "$4" == '' ]] || { [[ "$4" == "$read" ]] || ! check_min_version "$4" "$read";} } }
     do true; done; echo -n "$read";
 }
 
@@ -953,7 +953,7 @@ function configure_varnum() {
     local var=0
     if [[ $count -gt 1 ]]; then
         echo_tty
-        var=$( read_question_select 'Вариант развертывания стендов' '^[0-9]+$' 1 $(( $(compgen -v | grep -P '^config_stand_[1-9][0-9]{0,3}_var$' | wc -l) + 1)) )
+        var=$( read_question_select 'Вариант развертывания стендов' '^[0-9]+$' 1 $(compgen -v | grep -P '^config_stand_[1-9][0-9]{0,3}_var$' | wc -l) )
     else var=1
     fi
     set_varnum $var
@@ -1019,7 +1019,7 @@ function configure_wan_vmbr() {
             ip6=$( echo "$ipr6" | grep -Po '^[0-9a-f\:\/]+(?=\ dev\ '$iface'(?=\ |$))' )
             echo "  ${i}. ${c_value}$iface${c_null} IPv4='${c_value}$ip4${c_null}' IPv6='${c_value}$ip6${c_null}' slaves='${c_value}"$( echo "$list_links_master" | grep -Po '^[\w\.]+(?=.*?\ master\ '$iface'(\ |$))' )"${c_null}'"
         done
-        local switch=$( read_question_select $'\nВыберите номер сетевого интерфейса' '^[0-9]+$' 1 $(( $( echo -n "$bridge_ifs" | grep -c '^' ) + 1 )) )
+        local switch=$( read_question_select $'\nВыберите номер сетевого интерфейса' '^[0-9]+$' 1 $( echo -n "$bridge_ifs" | grep -c '^' ) )
         config_base[inet_bridge]=$( echo "$bridge_ifs" | awk -v n="$switch" 'NR == n')
         echo $'\n'"${c_ok}Подождите, идет проверка конфигурации...${c_null}"$'\n'
         return 0;
@@ -1225,7 +1225,7 @@ function configure_storage() {
             echo $'\nСписок доступных хранилищ:'
             echo "$data_pve_storage_list" | awk -F $'\t' 'BEGIN{split("|К|М|Г|Т",x,"|")}{for(i=1;$3>=1024&&i<length(x);i++)$3/=1024;printf("%s\t%s\t%s\t%3.1f %sБ\n",NR,$1,$2,$3,x[i]) }' \
             | column -t -s$'\t' -N'Номер,Имя хранилища,Тип хранилища,Свободное место' -o$'\t' -R1
-            config_base[storage]=$( read_question_select 'Выберите номер хранилища'  '^[1-9][0-9]*$' 1 $(( $(echo -n "$data_pve_storage_list" | grep -c '^') + 1)) )
+            config_base[storage]=$( read_question_select 'Выберите номер хранилища'  '^[1-9][0-9]*$' 1 $(echo -n "$data_pve_storage_list" | grep -c '^') )
             config_base[storage]=$( echo "$data_pve_storage_list" | awk -F $'\t' -v nr="${config_base[storage]}" 'NR==nr{print $1}' )
     }
 	
@@ -1812,7 +1812,7 @@ function install_stands() {
         while true; do
             echo_tty "$( show_config install-change )"
             echo_tty
-            local switch=$( read_question_select 'Выберите номер настройки для изменения' '^[0-9]*$' 0 $( ${config_base[access_create]} && echo 17 || echo 10 ) )
+            local switch=$( read_question_select 'Выберите номер настройки для изменения' '^[0-9]*$' 0 $( ${config_base[access_create]} && echo 16 || echo 9 ) )
             echo_tty
             [[ "$switch" == 0 ]] && break
             [[ "$switch" == '' ]] && { $_exit && break; _exit=true; continue; }
@@ -1973,7 +1973,7 @@ function manage_stands() {
     for item in "${!print_list[@]}"; do
         echo_tty "  $((++i)). ${print_list[$item]//\\\"/\"}"
     done
-    [[ $i -gt 1 ]] && i=$( read_question_select 'Выберите номер конфигурации' '^[0-9]+$' 1 $(($i+1)) '' 2 )
+    [[ $i -gt 1 ]] && i=$( read_question_select 'Выберите номер конфигурации' '^[0-9]+$' 1 $i '' 2 )
     [[ "$i" == '' ]] && return 0
     local j=0
     group_name=''
@@ -1995,9 +1995,9 @@ function manage_stands() {
     echo_tty "   8. Откатить снапшоты виртуальных машин"
     echo_tty "   9. Удалить снапшоты виртуальных машин"
     echo_tty "  10. Удаление стендов"
-    local switch=$( read_question_select $'\nВыберите действие' '^([0-9]{1,2}|)$' 1 11 )
+    local switch=$( read_question_select $'\nВыберите действие' '^([0-9]{1,2}|)$' 1 10 )
 
-    [[ "$switch" == '' ]] && switch=$( read_question_select $'\nВыберите действие' '^([0-9]{1,2}|)$' 1 13 ) && [[ "$switch" == '' ]] && return 0
+    [[ "$switch" == '' ]] && switch=$( read_question_select $'\nВыберите действие' '^([0-9]{1,2}|)$' 1 10 ) && [[ "$switch" == '' ]] && return 0
     if [[ $switch =~ ^[1-3]$ ]]; then
         local user_name enable state usr_range='' usr_count=$(echo -n "${user_list[$group_name]}" | grep -c '^') usr_list=''
 
@@ -2040,7 +2040,7 @@ function manage_stands() {
             local switch=0 val='' opt=''
             while true; do
                 echo_tty "$( show_config passwd-change )"
-                switch=$( read_question_select 'Выбранный пункт конфигурации' '^([0-9]+|)$' 0 3 )
+                switch=$( read_question_select 'Выбранный пункт конфигурации' '^([0-9]+|)$' 0 2 )
                 [[ "$switch" == 0 || "$switch" == '' ]] && break
                 case "$switch" in
                     1) opt='access_pass_length';;
@@ -2318,7 +2318,7 @@ function utilities_menu() {
     local switch_action
     while true; do
         echo_tty $'\nРаздел меню с твиками/утилитами для PVE:'
-        echo_tty '  1. Создание WAN (VM Network) интерфейса для ВМ для выхода в Интернет'
+        echo_tty '  1. Создание WAN (VM Network) bridge интерфейса для ВМ для выхода в Интернет'
         echo_tty '  2. Отключение уведомлений об отсутствии Enterprise подписки'
         echo_tty $'  3. Включение no-subscription репозиториев PVE\n'
 
@@ -2376,7 +2376,7 @@ function create_vmnetwork() {
             Y) break;;
             '') return;;
             7) ((switch--)); 
-                sdn_settings[${menu_item[$switch]}]=$( read_question_select 'Введите значение' "${!item_regex[$switch]}" '' "${sdn_settings[start-ip]}" "${sdn_settings[${menu_item[$switch]}]}" 2 );;
+                sdn_settings[${menu_item[$switch]}]=$( read_question_select 'Введите значение' "${!item_regex[$switch]}" "${sdn_settings[start-ip]}" '' "${sdn_settings[${menu_item[$switch]}]}" 2 );;
             *) ((switch--));
                 sdn_settings[${menu_item[$switch]}]=$( read_question_select 'Введите значение' "${!item_regex[$switch]}" '' '' "${sdn_settings[${menu_item[$switch]}]}" 2 );;
         esac
