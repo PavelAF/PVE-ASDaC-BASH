@@ -2377,7 +2377,7 @@ function create_vmnetwork() {
         echo_tty "  7. DHCP-пул: начальный IP адрес: ${c_val}${sdn_settings[start-ip]}"
         echo_tty "  8. DHCP-пул: конечный IP адрес:  ${c_val}${sdn_settings[end-ip]}"
         echo_tty "  9. Изоливовать ВМ друг от друга? [0|1]: ${c_val}${sdn_settings[isolate]}"
-        echo_tty $'Введите "Y", чтобы создать интерфейс или номер настройки\n'
+        echo_tty $'Введите "Y", чтобы создать интерфейс или введите номер настройки для изменения\n'
 
         switch=$( read_question_select 'Выберите действие' '^([1-8]|Y)$' '' '' '' 2 )
 
