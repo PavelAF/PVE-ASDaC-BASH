@@ -934,7 +934,10 @@ function configure_standnum() {
     $silent_mode && [[ ${#opt_stand_nums} == 0 ]] && { echo_err 'Ошибка: не указаны номера стендов для развертывания. Выход'; exit_clear; }
     [[ "$is_show_config" == 'false' ]] && { is_show_config=true; echo_2out "$( show_config )"; }
     echo_tty $'\nВведите номера инсталляций стендов. Напр., 1-5 развернет стенды под номерами 1, 2, 3, 4, 5 (всего 5)'
-    set_standnum $( read_question_select 'Номера стендов (прим: 1,2,5-10)' '^([1-9][0-9]{0,2}((\-|\.\.)[1-9][0-9]{0,2})?([\,](?!$\Z)|(?![0-9])))+$' )
+    local stands
+    stands=$( read_question_select 'Номера стендов (прим: 1,2,5-10)' '^(([1-9][0-9]{0,2}((\-|\.\.)[1-9][0-9]{0,2})?([\,](?!$\Z)|(?![0-9])))+)|$' )
+    [[ "$stands" == '' ]] && return 1
+    set_standnum "$stands"
     echo_tty $'\n'"${c_ok}Подождите, идет проверка конфигурации...${c_null}"$'\n'
 }
 
@@ -1797,7 +1800,7 @@ function install_stands() {
     is_show_config=false
 
     configure_varnum || return 0
-    configure_standnum
+    configure_standnum || return 0
     check_config install
 
     local val=''
