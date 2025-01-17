@@ -231,7 +231,7 @@ function echo_ok() {
 function read_question_select() {
     local read enter=-1; [[ "$6" != "" ]] && enter=$6
     until read -p "$1: ${c_value}" -e -i "$5" read; echo_tty -n ${c_null}; [[ "$enter" == 1 && "$read" != '' ]] || ((enter--))
-        [[ "$enter" == 0 ]] || { [[ "$2" == '' || $( echo "$read" | grep -Pc "$2" ) == 1 ]] && [[ "$read" == '' ]] || { { [[ "$3" == '' ]] || check_min_version "$3" "$read"; } && { [[ "$4" == '' ]] || { [[ "$4" == "$read" ]] || ! check_min_version "$4" "$read";} } } }
+        [[ "$enter" == 0 ]] || { [[ "$read" != '' ]] && [[ "$2" == '' || $( echo -n "$read" | grep -Pc "$2" ) == 1 ]] && { { [[ "$3" == '' ]] || check_min_version "$3" "$read"; } && { [[ "$4" == '' ]] || { [[ "$4" == "$read" ]] || ! check_min_version "$4" "$read";} } }
     do true; done; echo -n "$read";
 }
 
