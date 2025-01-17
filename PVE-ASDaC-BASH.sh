@@ -1495,9 +1495,10 @@ function deploy_stand_config() {
         if [[ "$if_config" =~ ^\{\ *bridge\ *=\ *([0-9\.a-z]+|\"\ *((\\\"|[^\"])+)\")\ *(,.*)?\}$ ]]; then
             if_bridge="${BASH_REMATCH[1]/\\\"/\"}"
             if_desc=$( echo "${BASH_REMATCH[2]/\\\"/\"}" | sed 's/[[:space:]]*$//' )
-            if_config="${BASH_REMATCH[4]}"
+            if_config="${BASH_REMATCH[4]}"vlan_aware=true
             [[ "$if_config" =~ ,\ *firewall\ *=\ *1\ *($|,.+$) ]] && net_options+=',firewall=1'
             [[ "$if_config" =~ ,\ *state\ *=\ *down\ *($|,.+$) ]] && net_options+=',link_down=1'
+            [[ "$if_config" =~ ,\ *vlan_aware\ *=\ *(1|true|yes)\ *($|,.+$) ]] && vlan_aware=' bridge_vlan_aware=1'
             [[ "$if_config" =~ ,\ *access_role\ *=\ *([a-zA-Z0-9_\-]+)\ *($|,.+$) ]] && $create_access_network && { access_role=${BASH_REMATCH[1]}; set_role_config $access_role; }
             [[ "$if_config" =~ ,\ *trunks\ *=\ *([0-9\;]*[0-9])\ *($|,.+$) ]] && net_options+=",trunks=${BASH_REMATCH[1]}" && vlan_aware=' bridge_vlan_aware=1'
             [[ "$if_config" =~ ,\ *tag\ *=\ *([1-9][0-9]{0,2}|[1-3][0-9]{3}|40([0-8][0-9]|9[0-4]))\ *($|,.+$) ]] && net_options+=",tag=${BASH_REMATCH[1]}" && vlan_aware=" bridge_vlan_aware=1"
@@ -1811,14 +1812,14 @@ function install_stands() {
         descr_string_check "$val" && [[ "$val" != '' ]] && config_base["$opt"]=$val
     done
     echo_tty "$( show_config )"
-
-    _exit=false
+    
     ! $silent_mode && read_question 'Хотите изменить параметры?' && {
-        local opt_names=( inet_bridge storage pool_name pool_desc take_snapshots run_vm_after_installation access_{create,user_{name,desc,enable},pass_{length,chars},auth_{pve,pam}_desc} dry-run verbose)
+        local _exit=false opt_names=( inet_bridge storage pool_name pool_desc take_snapshots run_vm_after_installation access_{create,user_{name,desc,enable},pass_{length,chars},auth_{pve,pam}_desc} dry-run verbose)
+        
         while true; do
             echo_tty "$( show_config install-change )"
             echo_tty
-            local switch=$( read_question_select 'Выберите номер настройки для изменения' '^[0-9]+$' 0 $( ${config_base[access_create]} && echo 16 || echo 9 ) '' 2 )
+            local switch=$( read_question_select 'Выберите номер настройки для изменения' '^[0-9]+$' 0 $( ${config_base[access_create]} && echo 16 || echo 9 ) '' 1 )
             echo_tty
             [[ "$switch" == 0 ]] && break
             [[ "$switch" == '' ]] && { $_exit && break; _exit=true; continue; }
