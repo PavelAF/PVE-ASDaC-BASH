@@ -2364,7 +2364,7 @@ function create_vmnetwork() {
         [isolate]='1'
     )
     local -a menu_item=( zone vnet alias subnet gateway dns start-ip end-ip isolate ) \
-        item_regex=( regex_for_name regex_for_alias regex_for_name regex_cidr regex_ip regex_ip regex_ip regex_ip regex_bool )
+        item_regex=( regex_for_name regex_for_name regex_for_alias regex_cidr regex_ip regex_ip regex_ip regex_ip regex_bool )
 
     while true; do
         echo_tty 'Настройки:'
