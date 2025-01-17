@@ -231,7 +231,7 @@ function echo_ok() {
 function read_question_select() {
     local read enter=-1; [[ "$6" != "" ]] && enter=$6
     until read -p "$1: ${c_value}" -e -i "$5" read; echo_tty -n ${c_null}; [[ "$enter" == 1 && "$read" != '' ]] || ((enter--))
-        [[ "$enter" == 0 ]] || [[ "$2" == '' || $(echo "$read" | grep -Pc "$2" ) == 1 ]] && { ! isdigit_check "$read" || [[ "$3" == '' || "$read" -ge "$3" ]] && [[ "$4" == '' || "$read" -le "$4" ]]; }
+        [[ "$enter" == 0 ]] || { [[ "$read" != '' ]] && [[ "$2" == '' || $( echo -n "$read" | grep -Pc "$2" ) == 1 ]] && { [[ "$3" == '' ]] || check_min_version "$3" "$read"; } && { [[ "$4" == '' ]] || { [[ "$4" == "$read" ]] || ! check_min_version "$4" "$read";} } }
     do true; done; echo -n "$read";
 }
 
@@ -418,7 +418,7 @@ function pve_api_request() {
 					pve_api_request "$@"
                     return $?
               }
-              ! [[ $http_code =~ ^(500|501|596)$ ]] && {
+              ! [[ $http_code =~ ^(400|500|501|596)$ ]] && {
                     echo_err "Ошибка: запрос к API был обработан с ошибкой: ${c_val}${@:2}"
                     echo_err "API токен: ${c_val}${var_pve_token_id}"
                     echo_err "HTTP код ответа: ${c_val}$http_code"
@@ -719,7 +719,7 @@ function yadisk_url() {
         case $? in
             5) echo_err "Ошибка запроса к Яндекс API: на хосте некорректные настройки прокси";;
             6|7|28) echo_err "Ошибка запроса к Яндекс API: не удалось связаться с API. Проверьте подключение к интернету/настройки DNS"$'\n'"Код ошибки curl: $?";;
-            22) echo_err "Ошибка запроса к Яндекс API: сервер ответил ошибкой. Проверьте правильность URL";;
+            22) echo_err "Ошибка запроса к Яндекс API: сервер ответил ошибкой. Проверьте правильность URL '$ref_url'";;
             *) echo_err "Ошибка: не удалось выполнить запрос Яндекс API для ${c_val}$ref_url${c_err}"$'\n'"Код ошибки curl: $?";;
         esac
         exit_clear
@@ -765,7 +765,7 @@ function get_file() {
 
     if [[ "$url" =~ ^https://disk\.yandex\.ru/ ]]; then
         yadisk_url url filesize=size filename=name file_sha256=sha256
-        echo_verbose "<YADISK API REQUEST> FILE: ${c_value}$filename${c_null} SIZE: ${c_value}$filesize${c_null} SHA-256: ${c_value}$file_sha256${c_null}"
+        echo_verbose "[YADISK API REQUEST] FILE: ${c_value}$filename${c_null} SIZE: ${c_value}$filesize${c_null} SHA-256: ${c_value}$file_sha256${c_null}"
     elif isurl_check "$url"; then
         filesize=$( get_url_filesize $url )
         filename=$( get_url_filename $url )
@@ -791,7 +791,11 @@ function get_file() {
         && [[ "$filesize" -gt 102400 || "${#file_sha256}" == 64 && "$( sha256sum "$filename" | awk '{printf $1}' )" == "$file_sha256" ]] || {
             configure_imgdir add-size $max_filesize
             echo_tty "[${c_info}Info${c_null}] Скачивание файла ${c_value}$filename${c_null} Размер: ${c_value}$( echo "$filesize" | awk 'BEGIN{split("Б|КБ|МБ|ГБ|ТБ",x,"|")}{for(i=1;$1>=1024&&i<length(x);i++)$1/=1024;printf("%3.1f %s", $1, x[i]) }' )${c_null} URL: ${c_value}$base_url${c_null}"
-            curl --max-filesize $max_filesize -fGL "$url" -o "$filename" || { echo_err "Ошибка скачивания файла ${c_value}$filename${c_null} URL: ${c_value}$url${c_null} curl exit code: $?"; exit_clear; }
+            curl --max-filesize $max_filesize -fGL "$url" -o "$filename" || { echo_err "Ошибка скачивания файла ${c_value}$filename${c_err} URL: ${c_value}$url${c_err} curl exit code: $?"; exit_clear; }
+            
+            [[ -r "$filename" ]] || { echo_err "Файл $filename недоступен"; exit_clear; }
+            [[ "$filesize" == '0' || "$( wc -c "$filename" | awk '{printf $1;exit}' )" == "$filesize" ]] || { echo_warn "Ошибка скачивания файла ${c_value}$filename${c_err}: размер файла не совпадает со значением, которое отправил сервер. URL: ${c_value}$url${c_err}"$'\n'"Размер скачанного файла: ${c_value}$( wc -c "$filename" | awk '{printf $1;exit}' )${c_err} Ожидалось: ${c_value}$filesize${c_err}"; $filesize=0; }
+            [[ "$filesize" -gt 102400 || "${#file_sha256}" == 64 && "$( sha256sum "$filename" | awk '{printf $1}' )" == "$file_sha256" ]] || { echo_err "Ошибка скачивания файла ${c_value}$filename${c_err}: хеш сумма SHA-256 не совпадает с заявленной. URL: ${c_value}$url${c_err}"$'\n'"Хеш скачанного файла: ${c_value}$( sha256sum "$filename" | awk '{printf $1}' )${c_err} Ожидалось: ${c_value}$file_sha256${c_err}"; exit_clear; }
             # | iconv -f windows-1251 -t utf-8 > $tempfile
         }
         url="$filename"
@@ -930,7 +934,10 @@ function configure_standnum() {
     $silent_mode && [[ ${#opt_stand_nums} == 0 ]] && { echo_err 'Ошибка: не указаны номера стендов для развертывания. Выход'; exit_clear; }
     [[ "$is_show_config" == 'false' ]] && { is_show_config=true; echo_2out "$( show_config )"; }
     echo_tty $'\nВведите номера инсталляций стендов. Напр., 1-5 развернет стенды под номерами 1, 2, 3, 4, 5 (всего 5)'
-    set_standnum $( read_question_select 'Номера стендов (прим: 1,2,5-10)' '^([1-9][0-9]{0,2}((\-|\.\.)[1-9][0-9]{0,2})?([\,](?!$\Z)|(?![0-9])))+$' )
+    local stands
+    stands=$( read_question_select 'Номера стендов (прим: 1,2,5-10)' '^(([1-9][0-9]{0,2}((\-|\.\.)[1-9][0-9]{0,2})?([\,](?!$\Z)|(?![0-9])))+)$' '' '' '' 2 )
+    [[ "$stands" == '' ]] && return 1
+    set_standnum "$stands"
     echo_tty $'\n'"${c_ok}Подождите, идет проверка конфигурации...${c_null}"$'\n'
 }
 
@@ -949,7 +956,8 @@ function configure_varnum() {
     local var=0
     if [[ $count -gt 1 ]]; then
         echo_tty
-        var=$( read_question_select 'Вариант развертывания стендов' '^[0-9]+$' 1 $(compgen -v | grep -P '^config_stand_[1-9][0-9]{0,3}_var$' | wc -l) )
+        var=$( read_question_select 'Вариант развертывания стендов' '^[0-9]+$' 1 $(compgen -v | grep -P '^config_stand_[1-9][0-9]{0,3}_var$' | wc -l) '' 2 )
+        [[ "$var" == '' ]] && return 1
     else var=1
     fi
     set_varnum $var
@@ -1161,8 +1169,9 @@ function configure_poolname() {
     }
     [[ "$1" == 'set' ]] && {
         echo 'Введите шаблон имени PVE пула стенда. Прим: DE_stand_training_{0}'
-        config_base[pool_name]=$( read_question_select 'Шаблон имени пула' '^[\-0-9a-zA-Z\_\.]*(\{0\})?[\-0-9a-zA-Z\_\.]*$' '' '' "${config_base[pool_name]}" )
+        config_base[pool_name]=$( read_question_select 'Шаблон имени пула' '^[\-0-9a-zA-Z\_\.]*(\{0\})?[\-0-9a-zA-Z\_\.]*$' '' '' "${config_base[pool_name]}" 2 )
         shift
+        [[  "${config_base[pool_name]}" == '' ]] && config_base[pool_name]=$def_value
         [[ "${config_base[pool_name]}" == "$def_value" ]] && return 0
     }
     check_name 'config_base[pool_name]' ||  { echo_err "Ошибка: шаблон имён пулов некорректный: '${config_base[pool_name]}'. Запрещенные символы или длина больше 32 или меньше 3"; ${3:-true} && exit_clear || { config_base[pool_name]=$def_value; return 1; } }
@@ -1191,8 +1200,9 @@ function configure_username() {
     }
     [[ "$1" == 'set' ]] && {
         echo 'Введите шаблон имени пользователя стенда. Прим: Student{0}'
-        config_base[access_user_name]=$( read_question_select 'Шаблон имени пользователя' '^[\-0-9a-zA-Z\_\.]*(\{0\})?[\-0-9a-zA-Z\_\.]*$' '' '' "${config_base[access_user_name]}" )
+        config_base[access_user_name]=$( read_question_select 'Шаблон имени пользователя' '^[\-0-9a-zA-Z\_\.]*(\{0\})?[\-0-9a-zA-Z\_\.]*$' '' '' "${config_base[access_user_name]}" 2 )
         shift
+        [[ "${config_base[access_user_name]}" == '' ]] && config_base[access_user_name]=$def_value
         [[ "${config_base[access_user_name]}" == "$def_value" ]] && return 0
     }
     check_name 'config_base[access_user_name]' ||  { echo_err "Ошибка: шаблон имён пользователей некорректный: '${config_base[access_user_name]}'. Запрещенные символы или длина больше 32 или меньше 3. Выход"; ${3:-true} && exit_clear || { config_base[access_user_name]=$def_value; return 1; } }
@@ -1488,6 +1498,7 @@ function deploy_stand_config() {
             if_config="${BASH_REMATCH[4]}"
             [[ "$if_config" =~ ,\ *firewall\ *=\ *1\ *($|,.+$) ]] && net_options+=',firewall=1'
             [[ "$if_config" =~ ,\ *state\ *=\ *down\ *($|,.+$) ]] && net_options+=',link_down=1'
+            [[ "$if_config" =~ ,\ *vlan_aware\ *=\ *(1|true|yes)\ *($|,.+$) ]] && vlan_aware=' bridge_vlan_aware=1'
             [[ "$if_config" =~ ,\ *access_role\ *=\ *([a-zA-Z0-9_\-]+)\ *($|,.+$) ]] && $create_access_network && { access_role=${BASH_REMATCH[1]}; set_role_config $access_role; }
             [[ "$if_config" =~ ,\ *trunks\ *=\ *([0-9\;]*[0-9])\ *($|,.+$) ]] && net_options+=",trunks=${BASH_REMATCH[1]}" && vlan_aware=' bridge_vlan_aware=1'
             [[ "$if_config" =~ ,\ *tag\ *=\ *([1-9][0-9]{0,2}|[1-3][0-9]{3}|40([0-8][0-9]|9[0-4]))\ *($|,.+$) ]] && net_options+=",tag=${BASH_REMATCH[1]}" && vlan_aware=" bridge_vlan_aware=1"
@@ -1734,7 +1745,7 @@ function deploy_access_passwd() {
         echo_tty '  4. CSV: универсальный табличный вариант'
         echo_tty '  5. CSV: универсальный табличный вариант (с заголовками к каждой записи)'
         echo_tty
-        format_opt=$(read_question_select 'Вариант отображения' '^([1-5]|)$' )
+        format_opt=$( read_question_select 'Вариант отображения' '^[1-5]$' '' '' '' 2 )
     }
 
     [[ $format_opt == '' ]] && format_opt=1
@@ -1792,7 +1803,7 @@ function install_stands() {
     is_show_config=false
 
     configure_varnum || return 0
-    configure_standnum
+    configure_standnum || return 0
     check_config install
 
     local val=''
@@ -1801,14 +1812,14 @@ function install_stands() {
         descr_string_check "$val" && [[ "$val" != '' ]] && config_base["$opt"]=$val
     done
     echo_tty "$( show_config )"
-
-    _exit=false
+    
     ! $silent_mode && read_question 'Хотите изменить параметры?' && {
-        local opt_names=( inet_bridge storage pool_name pool_desc take_snapshots run_vm_after_installation access_{create,user_{name,desc,enable},pass_{length,chars},auth_{pve,pam}_desc} dry-run verbose)
+        local _exit=false opt_names=( inet_bridge storage pool_name pool_desc take_snapshots run_vm_after_installation access_{create,user_{name,desc,enable},pass_{length,chars},auth_{pve,pam}_desc} dry-run verbose)
+        
         while true; do
             echo_tty "$( show_config install-change )"
             echo_tty
-            local switch=$( read_question_select 'Выберите номер настройки для изменения' '^[0-9]*$' 0 $( ${config_base[access_create]} && echo 16 || echo 9 ) )
+            local switch=$( read_question_select 'Выберите номер настройки для изменения' '^[0-9]+$' 0 $( ${config_base[access_create]} && echo 16 || echo 9 ) '' 1 )
             echo_tty
             [[ "$switch" == 0 ]] && break
             [[ "$switch" == '' ]] && { $_exit && break; _exit=true; continue; }
@@ -1991,9 +2002,9 @@ function manage_stands() {
     echo_tty "   8. Откатить снапшоты виртуальных машин"
     echo_tty "   9. Удалить снапшоты виртуальных машин"
     echo_tty "  10. Удаление стендов"
-    local switch=$( read_question_select $'\nВыберите действие' '^([0-9]{1,2}|)$' 1 10 )
+    local switch=$( read_question_select $'\nВыберите действие' '^[0-9]{1,2}$' 1 10 '' 2 )
 
-    [[ "$switch" == '' ]] && switch=$( read_question_select $'\nВыберите действие' '^([0-9]{1,2}|)$' 1 12 ) && [[ "$switch" == '' ]] && return 0
+    [[ "$switch" == '' ]] && return 0
     if [[ $switch =~ ^[1-3]$ ]]; then
         local user_name enable state usr_range='' usr_count=$(echo -n "${user_list[$group_name]}" | grep -c '^') usr_list=''
 
@@ -2005,7 +2016,7 @@ function manage_stands() {
             done
             echo_tty $'\nДля выбора всех пользователей нажмите Enter'
             while true; do
-                usr_range=$( read_question_select 'Введите номера выбранных пользователей (прим 1,2-10)' '\A^(([0-9]{1,3}((\-|\.\.)[0-9]{1,3})?([\,](?!$\Z)|(?![0-9])))+|)$\Z' )
+                usr_range=$( read_question_select 'Введите номера выбранных пользователей (прим 1,2-10)' '\A^(([0-9]{1,3}((\-|\.\.)[0-9]{1,3})?([\,](?!$\Z)|(?![0-9])))+)$\Z' '' '' '' 2 )
                 [[ "$usr_range" == '' ]] && { usr_list=${user_list[$group_name]}; break; }
 
                 usr_list=''
@@ -2036,7 +2047,7 @@ function manage_stands() {
             local switch=0 val='' opt=''
             while true; do
                 echo_tty "$( show_config passwd-change )"
-                switch=$( read_question_select 'Выбранный пункт конфигурации' '^([0-9]+|)$' 0 2 )
+                switch=$( read_question_select 'Выбранный пункт конфигурации' '^[0-9]+$' 0 2 '' 2 )
                 [[ "$switch" == 0 || "$switch" == '' ]] && break
                 case "$switch" in
                     1) opt='access_pass_length';;
@@ -2065,7 +2076,7 @@ function manage_stands() {
         done
         echo_tty $'\nДля выбора всех стендов группы нажмите Enter'
         while true; do
-            stand_range=$( read_question_select 'Введите номера выбранных стендов (прим 1,2-10)' '\A^(([0-9]{1,3}((\-|\.\.)[0-9]{1,3})?([\,](?!$\Z)|(?![0-9])))+|)$\Z' )
+            stand_range=$( read_question_select 'Введите номера выбранных стендов (прим 1,2-10)' '\A^(([0-9]{1,3}((\-|\.\.)[0-9]{1,3})?([\,](?!$\Z)|(?![0-9])))+)$\Z' '' '' '' 2 )
             stand_list=''
             usr_list=''
             [[ "$stand_range" == '' ]] && { stand_list=${pool_list[$group_name]}; usr_list=${user_list[$group_name]}; break; } 
@@ -2308,6 +2319,107 @@ function manage_stands() {
     echo_tty $'\n'"${c_ok}Настройка завершена.${c_null}"
 }
 
+function utilities_menu() {
+    $opt_dry_run && echo_warn '[Предупреждение]: включен режим dry-run. Никакие изменения в конфигурацию/ВМ внесены не будут'
+
+    local switch_action
+    while true; do
+        echo_tty $'\nРаздел меню с твиками/утилитами для PVE:'
+        echo_tty '  1. Создание WAN (VM Network) bridge интерфейса для ВМ для выхода в Интернет'
+        echo_tty '  2. Отключение уведомлений об отсутствии Enterprise подписки'
+        echo_tty $'  3. Включение no-subscription репозиториев PVE\n'
+
+        switch_action=$( read_question_select $'Выберите действие' '^([1-3])$' '' '' '' 2 )
+
+        case $switch_action in
+            1) create_vmnetwork || return 0;;
+            2) twik_no_subscrib_window || return 0;;
+            3) manage_aptrepo || return 0;;
+            '') return;;
+            *) echo_warn 'Функционал в процессе разработки и пока недоступен'; return;;
+        esac
+    done
+}
+
+function create_vmnetwork() {
+    echo_tty
+    check_min_version 8.1 "$data_pve_version" || { echo_warn "Данный функционал доступен в PVE версии 8.1+. Установленная версия PVE: $data_pve_version"; return; }
+
+    echo_warn $'Интерфейс будет создан на всех PVE нодах\nПосле создания интерфейса сеть будет перезагружена на всех PVE нодах кластера!'
+    read_question "Вы хотите продолжить?" || return 0
+	echo_tty
+	command -v dnsmasq >/dev/null || { read_question "Пакет dnsmasq не установлен. Установить автоматически?" && { apt-get update && apt-get install dnsmasq -y && systemctl disable --now dnsmasq; } || return; }
+
+	local switch= result= regex_for_name='^[A-Za-z][A-Za-z0-9]{1,7}$' regex_cidr='' regex_ip='' regex_bool='^(0|1)$'
+
+	local -A sdn_settings=(
+        [zone]='VMNet'
+        [vnet]='VMNet'
+        [subnet]='172.30.0.0/16'
+        [gateway]='172.30.0.1'
+        [dns]='77.88.8.8'
+        [start-ip]='172.30.100.0'
+        [end-ip]='172.30.199.254'
+        [isolate]='1'
+    )
+    local -a menu_item=( zone vnet subnet gateway dns start-ip end-ip isolate ) \
+        item_regex=( regex_for_name regex_for_name regex_cidr regex_ip regex_ip regex_ip regex_ip regex_bool )
+
+    while true; do
+        echo_tty 'Настройки:'
+        echo_tty "  1. Название зоны SDN: ${c_val}${sdn_settings[zone]}"
+        echo_tty "  2. Название сетевого интерфейса: ${c_val}${sdn_settings[vnet]}"
+        echo_tty "  3. Сеть: ${c_val}${sdn_settings[subnet]}"
+        echo_tty "  4. Адрес шлюза: ${c_val}${sdn_settings[gateway]}"
+        echo_tty "  5. DHCP: адрес DNS сервера: ${c_val}${sdn_settings[dns]}"
+        echo_tty "  6. DHCP-пул: начальный IP адрес: ${c_val}${sdn_settings[start-ip]}"
+        echo_tty "  7. DHCP-пул: конечный IP адрес:  ${c_val}${sdn_settings[end-ip]}"
+        echo_tty "  8. Изоливовать ВМ друг от друга? [0|1]: ${c_val}${sdn_settings[isolate]}"
+        echo_tty $'Введите "Y", чтобы создать интерфейс или номер настройки\n'
+
+        switch=$( read_question_select 'Выберите действие' '^([1-8]|Y)$' '' '' '' 2 )
+
+        case $switch in
+            Y) break;;
+            '') return;;
+            7) ((switch--)); 
+                sdn_settings[${menu_item[$switch]}]=$( read_question_select 'Введите значение' "${!item_regex[$switch]}" "${sdn_settings[start-ip]}" '' "${sdn_settings[${menu_item[$switch]}]}" 2 );;
+            *) ((switch--));
+                sdn_settings[${menu_item[$switch]}]=$( read_question_select 'Введите значение' "${!item_regex[$switch]}" '' '' "${sdn_settings[${menu_item[$switch]}]}" 2 );;
+        esac
+    done
+
+	pve_api_request '' GET "/cluster/sdn/zones/${sdn_settings[zone]}" && { echo_warn "SDN зона '${sdn_settings[zone]}' уже существует"; return 1; }
+
+	pve_api_request '' GET "/cluster/sdn/vnets/${sdn_settings[vnet]}" && { echo_warn "SDN vnet '${sdn_settings[vnet]}' уже существует"; return 1; }
+
+	run_cmd /noexit pve_api_request result POST /cluster/sdn/zones "type=simple zone=${sdn_settings[zone]} ipam=pve" || { echo_err "Не удалось создать SDN зону 'VMNet': $result"; return 1; }
+
+	run_cmd /noexit pve_api_request result POST /cluster/sdn/vnets "'zone=${sdn_settings[zone]}' 'vnet=${sdn_settings[vnet]}' isolate-ports=${sdn_settings[isolate]} 'alias=VM Network'" || { echo_err "Не удалось создать SDN зону 'VMNet': $result"; run_cmd pve_api_request "''" DELETE "/cluster/sdn/zones/${sdn_settings[zone]}"; return 1; }
+
+	run_cmd /noexit pve_api_request result POST "/cluster/sdn/vnets/${sdn_settings[vnet]}/subnets" "type=subnet snat=1 'subnet=${sdn_settings[subnet]}' 'gateway=${sdn_settings[gateway]}' 'dhcp-dns-server=${sdn_settings[dns]}' 'dhcp-range=start-address=${sdn_settings[start-ip]},end-address=${sdn_settings[end-ip]}'" || { echo_err "Не удалось создать SDN subnet для зоны 'VMNet': $result"; run_cmd pve_api_request "''" DELETE "/cluster/sdn/vnets/${sdn_settings[vnet]}"; run_cmd pve_api_request "''" DELETE "/cluster/sdn/zones/${sdn_settings[zone]}"; return 1; }
+
+	echo_ok "Bridge интерфейс для виртуальных машин '${sdn_settings[vnet]}' успешно создан"
+
+	run_cmd "pvesh set /cluster/sdn"
+
+	echo_ok "Сети хостов перезагружены и изменения успешно применены"
+}
+
+function twik_no_subscrib_window() {
+    echo_tty
+    echo_warn 'Функционал в процессе разработки и пока недоступен'; return
+
+    echo_warn "Предупреждение: Рекомендуется выполнять эту операцию из-под SSH сессии для возможности отката изменений!"
+    read_question "Вы хотите продолжить?" || return 0
+
+} 
+
+function manage_aptrepo() {
+    echo_tty
+    echo_warn 'Функционал в процессе разработки и пока недоступен'; return
+    read_question "Вы хотите продолжить?" || return 0
+}
 
 conf_files=()
 _opt_show_help='Вывод в терминал справки по команде, а так же примененных значений конфигурации и выход'
@@ -2401,19 +2513,24 @@ terraform_config_vars; check_config check-only;
 $silent_mode && {
     case $switch_action in
         1) install_stands;;
-        2) manage_stands;;
-        *) echo_warn 'Функционал в процессе разработки и пока недоступен. Выход'; exit_clear;;
+        #2) manage_stands;;
+        *) echo_warn 'Функционал в процессе разработки и пока недоступен. Выход';;
     esac
+    exit_clear
 }
 
-_exit=false
+
+
+
 while ! $silent_mode; do
-    $silent_mode || switch_action=$(read_question_select $'\nДействие: 1 - Развертывание стендов, 2 - Управление стендами' '^([1-2]|)$' )
+    echo_tty $'\nДействие: 1 - Развертывание стендов, 2 - Управление стендами, 3 - Утилиты\n'
+    switch_action=$( read_question_select $'Выберите действие' '^[1-3]$' '' '' '' 2 )
 
     case $switch_action in
-        1) _exit=false; install_stands || exit_clear 0;;
-        2) _exit=false; manage_stands || exit_clear 0;;
-        '') $_exit && exit_clear 0; _exit=true;;
+        1) install_stands || exit_clear 0;;
+        2) manage_stands || exit_clear 0;;
+        3) utilities_menu || exit_clear 0;;
+        '') exit_clear 0;;
         *) echo_warn 'Функционал в процессе разработки и пока недоступен. Выход'; exit_clear 0;;
     esac
 done
