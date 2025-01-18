@@ -2333,7 +2333,7 @@ function utilities_menu() {
 
         case $switch_action in
             1) create_vmnetwork || return 0;;
-            2) twik_no_subscrib_window || return 0;;
+            2) tweek_no_subscrib_window || return 0;;
             3) manage_aptrepo || return 0;;
             '') return;;
             *) echo_warn 'Функционал в процессе разработки и пока недоступен'; return;;
@@ -2396,7 +2396,7 @@ function create_vmnetwork() {
 
 	pve_api_request '' GET "/cluster/sdn/vnets/${sdn_settings[vnet]}" && { echo_warn $'\n'"SDN vnet '${sdn_settings[vnet]}' уже существует"; return 1; }
 
-	run_cmd /noexit pve_api_request result POST /cluster/sdn/zones "type=simple zone=${sdn_settings[zone]} ipam=pve" || { echo_err $'\n'"Не удалось создать SDN зону 'VMNet': $result"; return 1; }
+	run_cmd /noexit pve_api_request result POST /cluster/sdn/zones "zone=${sdn_settings[zone]} type=simple ipam=pve dhcp=dnsmasq" || { echo_err $'\n'"Не удалось создать SDN зону 'VMNet': $result"; return 1; }
 
 	run_cmd /noexit pve_api_request result POST /cluster/sdn/vnets "'zone=${sdn_settings[zone]}' 'vnet=${sdn_settings[vnet]}' isolate-ports=${sdn_settings[isolate]} 'alias=${sdn_settings[alias]}'" || { echo_err $'\n'"Не удалось создать SDN зону 'VMNet': $result"; run_cmd pve_api_request "''" DELETE "/cluster/sdn/zones/${sdn_settings[zone]}"; return 1; }
 
@@ -2409,14 +2409,28 @@ function create_vmnetwork() {
 	echo_ok "Сети хостов перезагружены и изменения успешно применены"
 }
 
-function twik_no_subscrib_window() {
+function tweek_no_subscrib_window() {
     echo_tty
     echo_warn 'Функционал в процессе разработки и пока недоступен'; return
 
     echo_warn "Предупреждение: Рекомендуется выполнять эту операцию из-под SSH сессии для возможности отката изменений!"
+    echo_warn "Все изменения вносятся локально. Т.е. эту процедуру нужно провести для всех членов кластера."
+    echo_warn "Так же эти изменения могут быть перезаписаны обновлениями PVE и процедуру придется повторить повторно"
     read_question "Вы хотите продолжить?" || return 0
 
-} 
+    local pvelibjs_file='/usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js'
+    [[ -w $pvelibjs_file ]] || { echo_err "Файл proxmoxlib.js не найден или недоступен для изменений"; return 1; }
+
+    sed -i.backup -z "s/res === null || res === undefined || \!res || res\n\t\t\t.data.status.toLowerCase() \!== 'active'/false/g" $pvelibjs_file || { echo_err "Не удалось применить изменения"; return 1; }
+    echo_info "Создан backup-файл %{c_value}$pvelibjs_file.backup"
+    read_question "Изменения применены успешно? Ответье утвердительно, если хотите оставить изменения" || { mv -f "$pvelibjs_file.backup" $pvelibjs_file && echo_warn "Был произведен откат изменений"; return 1; }
+
+    systemctl restart pveproxy.service && echo_ok "Сервис pveproxy перезапущен" || { read_question "Сервис pveproxy перезапущен с ошибками. Откатить изменения?" && { 
+        mv -f "$pvelibjs_file.backup" $pvelibjs_file && echo_warn "Был произведен откат изменений"; 
+        systemctl restart pveproxy.service && echo_ok "Сервис pveproxy перезапущен"; return 1; 
+        } }
+
+}
 
 function manage_aptrepo() {
     echo_tty
