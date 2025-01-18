@@ -2328,8 +2328,9 @@ function utilities_menu() {
     while true; do
         echo_tty $'\nРаздел меню с твиками/утилитами для PVE:'
         echo_tty '  1. Создание WAN (VM Network) bridge интерфейса для ВМ для выхода в Интернет'
-        echo_tty '  2. Отключение уведомлений об отсутствии Enterprise подписки'
-        echo_tty $'  3. Включение no-subscription репозиториев PVE\n'
+        #echo_tty '  2. Отключение уведомлений об отсутствии Enterprise подписки'
+        #echo_tty '  3. Включение no-subscription репозиториев PVE'
+        echo_tty
 
         switch_action=$( read_question_select $'Выберите действие' '^([1-3])$' '' '' '' 2 )
 
@@ -2347,8 +2348,11 @@ function create_vmnetwork() {
     echo_tty
     check_min_version 8.1 "$data_pve_version" || { echo_warn "Данный функционал доступен в PVE версии 8.1+. Установленная версия PVE: $data_pve_version"; return; }
 
-    echo_warn $'Интерфейс будет создан на всех PVE нодах\nПосле создания интерфейса сеть будет перезагружена на всех PVE нодах кластера!'
-    read_question "Вы хотите продолжить?" || return 0
+    echo_warn $'Перед запуском необходимо установить пакет '"${c_val}dnsmasq${c_warn}"$' на все нодах кластера!\n'
+    echo_tty "${c_ok}Введите следующую команду на всех нодах кластера PVE:"
+    echo_tty "${c_val}apt-get update && apt-get install dnsmasq -y && systemctl disable --now dnsmasq"
+    echo_warn $'\nНа всех PVE нодах кластера будет создан SDN зона и vnet интерфейс и сеть всех нод будет перезагружена!'
+    read_question "Приступить к настройке?" || return 0
 	echo_tty
 	command -v dnsmasq >/dev/null || { read_question "Пакет dnsmasq не установлен. Установить автоматически?" && { apt-get update && apt-get install dnsmasq -y && systemctl disable --now dnsmasq; } || return; }
 
@@ -2363,7 +2367,7 @@ function create_vmnetwork() {
         [dns]='77.88.8.8'
         [start-ip]='172.30.100.0'
         [end-ip]='172.30.199.254'
-        [isolate]='1'
+        [isolate]='true'
     )
     local -a menu_item=( zone vnet alias subnet gateway dns start-ip end-ip isolate ) \
         item_regex=( regex_for_name regex_for_name regex_for_alias regex_cidr regex_ip regex_ip regex_ip regex_ip regex_bool )
@@ -2378,21 +2382,25 @@ function create_vmnetwork() {
         echo_tty "  6. DHCP: адрес DNS сервера: ${c_val}${sdn_settings[dns]}"
         echo_tty "  7. DHCP-пул: начальный IP адрес: ${c_val}${sdn_settings[start-ip]}"
         echo_tty "  8. DHCP-пул: конечный IP адрес:  ${c_val}${sdn_settings[end-ip]}"
-        echo_tty "  9. Изоливовать ВМ друг от друга в этой сети? [1|0]: ${c_val}${sdn_settings[isolate]}"
+        echo_tty "  9. Изоливовать ВМ друг от друга в этой сети? [1|0]: ${c_val}$( get_val_print "${sdn_settings[isolate]}" )"
         echo_tty $'Введите "Y", чтобы создать интерфейс или введите номер настройки для изменения\n'
 
-        switch=$( read_question_select 'Выберите действие' '^([1-8]|Y)$' '' '' '' 2 )
+        switch=$( read_question_select 'Выберите действие' '^([1-9]|Y)$' '' '' '' 2 )
 
         case $switch in
-            Y) break;;
+            Y)  break;;
             '') return;;
-            7) ((switch--)); 
-                return_cmd=$( read_question_select 'Введите значение' "${!item_regex[$switch]}" "${sdn_settings[start-ip]}" '' "${sdn_settings[${menu_item[$switch]}]}" 2 );;
-            *) ((switch--));
+            8)  ((switch--));
+                return_cmd=$( read_question_select 'Введите значение' "${!item_regex[$switch]}" "${sdn_settings[start-ip]}" '' "${sdn_settings[end-ip]}" 2 );;
+            9)  ((switch--));
+                ${sdn_settings[isolate]} && return_cmd=false || return_cmd=true;;
+            *)  ((switch--));
                 return_cmd=$( read_question_select 'Введите значение' "${!item_regex[$switch]}" '' '' "${sdn_settings[${menu_item[$switch]}]}" 2 );;
         esac
         [[ "$return_cmd" != '' ]] && sdn_settings[${menu_item[$switch]}]=$return_cmd
     done
+
+    ${sdn_settings[isolate]} && sdn_settings[isolate]=1 || sdn_settings[isolate]=0
 
 	pve_api_request '' GET "/cluster/sdn/zones/${sdn_settings[zone]}" && { echo_warn $'\n'"SDN зона '${sdn_settings[zone]}' уже существует"; return 1; }
 
@@ -2404,15 +2412,15 @@ function create_vmnetwork() {
 
 	run_cmd /noexit pve_api_request return_cmd POST "/cluster/sdn/vnets/${sdn_settings[vnet]}/subnets" "type=subnet snat=1 'subnet=${sdn_settings[subnet]}' 'gateway=${sdn_settings[gateway]}' 'dhcp-dns-server=${sdn_settings[dns]}' 'dhcp-range=start-address=${sdn_settings[start-ip]},end-address=${sdn_settings[end-ip]}'" || { echo_err $'\n'"Не удалось создать SDN subnet для vnet '${sdn_settings[zone]}': $return_cmd"; run_cmd pve_api_request "''" DELETE "/cluster/sdn/vnets/${sdn_settings[vnet]}"; run_cmd pve_api_request "''" DELETE "/cluster/sdn/zones/${sdn_settings[zone]}"; return 1; }
 
-	echo_ok "Bridge интерфейс для виртуальных машин '${sdn_settings[vnet]}' успешно создан"
+	echo_ok "SDN bridge интерфейс для виртуальных машин ${c_val}${sdn_settings[vnet]}${c_null} успешно создан"
 
     run_cmd /noexit pve_api_request return_cmd POST /cluster/firewall/rules "type=in action=ACCEPT enable=1 'iface=${sdn_settings[vnet]}' macro=DHCPfwd 'comment=PVE-ASDAC-BASH: allow DHCP for ${sdn_settings[vnet]}'" \
-        && { echo_ok "Создано фаервольное правило для разрешения DHCP трафика для интерфейса '${sdn_settings[vnet]}'";:; } \
-        || { echo_err $'\n'"Не удалось создать фаервольное правило для интерфейса '${sdn_settings[vnet]}' для разрешения DHCP трафика"; }
+        && { echo_ok "Создано фаервольное правило для разрешения DHCP трафика для интерфейса ${c_val}${sdn_settings[vnet]}";:; } \
+        || { echo_err $'\n'"Не удалось создать фаервольное правило для интерфейса ${c_val}${sdn_settings[vnet]}${c_null} для разрешения DHCP трафика"; }
 
 	run_cmd "pvesh set /cluster/sdn"
 
-	echo_ok "Сети хостов перезагружены и изменения успешно применены"
+	echo_ok "Сети хостов PVE перезагружены и изменения успешно применены"
 }
 
 function tweek_no_subscrib_window() {
