@@ -1403,11 +1403,13 @@ function run_cmd() {
         if ! $opt_verbose && [[ "$1" == pve_api_request || "$1" == pve_tapi_request ]]; then echo_tty "[${c_warning}Выполнение запроса API${c_null}] ${@:3}"
         else echo_tty "[${c_warning}Выполнение команды${c_null}] $@"; fi
     else
-        local return_cmd='' code
+        
         if [[ "$1" == pve_api_request || "$1" == pve_tapi_request ]]; then
+            local code
             eval "$@" >&2
             code=$?
         else
+            local return_cmd code
             return_cmd=$( eval "$@" 2>&1 )
             code=$?
         fi
@@ -2333,7 +2335,7 @@ function utilities_menu() {
 
         case $switch_action in
             1) create_vmnetwork || return 0;;
-            2) twik_no_subscrib_window || return 0;;
+            2) tweek_no_subscrib_window || return 0;;
             3) manage_aptrepo || return 0;;
             '') return;;
             *) echo_warn 'Функционал в процессе разработки и пока недоступен'; return;;
@@ -2350,7 +2352,7 @@ function create_vmnetwork() {
 	echo_tty
 	command -v dnsmasq >/dev/null || { read_question "Пакет dnsmasq не установлен. Установить автоматически?" && { apt-get update && apt-get install dnsmasq -y && systemctl disable --now dnsmasq; } || return; }
 
-	local switch= result= regex_for_name='^[A-Za-z][A-Za-z0-9]{1,7}$' regex_for_alias='^[:?<>\[\]/\@^*()_+\-/\\=a-zA-Z0-9]+$' regex_cidr='' regex_ip='' regex_bool='^(0|1)$'
+	local switch= return_cmd= regex_for_name='^[A-Za-z][A-Za-z0-9]{1,7}$' regex_for_alias='^[:?<>\[\]/\@^*()_+\-/\\=a-zA-Z0-9]+$' regex_cidr='' regex_ip='' regex_bool='^(0|1)$'
 
 	local -A sdn_settings=(
         [zone]='VMNet'
@@ -2376,7 +2378,7 @@ function create_vmnetwork() {
         echo_tty "  6. DHCP: адрес DNS сервера: ${c_val}${sdn_settings[dns]}"
         echo_tty "  7. DHCP-пул: начальный IP адрес: ${c_val}${sdn_settings[start-ip]}"
         echo_tty "  8. DHCP-пул: конечный IP адрес:  ${c_val}${sdn_settings[end-ip]}"
-        echo_tty "  9. Изоливовать ВМ друг от друга? [0|1]: ${c_val}${sdn_settings[isolate]}"
+        echo_tty "  9. Изоливовать ВМ друг от друга в этой сети? [1|0]: ${c_val}${sdn_settings[isolate]}"
         echo_tty $'Введите "Y", чтобы создать интерфейс или введите номер настройки для изменения\n'
 
         switch=$( read_question_select 'Выберите действие' '^([1-8]|Y)$' '' '' '' 2 )
@@ -2385,38 +2387,56 @@ function create_vmnetwork() {
             Y) break;;
             '') return;;
             7) ((switch--)); 
-                result=$( read_question_select 'Введите значение' "${!item_regex[$switch]}" "${sdn_settings[start-ip]}" '' "${sdn_settings[${menu_item[$switch]}]}" 2 );;
+                return_cmd=$( read_question_select 'Введите значение' "${!item_regex[$switch]}" "${sdn_settings[start-ip]}" '' "${sdn_settings[${menu_item[$switch]}]}" 2 );;
             *) ((switch--));
-                result=$( read_question_select 'Введите значение' "${!item_regex[$switch]}" '' '' "${sdn_settings[${menu_item[$switch]}]}" 2 );;
+                return_cmd=$( read_question_select 'Введите значение' "${!item_regex[$switch]}" '' '' "${sdn_settings[${menu_item[$switch]}]}" 2 );;
         esac
-        [[ "$result" != '' ]] && sdn_settings[${menu_item[$switch]}]=$result
+        [[ "$return_cmd" != '' ]] && sdn_settings[${menu_item[$switch]}]=$return_cmd
     done
 
 	pve_api_request '' GET "/cluster/sdn/zones/${sdn_settings[zone]}" && { echo_warn $'\n'"SDN зона '${sdn_settings[zone]}' уже существует"; return 1; }
 
 	pve_api_request '' GET "/cluster/sdn/vnets/${sdn_settings[vnet]}" && { echo_warn $'\n'"SDN vnet '${sdn_settings[vnet]}' уже существует"; return 1; }
 
-	run_cmd /noexit pve_api_request result POST /cluster/sdn/zones "type=simple zone=${sdn_settings[zone]} ipam=pve" || { echo_err $'\n'"Не удалось создать SDN зону 'VMNet': $result"; return 1; }
+	run_cmd /noexit pve_api_request return_cmd POST /cluster/sdn/zones "zone=${sdn_settings[zone]} type=simple ipam=pve dhcp=dnsmasq" || { echo_err $'\n'"Не удалось создать SDN зону 'VMNet': $return_cmd"; return 1; }
 
-	run_cmd /noexit pve_api_request result POST /cluster/sdn/vnets "'zone=${sdn_settings[zone]}' 'vnet=${sdn_settings[vnet]}' isolate-ports=${sdn_settings[isolate]} 'alias=${sdn_settings[alias]}'" || { echo_err $'\n'"Не удалось создать SDN зону 'VMNet': $result"; run_cmd pve_api_request "''" DELETE "/cluster/sdn/zones/${sdn_settings[zone]}"; return 1; }
+	run_cmd /noexit pve_api_request return_cmd POST /cluster/sdn/vnets "'zone=${sdn_settings[zone]}' 'vnet=${sdn_settings[vnet]}' isolate-ports=${sdn_settings[isolate]} 'alias=${sdn_settings[alias]}'" || { echo_err $'\n'"Не удалось создать SDN vnet '${sdn_settings[vnet]}': $return_cmd"; run_cmd pve_api_request "''" DELETE "/cluster/sdn/zones/${sdn_settings[zone]}"; return 1; }
 
-	run_cmd /noexit pve_api_request result POST "/cluster/sdn/vnets/${sdn_settings[vnet]}/subnets" "type=subnet snat=1 'subnet=${sdn_settings[subnet]}' 'gateway=${sdn_settings[gateway]}' 'dhcp-dns-server=${sdn_settings[dns]}' 'dhcp-range=start-address=${sdn_settings[start-ip]},end-address=${sdn_settings[end-ip]}'" || { echo_err $'\n'"Не удалось создать SDN subnet для зоны 'VMNet': $result"; run_cmd pve_api_request "''" DELETE "/cluster/sdn/vnets/${sdn_settings[vnet]}"; run_cmd pve_api_request "''" DELETE "/cluster/sdn/zones/${sdn_settings[zone]}"; return 1; }
+	run_cmd /noexit pve_api_request return_cmd POST "/cluster/sdn/vnets/${sdn_settings[vnet]}/subnets" "type=subnet snat=1 'subnet=${sdn_settings[subnet]}' 'gateway=${sdn_settings[gateway]}' 'dhcp-dns-server=${sdn_settings[dns]}' 'dhcp-range=start-address=${sdn_settings[start-ip]},end-address=${sdn_settings[end-ip]}'" || { echo_err $'\n'"Не удалось создать SDN subnet для vnet '${sdn_settings[zone]}': $return_cmd"; run_cmd pve_api_request "''" DELETE "/cluster/sdn/vnets/${sdn_settings[vnet]}"; run_cmd pve_api_request "''" DELETE "/cluster/sdn/zones/${sdn_settings[zone]}"; return 1; }
 
 	echo_ok $'\n'"Bridge интерфейс для виртуальных машин '${sdn_settings[vnet]}' успешно создан"
+
+    run_cmd /noexit pve_api_request return_cmd POST /cluster/firewall/rules "type=in action=ACCEPT enable=1 'iface=${sdn_settings[vnet]}' macro=DHCPfwd 'comment=PVE-ASDAC-BASH: allow DHCP for ${sdn_settings[vnet]}'" \
+        && { echo_ok $'\n'"Создано фаервольное правило для разрешения DHCP трафика для интерфейса '${sdn_settings[vnet]}'";:; } \
+        || { echo_err $'\n'"Не удалось создать фаервольное правило для интерфейса '${sdn_settings[vnet]}' для разрешения DHCP трафика"; }
 
 	run_cmd "pvesh set /cluster/sdn"
 
 	echo_ok "Сети хостов перезагружены и изменения успешно применены"
 }
 
-function twik_no_subscrib_window() {
+function tweek_no_subscrib_window() {
     echo_tty
     echo_warn 'Функционал в процессе разработки и пока недоступен'; return
 
     echo_warn "Предупреждение: Рекомендуется выполнять эту операцию из-под SSH сессии для возможности отката изменений!"
+    echo_warn "Все изменения вносятся локально. Т.е. эту процедуру нужно провести для всех членов кластера."
+    echo_warn "Так же эти изменения могут быть перезаписаны обновлениями PVE и процедуру придется повторить повторно"
     read_question "Вы хотите продолжить?" || return 0
 
-} 
+    local pvelibjs_file='/usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js'
+    [[ -w $pvelibjs_file ]] || { echo_err "Файл proxmoxlib.js не найден или недоступен для изменений"; return 1; }
+
+    sed -i.backup -z "s/res === null || res === undefined || \!res || res\n\t\t\t.data.status.toLowerCase() \!== 'active'/false/g" $pvelibjs_file || { echo_err "Не удалось применить изменения"; return 1; }
+    echo_info "Создан backup-файл %{c_value}$pvelibjs_file.backup"
+    read_question "Изменения применены успешно? Ответье утвердительно, если хотите оставить изменения" || { mv -f "$pvelibjs_file.backup" $pvelibjs_file && echo_warn "Был произведен откат изменений"; return 1; }
+
+    systemctl restart pveproxy.service && echo_ok "Сервис pveproxy перезапущен" || { read_question "Сервис pveproxy перезапущен с ошибками. Откатить изменения?" && { 
+        mv -f "$pvelibjs_file.backup" $pvelibjs_file && echo_warn "Был произведен откат изменений"; 
+        systemctl restart pveproxy.service && echo_ok "Сервис pveproxy перезапущен"; return 1; 
+        } }
+
+}
 
 function manage_aptrepo() {
     echo_tty
