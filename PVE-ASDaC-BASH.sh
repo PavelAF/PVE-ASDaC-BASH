@@ -2474,12 +2474,13 @@ function tweek_no_subscrib_window() {
                 done
                 return 1;
                 } }
-            echo_warn "Проверьте работоспособность web интерфейса PVE. Выйдите из учетной записи, принудительно перезагрузите страницу и войдите снова"
+            echo_warn "Проверьте работоспособность web интерфейса PVE. Выйдите из учетной записи, принудительно перезагрузите страницу (Shift+F5) и войдите снова"
             echo_warn "Если произошла ошибка, выполните откат изменений"
             read_question "Выполнить откат изменений?" && {
                 for i in "${js_files[@]}"; do
                     run_cmd "mv -f '$i.backup' '$i'"
                 done
+                run_cmd 'systemctl restart pveproxy.service'
                 return 1;
             };:;
         } || {
