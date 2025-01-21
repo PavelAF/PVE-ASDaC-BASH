@@ -2438,7 +2438,7 @@ function tweek_no_subscrib_window() {
     pname=$( get_main_pname ) || return 0
     
 
-    echo_err "В случае возникновения критической ошибки удалите файл с хуком apt.conf переустановите пакеты следующей командой: ${c_val}apt reinstall proxmox-widget-toolkit pve-manager"
+    echo_err "В случае возникновения критической ошибки удалите файл с хуком apt.conf и переустановите пакеты следующей командой: ${c_val}apt reinstall proxmox-widget-toolkit pve-manager"
     echo_tty
     echo_warn "Все изменения вносятся локально. Т.е. эту процедуру нужно провести для всех членов PVE кластера"
     echo_info "Этот твик отключит показ модального окна с сообщением об отсутствии активной подписки PVE"
