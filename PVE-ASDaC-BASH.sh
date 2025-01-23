@@ -990,15 +990,15 @@ function configure_wan_vmbr() {
     local bridge_ifs='' all_bridge_ifs=''
     command -v ovs-vsctl >/dev/null && bridge_ifs=$( ovs-vsctl list-br 2>/dev/null )$'\n'
     bridge_ifs+=$( ip link show type bridge up | grep -Po '^[0-9]+:\ \K[\w\.]+' )
-    bridge_ifs=$( echo -n "$bridge_ifs" | sort )
+    bridge_ifs=$( echo -n "$bridge_ifs" | sort | sed '/^$/d' )
     all_bridge_ifs="$bridge_ifs"
     echo -n "$bridge_ifs" | grep -Fxq "$default4" || default4=''
     echo -n "$bridge_ifs" | grep -Fxq "$default6" || default6=''
-    local list_links_master=$( (ip link show up) | grep -Po '^[0-9]+:\ \K.*\ master\ [\w\.]+' )
+    local list_links_master=$( ip link show up | grep -Po '^[0-9]+:\ \K.*\ master\ [\w\.]+' )
 
     local i iface ip4 ip6 slave_ifs slave next=false
-    for ((i=1;i<=$( echo -n "$bridge_ifs" | grep -c '^' );i++)); do
-            iface=$( echo -n "$bridge_ifs" | sed "${i}q;d" )
+    for ((i=1;i<=$( echo "$bridge_ifs" | wc -l );i++)); do
+        iface=$( echo -n "$bridge_ifs" | sed "${i}q;d" )
         echo -n "$iface" | grep -Pq '^('$default4'|'$default6')$' && {
             bridge_ifs=$( echo -n "$bridge_ifs" | sed -n "${i}!p" ); (( i > 0 ? i-- : i )); continue;
         }
@@ -1007,7 +1007,7 @@ function configure_wan_vmbr() {
         [[ "$ip4" != '' || "$ip6" != '' ]] && continue;
         slave_ifs=$( echo -n "$list_links_master" | grep -Po '^[\w\.]+(?=.*?\ master\ '$iface'(\ |$))' )
         next=false
-        while [[ "$( echo -n "$slave_ifs" | grep -c '^' )" != 0 ]]; do
+        while [[ "${#slave_ifs}" != 0 ]]; do
             slave=$( echo -n "$slave_ifs" | sed '1q;d' )
             echo -n "$all_bridge_ifs" | grep -Fxq "$slave" || { next=true; break; }
             slave_ifs=$( echo -n "$slave_ifs" | sed -n "1!p" )
@@ -1019,12 +1019,12 @@ function configure_wan_vmbr() {
     bridge_ifs=$( ( echo "$bridge_ifs"; echo "$default6"; echo "$default4" ) | sed '/^$/d' )
 
     set_vmbr_menu() {
-        local if_count=$( echo -n "$bridge_ifs" | grep -c '^' )
-        local if_all_count=$( echo -n "$all_bridge_ifs" | grep -c '^' )
+        local if_count=$( echo "$bridge_ifs" | wc -l )
+        local if_all_count=$( echo "$all_bridge_ifs" | wc -l )
         [[ "$if_count" == 0 ]] && {
             [[ "$if_all_count" == 0 ]] && { echo_err "Ошибка: не найдено ни одного активного bridge интерфейса в системе. Выход"; exit_clear; }
             bridge_ifs="$all_bridge_ifs"
-            if_count=$( echo -n "$bridge_ifs" | grep -c '^' )
+            if_count=$( echo "$bridge_ifs" | wc -l )
         }
         echo_tty $'\nУкажите bridge интерфейс в качестве вешнего интерфейса для ВМ:'
         for ((i=1;i<=$if_count;i++)); do
@@ -1033,7 +1033,7 @@ function configure_wan_vmbr() {
             ip6=$( echo -n "$ipr6" | grep -Po '^[0-9a-f\:\/]+(?=\ dev\ '$iface'(?=\ |$))' )
             echo_tty "  ${i}. ${c_value}$iface${c_null} IPv4='${c_value}$ip4${c_null}' IPv6='${c_value}$ip6${c_null}' slaves='${c_value}"$( echo -n "$list_links_master" | grep -Po '^[\w\.]+(?=.*?\ master\ '$iface'(\ |$))' )"${c_null}'"
         done
-        local switch=$( read_question_select $'\nВыберите номер сетевого интерфейса' '^[0-9]+$' 1 $( echo -n "$bridge_ifs" | grep -c '^' ) )
+        local switch=$( read_question_select $'\nВыберите номер сетевого интерфейса' '^[0-9]+$' 1 $( echo "$bridge_ifs" | wc -l ) )
         config_base[inet_bridge]=$( echo -n "$bridge_ifs" | sed "${switch}q;d" )
         echo_tty $'\n'"${c_ok}Подождите, идет проверка конфигурации...${c_null}"$'\n'
         return 0;
@@ -1047,10 +1047,10 @@ function configure_wan_vmbr() {
             config_base[inet_bridge]='{auto}'
         fi
     fi
-    [[ $( echo -n "$bridge_ifs" | grep -c '^' ) == 1 && "$1" != manual ]] && { config_base[inet_bridge]=$( echo -n "$bridge_ifs" | sed '1q;d' ); return; }
-    [[ $( echo -n "$all_bridge_ifs" | grep -c '^' ) == 1 && "$1" != manual ]] && { config_base[inet_bridge]=$( echo -n "$all_bridge_ifs" | sed '1q;d' ); return; }
+    [[ $( echo "$bridge_ifs" | wc -l ) == 1 && "$1" != manual ]] && { config_base[inet_bridge]=$( echo -n "$bridge_ifs" | sed '1q;d' ); return; }
+    [[ $( echo "$all_bridge_ifs" | wc -l ) == 1 && "$1" != manual ]] && { config_base[inet_bridge]=$( echo -n "$all_bridge_ifs" | sed '1q;d' ); return; }
 
-    [[ $( echo -n "$all_bridge_ifs" | grep -c '^' ) == 0 ]] && { echo_err "Ошибка: не найдено ни одного активного Linux|OVS bridge сетевого интерфейса в системе. Выход"; exit_clear; }
+    [[ $( echo "$all_bridge_ifs" | wc -l ) == 0 ]] && { echo_err "Ошибка: не найдено ни одного активного Linux|OVS bridge сетевого интерфейса в системе. Выход"; exit_clear; }
 
     case "${config_base[inet_bridge]}" in
         \{manual\}) set_vmbr_menu;;
