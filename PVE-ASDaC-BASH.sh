@@ -1000,7 +1000,7 @@ function configure_wan_vmbr() {
     for ((i=1;i<=$( echo "$bridge_ifs" | wc -l );i++)); do
         iface=$( echo -n "$bridge_ifs" | sed "${i}q;d" )
         echo -n "$iface" | grep -Pq '^('$default4'|'$default6')$' && {
-            bridge_ifs=$( echo -n "$bridge_ifs" | sed -n "${i}!p" ); (( i > 0 ? i-- : i )); continue;
+            bridge_ifs=$( echo -n "$bridge_ifs" | sed "${i}d" ); (( i > 0 ? i-- : i )); continue;
         }
         ip4=$( echo -n "$ipr4" | grep -Po '^[\.0-9\/]+(?=\ dev\ '$iface')' )
         ip6=$( echo -n "$ipr6" | grep -Po '^[0-9a-f\:\/]+(?=\ dev\ '$iface'(?=\ |$))' )
@@ -1010,11 +1010,11 @@ function configure_wan_vmbr() {
         while [[ "${#slave_ifs}" != 0 ]]; do
             slave=$( echo -n "$slave_ifs" | sed '1q;d' )
             echo -n "$all_bridge_ifs" | grep -Fxq "$slave" || { next=true; break; }
-            slave_ifs=$( echo -n "$slave_ifs" | sed -n "1!p" )
+            slave_ifs=$( echo -n "$slave_ifs" | sed '1d' )
             slave_ifs+=$( echo; echo -n "$list_links_master" | grep -Po '^[\w\.]+(?=.*?\ master\ '$slave'(\ |$))' )
             slave_ifs=$( echo -n "$slave_ifs" | sed '/^$/d' )
         done
-        ! $next && bridge_ifs=$( echo "$bridge_ifs" | sed -n "${i}!p" ) && (( i > 0 ? i-- : i ))
+        ! $next && bridge_ifs=$( echo "$bridge_ifs" | sed "${i}d" ) && (( i > 0 ? i-- : i ))
     done
     bridge_ifs=$( ( echo "$bridge_ifs"; echo "$default6"; echo "$default4" ) | sed '/^$/d' )
 
@@ -1458,6 +1458,24 @@ function deploy_stand_config() {
 
         [[ ! "$1" =~ ^network_?([0-9]+)$ ]] && { echo_err "Ошибка: опция конфигурации ВМ network некорректна '$1'"; exit_clear; }
     
+        gen_mac() {
+            local i char mac_str mac_templ=$( echo "$1" | tr -d '\.\-:' | grep -Poi '^[0-9A-FX]+$' )
+            
+            [[ ${#mac_templ} == 0 ]] && { echo_err "Ошибка: некорректный шаблон MAC-адреса: $1"; return 1; }
+            
+            mac_templ=${mac_templ^^}
+            for (( i=0; i<12; i++ )); do
+                char=${mac_templ:$i:1}
+                if [[ ! $char || $char == X ]]; then
+                    mac_str+=$( printf "%X" $(( RANDOM % 16 )) )
+                else
+                    mac_str+=$char
+                fi
+            done
+
+            echo "$mac_str" | sed -r 's/(..)(..)(..)(..)(..)(..)/\1:\2:\3:\4:\5:\6/'
+        }
+
         function add_bridge() {
             local iface="$1" if_desc="$2" special
             [[ "$4" == "" ]] && special=false || special=true
@@ -1470,7 +1488,7 @@ function deploy_stand_config() {
             fi
 
             Networking[$iface]="$if_desc"
-            ! $special && cmd_line+=" --net$if_num '${netifs_type:-virtio},bridge=$iface$net_options'"
+            ! $special && cmd_line+=" --net$if_num '${netifs_type:-virtio}${if_mac:+"=$if_mac"},bridge=$iface$net_options'"
 
             if_desc=${if_desc/\{0\}/$stand_num}
             $create_if && {
@@ -1502,7 +1520,7 @@ function deploy_stand_config() {
             fi
         }
 
-        local if_num=${BASH_REMATCH[1]} if_config="$2" if_desc="$2" create_if=false net_options='' master='' iface='' vlan_aware='' vlan_slave='' access_role=''
+        local if_num=${BASH_REMATCH[1]} if_config="$2" if_desc="$2" create_if=false net_options='' master='' iface='' vlan_aware='' vlan_slave='' access_role='' if_mac=''
 
         if [[ "$if_config" =~ ^\{\ *bridge\ *=\ *([0-9\.a-z]+|\"\ *((\\\"|[^\"])+)\")\ *(,.*)?\}$ ]]; then
             if_bridge="${BASH_REMATCH[1]/\\\"/\"}"
@@ -1514,6 +1532,7 @@ function deploy_stand_config() {
             [[ "$if_config" =~ ,\ *access_role\ *=\ *([a-zA-Z0-9_\-]+)\ *($|,.+$) ]] && $create_access_network && { access_role=${BASH_REMATCH[1]}; set_role_config $access_role; }
             [[ "$if_config" =~ ,\ *trunks\ *=\ *([0-9\;]*[0-9])\ *($|,.+$) ]] && net_options+=",trunks=${BASH_REMATCH[1]}" && vlan_aware=' bridge_vlan_aware=1'
             [[ "$if_config" =~ ,\ *tag\ *=\ *([1-9][0-9]{0,2}|[1-3][0-9]{3}|40([0-8][0-9]|9[0-4]))\ *($|,.+$) ]] && net_options+=",tag=${BASH_REMATCH[1]}" && vlan_aware=" bridge_vlan_aware=1"
+            [[ "$if_config" =~ ,\ *mac\ *=\ *([^\ ]+)\ *($|,.+$) ]] && { if_mac=${BASH_REMATCH[1]}; }
             [[ "$if_config" =~ ,\ *vtag\ *=\ *([1-9][0-9]{0,2}|[1-3][0-9]{3}|40([0-8][0-9]|9[0-4]))\ *($|,.+$) ]] && {
                 local tag="${BASH_REMATCH[1]}"
                 if [[ "$if_config" =~ ,\ *master\ *=\ *([0-9\.a-z]+|\"\ *((\\\"|[^\"])+)\")\ *($|,.+$) ]]; then
@@ -1545,9 +1564,12 @@ function deploy_stand_config() {
             if_config=""
         fi
 
+        [[ $netifs_mac && ! $if_mac ]] && { if_mac=$netifs_mac; }
+        [[ $if_mac ]] && { if_mac=$( gen_mac "$if_mac" ) || exit_clear; }
+
         for net in "${!Networking[@]}"; do
             [[ "${Networking["$net"]}" != "$if_desc" ]] && continue
-            cmd_line+=" --net$if_num '${netifs_type:-virtio},bridge=$net$net_options'"
+            cmd_line+=" --net$if_num '${netifs_type:-virtio}${if_mac:+"=$if_mac"},bridge=$net$net_options'"
             ! $opt_dry_run && [[ "$vlan_slave" != '' || "$vlan_aware" != '' ]] && ! [[ "$vlan_slave" != '' && "$vlan_aware" != '' ]] && {
                 local port_info if_update=false
                 pve_api_request port_info GET "/nodes/$(hostname -s)/network/$net" || { echo_err "Ошибка: не удалось получить параметры сетевого интерфейса ${c_val}$net"; exit_clear; }
@@ -1680,12 +1702,13 @@ function deploy_stand_config() {
         echo_ok "Создан пользователь стенда ${c_val}$username"
     }
 
-    local cmd_line='' netifs_type='virtio' disk_type='scsi' disk_num=0 boot_order='' vm_template='' vm_name=''
+    local cmd_line netifs_type='virtio' netifs_mac disk_type='scsi' disk_num=0 boot_order vm_template vm_name
     local -A vm_config=()
 
     for elem in $(printf '%s\n' "${!config_var[@]}" | grep -P 'vm_\d+' | sort -V ); do
 
         netifs_type='virtio'
+        netifs_mac=''
         disk_type='scsi'
         disk_num=0
         boot_order=''
@@ -1706,12 +1729,13 @@ function deploy_stand_config() {
 
         [[ "${vm_config[netifs_type]}" != '' ]] && netifs_type="${vm_config[netifs_type]}" && unset -v 'vm_config[netifs_type]'
         [[ "${vm_config[disk_type]}" != '' ]] && disk_type="${vm_config[disk_type]}" && unset -v 'vm_config[disk_type]'
+        [[ "${vm_config[netifs_mac]}" != '' ]] && netifs_mac="${vm_config[netifs_mac]}" && unset -v 'vm_config[netifs_mac]'
 
         set_netif_conf test && set_disk_conf test || exit_clear
 
         for opt in $( printf '%s\n' "${!vm_config[@]}" | sort -V ); do
             case "$opt" in
-                startup|tags|ostype|serial0|serial1|serial2|serial3|agent|scsihw|cpu|cores|memory|bwlimit|description|args|arch|vga|kvm|rng0|acpi|tablet|reboot|startdate|tdf|cpulimit|balloon|hotplug)
+                startup|tags|ostype|serial0|serial1|serial2|serial3|agent|scsihw|cpu|cores|memory|bwlimit|description|args|arch|vga|kvm|rng0|acpi|tablet|reboot|startdate|tdf|cpulimit|cpuunits|balloon|hotplug|reboot)
                     cmd_line+=" --$opt '${vm_config[$opt]}'";;
                 network*) set_netif_conf "$opt" "${vm_config[$opt]}";;
                 bios) [[ "${vm_config[$opt]}" == ovmf ]] && cmd_line+=" --bios 'ovmf' --efidisk0 '${config_base[storage]}:0,format=$config_disk_format'" || cmd_line+=" --$opt '${vm_config[$opt]}'";;
