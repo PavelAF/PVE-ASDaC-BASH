@@ -1458,10 +1458,10 @@ function deploy_stand_config() {
 
         [[ ! "$1" =~ ^network_?([0-9]+)$ ]] && { echo_err "Ошибка: опция конфигурации ВМ network некорректна '$1'"; exit_clear; }
     
-        gen_mac() {
-            local i char mac_str mac_templ=$( echo "$1" | tr -d '\.\-:' | grep -Poi '^[0-9A-FX]+$' )
+        function gen_mac() {
+            local i char mac_str mac_templ=$( echo "$1" | tr -d '\.\-:' | grep -io '^[0-9A-FX]*$' )
             
-            [[ ${#mac_templ} == 0 ]] && { echo_err "Ошибка: некорректный шаблон MAC-адреса: $1"; return 1; }
+            [[ ! $mac_templ || ${#mac_templ} -gt 12 ]] && { echo_err "Ошибка: некорректный шаблон MAC-адреса: $1"; return 1; }
             
             mac_templ=${mac_templ^^}
             for (( i=0; i<12; i++ )); do
