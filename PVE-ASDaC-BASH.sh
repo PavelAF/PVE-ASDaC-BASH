@@ -560,7 +560,7 @@ function pve_tapi_request() {
 function jq_data_to_array() {
 	[[ "$1" == '' || "$2" == '' ]] && exit_clear
 	
-	local data line var_line i=-1
+	local data line var_line i=0
 	set -o pipefail
 	[[ "$1" =~ ^var=(.+) ]] && data=${!BASH_REMATCH[1]} || pve_api_request data GET "$1"
 	data=$( echo -n "$data" | grep -Po '(?(DEFINE)(?<str>"[^"\\]*(?:\\.[^"\\]*)*")(?<other>null|true|false|[0-9\-\.Ee\+]+)(?<arr>\[[^\[\]]*+(?:(?-1)[^\[\]]*)*+\])(?<obj>{[^{}]*+(?:(?-1)[^{}]*)*+}))(?:^\s*{\s*(?:(?&str)\s*:\s*(?:(?&other)|(?&str)|(?&arr)|(?&obj))\s*,\s*)*?"data"\s*:\s*(?:\[|(?={))|\G\s*,\s*)(?:(?:(?&other)|(?&str)|(?&arr))\s*,\s*)*\K(?>(?&obj)|)(?=\s*(?:\]|})|\s*,[^,])' ) \
@@ -568,13 +568,14 @@ function jq_data_to_array() {
     [[ "${#data}" == 0 ]] && return 0
 	local -n ref_dict_table=$2
 	while read -r line || [[ -n $line ]]; do
-		((i++))
 		while read -r var_line || [[ -n $var_line ]]; do
 			[[ "$var_line" =~ ^\"([^\"\\]*(\\.[^\"\\]*)*)\"\ *:\ *\"?(.*[^\"]|) ]] || { echo_err "Ошибка parse_json: некорректный bash парсинг: ${c_val}'$var_line'"; exit_clear; }
 			ref_dict_table[$i,${BASH_REMATCH[1]}]=${BASH_REMATCH[3]}
 		done < <( echo -n "$line" | grep -Po '(?(DEFINE)(?<str>"[^"\\]*(?:\\.[^"\\]*)*")(?<other>null|true|false|[0-9\-\.Ee\+]+)(?<arr>\[[^\[\]]*+(?:(?-1)[^\[\]]*)*+\])(?<obj>{[^{}]*+(?:(?-1)[^{}]*)*+}))(?:^\s*{\s*|\G\s*,\s*)\K(?:(?&str)\s*:\s*(?:(?&other)|(?&str)|(?&arr)|(?&obj)))(?=\s*}|\s*,[^,])' || { echo_err "Ошибка jq_data_to_array: ошибка парсинга ответа API: ${c_val}GET '$1'"$'\n'"Line $i: $line"; exit_pid; } )
-	done <<<$data
+        ((i++))
+    done <<<$data
 	set +o pipefail
+    ref_dict_table[count]=$i
 }
 
 function make_local_configs() {
@@ -1247,12 +1248,12 @@ function configure_storage() {
 	
 	declare -gA data_pve_node_storages=()
 	data_pve_storage_list=''
-    jq_data_to_array "/nodes/$( hostname -s )/storage?enabled=1&content=images" data_pve_node_storages
+    jq_data_to_array "/nodes/$var_pve_node/storage?enabled=1&content=images" data_pve_node_storages
     [[ "${data_pve_node_storages[0,storage]}" == '' || "${data_pve_node_storages[0,avail]}" == '' ]] && { echo_err 'Ошибка: не найдено ни одного активного PVE хранилища для дисков ВМ. Выход'; exit_clear; }
 
 	local max_index i
-	max_index=$( printf '%s\n' "${!data_pve_node_storages[@]}" | sort -Vr | head -n 1 | grep -Po '^\d+' )
-	for ((i=0;i<=$max_index;i++)); do
+	max_index=${data_pve_node_storages[count]}
+	for ((i=0;i<$max_index;i++)); do
 		data_pve_storage_list+=${data_pve_node_storages[$i,storage]}$'\t'${data_pve_node_storages[$i,type]}$'\t'${data_pve_node_storages[$i,avail]}$'\n'
     done
 
@@ -1431,7 +1432,6 @@ function run_cmd() {
         else
             ! $to_exit && {
                 echo_tty "[${c_warning}Выполнена команда${c_null}] ${c_info}$@${c_null}"
-                [[ "$return_cmd" != '' ]] && echo_tty "${c_red}Error output: ${c_warning}$return_cmd${c_null}"
                 return $code
             }
             [[ "$1" == pve_api_request || "$1" == pve_tapi_request ]] && echo_tty "[${c_err}Запрос API${c_null}] $3 ${config_base[pve_api_url]}${@:4}"
@@ -1461,7 +1461,7 @@ function deploy_stand_config() {
         function gen_mac() {
             local i char mac_str mac_templ=$( echo "$1" | tr -d '\.\-:' | grep -io '^[0-9A-FX]*$' )
             
-            [[ ! $mac_templ || ${#mac_templ} -gt 12 ]] && { echo_err "Ошибка: некорректный шаблон MAC-адреса: $1"; return 1; }
+            [[ ! $mac_templ || ${#mac_templ} -gt 12 ]] && { echo_err "Ошибка конфигурации: некорректный шаблон MAC-адреса: $1"; return 1; }
             
             mac_templ=${mac_templ^^}
             for (( i=0; i<12; i++ )); do
@@ -1492,7 +1492,7 @@ function deploy_stand_config() {
 
             if_desc=${if_desc/\{0\}/$stand_num}
             $create_if && {
-                run_cmd /noexit pve_api_request return_cmd POST "/nodes/$(hostname -s)/network" "'iface=$iface' type=bridge autostart=1 'comments=$if_desc'${vlan_aware}${vlan_slave:+" 'bridge_ports=${$vlan_slave}'"}" \
+                run_cmd /noexit pve_api_request return_cmd POST "/nodes/$var_pve_node/network" "'iface=$iface' type=bridge autostart=1 'comments=$if_desc'${vlan_aware}${vlan_slave:+" 'bridge_ports=${$vlan_slave}'"}" \
                     || { echo_err "Интерфейс '$iface' ($if_desc) уже существует! Выход"; exit_clear; } 
                 echo_ok "Создан bridge интерфейс ${c_value}$iface${c_info} : ${c_value}$if_desc"
             }
@@ -1546,7 +1546,7 @@ function deploy_stand_config() {
                         echo_err "Ошибка конфигурации: повторная попытка создать VLAN интерфейс для связки с другим Bridge"; exit_clear
                     elif [[ ! -v "Networking[$master_if.$tag]" ]]; then
                         [[ "$if_desc" == "" ]] && if_desc="$if_bridge"
-                        run_cmd /noexit pve_api_request return_cmd POST "/nodes/$(hostname -s)/network" "'iface=$master_if.$tag' type=vlan autostart=1 'comments=$master_desc => $if_desc'" \
+                        run_cmd /noexit pve_api_request return_cmd POST "/nodes/$var_pve_node/network" "'iface=$master_if.$tag' type=vlan autostart=1 'comments=$master_desc => $if_desc'" \
                             || { echo_err "Интерфейс '$iface' ($if_desc) уже существует! Выход"; exit_clear; }
                         echo_ok "Создан VLAN интерфейс $master_if.$tag : '$master_desc => $if_desc'${c_null}"
                         Networking["${master_if}.$tag"]="{vlan=$if_bridge}"
@@ -1572,7 +1572,7 @@ function deploy_stand_config() {
             cmd_line+=" --net$if_num '${netifs_type:-virtio}${if_mac:+"=$if_mac"},bridge=$net$net_options'"
             ! $opt_dry_run && [[ "$vlan_slave" != '' || "$vlan_aware" != '' ]] && ! [[ "$vlan_slave" != '' && "$vlan_aware" != '' ]] && {
                 local port_info if_update=false
-                pve_api_request port_info GET "/nodes/$(hostname -s)/network/$net" || { echo_err "Ошибка: не удалось получить параметры сетевого интерфейса ${c_val}$net"; exit_clear; }
+                pve_api_request port_info GET "/nodes/$var_pve_node/network/$net" || { echo_err "Ошибка: не удалось получить параметры сетевого интерфейса ${c_val}$net"; exit_clear; }
 
                 [[ "$port_info" =~ (,|\{)\"bridge_vlan_aware\":1(,|\}) ]] && vlan_aware=' bridge_vlan_aware=1' || { [[ "$vlan_aware" != '' ]] && if_update=true; }
                 [[ "$port_info" =~ (,|\{)\"bridge_ports\":\"([^\"]+)\" ]] && {
@@ -1582,7 +1582,7 @@ function deploy_stand_config() {
                     }
                 } || [[ "$vlan_slave" != '' ]] && if_update=true
                 
-                $if_update && run_cmd pve_api_request return_cmd PUT "/nodes/$(hostname -s)/network/$net" "type=bridge${vlan_aware}${vlan_slave:+" 'bridge_ports=${$vlan_slave}'"}"
+                $if_update && run_cmd pve_api_request return_cmd PUT "/nodes/$var_pve_node/network/$net" "type=bridge${vlan_aware}${vlan_slave:+" 'bridge_ports=${$vlan_slave}'"}"
             }
             return 0
         done
@@ -1668,7 +1668,7 @@ function deploy_stand_config() {
         echo -n "$1" | grep -Pq '^{[^{}]*}$' || { echo_err "Ошибка set_firewall_opt: ВМ '$elem' некорректный синтаксис"; exit_clear; }
         echo -n "$1" | grep -Pq '(^{|,) ?enable ?= ?1 ?(,? ?}$|,)' && opt+=" enable=1"
         echo -n "$1" | grep -Pq '(^{|,) ?dhcp ?= ?1 ?(,? ?}$|,)' && opt+=" dhcp=1"
-        [[ "$opt" != '' ]] && run_cmd pve_api_request return_cmd PUT "/nodes/$( hostname -s )/qemu/$vmid/firewall/options" "${opt}"
+        [[ "$opt" != '' ]] && run_cmd pve_api_request return_cmd PUT "/nodes/$var_pve_node/qemu/$vmid/firewall/options" "${opt}"
     }
 
     [[ "$1" == '' ]] && { echo_err "Внутренняя ошибка скрипта установки стенда"; exit_clear; }
@@ -1682,7 +1682,7 @@ function deploy_stand_config() {
     local pool_name="${config_base[pool_name]/\{0\}/$stand_num}"
 
     local pve_net_ifs=''
-    pve_api_request pve_net_ifs GET /nodes/$(hostname -s)/network || { echo_err "Ошибка: не удалось загрузить список сетевых интерфейсов"; exit_clear; }
+    pve_api_request pve_net_ifs GET /nodes/$var_pve_node/network || { echo_err "Ошибка: не удалось загрузить список сетевых интерфейсов"; exit_clear; }
     pve_net_ifs=$( echo -n "$pve_net_ifs" | grep -Po '({|,)"iface":"\K[^"]+' )
 
     run_cmd /noexit pve_api_request return_cmd POST /pools "'poolid=$pool_name' 'comment=${config_base[pool_desc]/\{0\}/$stand_num}'" || { echo_err "Ошибка: не удалось создать пул '$pool_name'"; exit_clear; }
@@ -1735,7 +1735,7 @@ function deploy_stand_config() {
 
         for opt in $( printf '%s\n' "${!vm_config[@]}" | sort -V ); do
             case "$opt" in
-                startup|tags|ostype|serial0|serial1|serial2|serial3|agent|scsihw|cpu|cores|memory|bwlimit|description|args|arch|vga|kvm|rng0|acpi|tablet|reboot|startdate|tdf|cpulimit|cpuunits|balloon|hotplug|reboot)
+                startup|tags|ostype|serial0|serial1|serial2|serial3|agent|scsihw|cpu|cores|memory|bwlimit|description|args|arch|vga|kvm|rng0|acpi|tablet|reboot|startdate|tdf|cpulimit|cpuunits|balloon|hotplug)
                     cmd_line+=" --$opt '${vm_config[$opt]}'";;
                 network*) set_netif_conf "$opt" "${vm_config[$opt]}";;
                 bios) [[ "${vm_config[$opt]}" == ovmf ]] && cmd_line+=" --bios 'ovmf' --efidisk0 '${config_base[storage]}:0,format=$config_disk_format'" || cmd_line+=" --$opt '${vm_config[$opt]}'";;
@@ -1754,9 +1754,9 @@ function deploy_stand_config() {
 
         ${config_base[access_create]} && [[ "${vm_config[access_role]}" != '' ]] && run_cmd pve_api_request return_cmd PUT /access/acl "'path=/vms/$vmid' 'roles=${vm_config[access_role]}' 'users=$username'"
 
-        ${config_base[take_snapshots]} && run_cmd "pvesh create '/nodes/$( hostname -s )/qemu/$vmid/snapshot' --snapname 'Start' --description 'Исходное состояние ВМ'"
+        ${config_base[take_snapshots]} && run_cmd "pvesh create '/nodes/$var_pve_node/qemu/$vmid/snapshot' --snapname 'Start' --description 'Исходное состояние ВМ'"
 
-        ${config_base[run_vm_after_installation]} && manage_bulk_vm_power --add "$(hostname -s)" "$vmid"
+        ${config_base[run_vm_after_installation]} && manage_bulk_vm_power --add "$var_pve_node" "$vmid"
 
         echo_ok "Конфигурирование ВМ ${c_ok}$vm_name${c_null} (${c_info}$vmid${c_null}) завершено"
         ((vmid++))
@@ -1789,8 +1789,8 @@ function deploy_access_passwd() {
     [[ $format_opt != 1 ]] && {
         local -A pve_nodes; local i pve_url max_index
         jq_data_to_array /cluster/status pve_nodes
-        max_index=$( printf '%s\n' "${!pve_nodes[@]}" | sort -Vr | head -n 1 | grep -Po '^\d+' )
-        for ((i=0; i<=$max_index; i++)); do
+        max_index=${pve_nodes[count]}
+        for ((i=0; i<$max_index; i++)); do
             [[ "${pve_nodes[$i,local]}" == '1' ]] && pve_url="https://${pve_nodes[$i,ip]}:8006" && break
         done
         unset pve_nodes
@@ -1850,7 +1850,7 @@ function install_stands() {
     echo_tty "$( show_config )"
     
     ! $silent_mode && read_question 'Хотите изменить параметры?' && {
-        local _exit=false opt_names=( inet_bridge storage pool_name pool_desc take_snapshots run_vm_after_installation access_{create,user_{name,desc,enable},pass_{length,chars},auth_{pve,pam}_desc} dry-run verbose)
+        local _exit=false opt_names=( inet_bridge storage pool_name pool_desc take_snapshots run_vm_after_installation access_{create,user_{name,desc,enable},pass_{length,chars},auth_{pve,pam}_desc} dry-run verbose vmnetif_reload_fix)
         
         while true; do
             echo_tty "$( show_config install-change )"
@@ -1917,8 +1917,8 @@ function install_stands() {
     local -A roles_list roles_data 
     local max_index i
     jq_data_to_array /access/roles roles_data || exit_clear
-    max_index=$( printf '%s\n' "${!roles_data[@]}" | sort -Vr | head -n 1 | grep -Po '^\d+' )
-    for ((i=0;i<="$max_index";i++)); do
+    max_index=${roles_data[count]}
+    for ((i=0;i<$max_index;i++)); do
         roles_list[roleid]+=${roles_data[$i,roleid]}$'\n'
         roles_list[privs]+=${roles_data[$i,privs]//,/ }$'\n'
     done
@@ -1929,7 +1929,7 @@ function install_stands() {
         deploy_stand_config ${opt_stand_nums[stand_num]} $stand_num
     done
 
-    run_cmd "pvesh set '/nodes/$(hostname -s)/network'"
+    run_cmd "pvesh set '/nodes/$var_pve_node/network'"
 
     ${config_base[access_create]} && {
         [[ "${config_base[access_auth_pam_desc]}" != '' ]] && run_cmd pve_api_request return_cmd PUT /access/domains/pam "'comment=${config_base[access_auth_pam_desc]}'"
@@ -1989,14 +1989,14 @@ function manage_stands() {
 
     local group_name pool_name users_count=0 stands_count=0 max_count nl=$'\n'
 
-    max_count=$( printf '%s\n' "${!acl_list[@]}" | sort -Vr | head -n 1 | grep -Po '^\d+' ) || max_count=0
-    for ((i=0; i<=$max_count; i++)); do
+    max_count=${acl_list[count]}
+    for ((i=0; i<$max_count; i++)); do
         [[ "${acl_list[$i,type]}" != group ]] && continue
         if [[ "${acl_list[$i,path]}" =~ ^\/pool\/(.+) ]] && [[ "${acl_list[$i,roleid]}" == NoAccess && "${acl_list[$i,propagate]}" == 0 ]]; then
             pool_list[${acl_list[$i,ugid]}]+=${BASH_REMATCH[1]}$nl
         fi
     done
-    max_count=$( printf '%s\n' "${!group_list[@]}" | sort -Vr | head -n 1 | grep -Po '^\d+' ) || max_count=0
+    max_count=${group_list[count]}
     for ((i=0; i<=$max_count; i++)); do
         [[ -v "pool_list[${group_list[$i,groupid]}]" ]] && {
             group_name=${group_list[$i,groupid]}
@@ -2226,7 +2226,7 @@ function manage_stands() {
 
             jq_data_to_array /nodes/$vm_node/network ifaces_info
             local i=1
-            max_count=$( printf '%s\n' "${!ifaces_info[@]}" | sort -Vr | head -n 1 | grep -Po '^\d+' )
+            max_count=${ifaces_info[count]}
             for ((i=0; i<=$max_count; i++)); do
                 bridge_ports="${ifaces_info[$i,bridge_ports]}"
                 ifname="${ifaces_info[$i,iface]}"
@@ -2362,6 +2362,7 @@ function utilities_menu() {
         utilities_menu[2-tweek_no_subscrib_window]='Отключение уведомления об отсутствии Enterprise подписки'
         #utilities_menu[3-manage_aptrepo]='Включение no-subscription репозиториев PVE'
     }
+    utilities_menu[4-remaster_vm_netif_tweak]='Твик-фикс: фикс сетевой связности для запущенных ВМ после перезагрузки сети хоста PVE'
 
     while true; do
         i=0
@@ -2532,6 +2533,59 @@ function manage_aptrepo() {
     read_question "Вы хотите продолжить?" || return 0
 }
 
+function remaster_vm_netif_tweak() {
+    
+	local -A vm_list
+	local i max_count=0 vm_config line cmd_line_clear cmd_line pve_node vm_type firewall
+	
+    jq_data_to_array /cluster/resources?type=vm vm_list
+	
+    [[ $1 ]] && { pve_node=$1; } || {
+        local -A node_list
+        local -a node_arr
+        jq_data_to_array /cluster/resources?type=node node_list
+        [[ ${node_list[count]} -gt 1 ]] && {
+            echo_tty 'Выберите номер ноды PVE для применения твика'
+            for((i=0;i<${node_list[count]};i++)); do
+                [[ "${node_list[$i,status]}" != online ]] && continue
+                nodes_arr[$max_count]=${node_list[$i,node]}
+                echo_tty "$( printf "%4s. ${node_list[$i,node]}" $((++max_count)) )"
+            done
+            echo_tty 'Для применения твика на всех нодах кластера PVE нажмите Enter'
+            pve_node=$( read_question_select 'Выберите номер ноды' '^(|[0-9]+)$' 1 $max_count '' )
+            [[ $pve_node ]] && pve_node=${nodes_arr[$(( $pve_node - 1 ))]}
+            unset nodes_arr node_list
+        }
+    }
+    echo_tty
+    [[ ! $pve_node ]] && { echo_warn 'Запущен твик переприменения настроек сетевых интерфейсов для всех запущенных ВМ и CT в кластере'; } \
+        || { echo_warn "Запущен твик переприменения настроек сетевых интерфейсов для всех запущенных ВМ и CT на ноде $pve_node"; }
+    echo_warn 'Переприменение настроек для большого кол-ва ВМ и интерфейсов может занять продолжительное время'
+    [[ ! $1 ]] && {
+        echo_info 'Этот твик необходим только в случае, если по какии-то причинам в вашей версии PVE случился баг и сетевые интрерфейсы tap потеряли master-прикрепление к своим бриджам после перезагрузки сети или чего-то другого'
+        echo_info "Проверить наличие таких интерфейсов можно командой ${c_val}ip l sh type tun nomaster"
+        read_question 'Вы хотите продолжить?' || return 0
+    }
+    max_count=${vm_list[count]}
+    for((i=0;i<$max_count;i++)); do
+        [[ "${vm_list[$i,status]}" != running || $pve_node && "${vm_list[$i,node]}" != $pve_node ]] && continue
+        cmd_line_clear='' cmd_line=''
+        pve_api_request vm_config GET /nodes/${vm_list[$i,node]}/${vm_list[$i,type]}/${vm_list[$i,vmid]}/config?current=1
+		while read -r line || [[ -n $line ]]; do
+			[[ "$line" =~ ^([0-9]+)\":\"(([^,]+)(,bridge=[^,]+)?(,firewall=[01])?(.*)) ]] || continue
+            [[ "${BASH_REMATCH[4]}" == '' ]] && continue
+            [[ "${BASH_REMATCH[5]}" == ',firewall=1' ]] && firewall=0 || firewall=1
+			cmd_line_clear+="'net${BASH_REMATCH[1]}=${BASH_REMATCH[3]}${BASH_REMATCH[4]},firewall=$firewall${BASH_REMATCH[6]}' "
+			cmd_line+="'net${BASH_REMATCH[1]}=${BASH_REMATCH[2]}' "
+		done < <( echo -n "$vm_config" | grep -Po '({|,)"net\K[0-9]+":"[^"]+' )
+        run_cmd /noexit pve_api_request return_cmd PUT /nodes/${vm_list[$i,node]}/${vm_list[$i,type]}/${vm_list[$i,vmid]}/config "$cmd_line_clear"
+        run_cmd pve_api_request return_cmd PUT /nodes/${vm_list[$i,node]}/${vm_list[$i,type]}/${vm_list[$i,vmid]}/config "$cmd_line"
+        echo_ok "[Твик] Машина ${c_val}${vm_list[$i,name]}${c_null} (${vm_list[$i,vmid]})"
+    done
+    echo_ok "Переприменены настройки активных сетевых интерфейсов ВМ и CT"
+}
+
+
 conf_files=()
 _opt_show_help='Вывод в терминал справки по команде, а так же примененных значений конфигурации и выход'
 opt_show_help=false
@@ -2557,6 +2611,8 @@ opt_dry_run=false
 
 _opt_sel_var='Выбор варианта установки стендов'
 opt_sel_var=0
+
+var_pve_node=$( hostname -s )
 
 # список скачанных файлов
 declare -A list_url_files
