@@ -39,6 +39,9 @@ declare -A config_base=(
     [_run_vm_after_installation]='Запустить виртуальные машины после развертки стендов'
     [run_vm_after_installation]=false
 
+    [_run_ifreload_tweak]='Запустить твик-фикс потери сетевой связности ВМ после перезагрузки сети (для ОС Alt VIRT)'
+    [run_ifreload_tweak]=false
+
     [_create_templates_pool]='Создать шаблонный пул для развертки ВМ'
     [create_templates_pool]=false
 
@@ -389,6 +392,7 @@ function show_help() {
         -vmbr, --wan-bridge [string]$t${config_base[_inet_bridge]}
         -snap, --take-snapshots [boolean]$t${config_base[_take_snapshots]}
         -inst-start-vms, --run-vm-after-installation [boolean]$t${config_base[_run_vm_after_installation]}
+        --run-ifreload-tweak [boolean]$t{config_base[_run_ifreload_tweak]}
         -dir, --mk-tmpfs-dir [boolean]$t${config_base[_mk_tmpfs_imgdir]}
         -norm, --no-clear-tmpfs$t$_opt_rm_tmpfs
         -pn, --pool-name [string]$t${config_base[_pool_name]}
@@ -1324,6 +1328,8 @@ function check_config() {
         create_access_network=$( check_min_version 8 "$data_pve_version" && echo true || echo false )
         check_min_version 8.3 "$data_pve_version" && var_pve_passwd_min=8 || var_pve_passwd_min=5
 
+        data_is_alt_os=$( shopt -s nocasematch; source /etc/os-release && [[ "$NAME" =~ ^alt ]] && echo true || echo false )
+
         return
     }
 
@@ -1850,7 +1856,7 @@ function install_stands() {
     echo_tty "$( show_config )"
     
     ! $silent_mode && read_question 'Хотите изменить параметры?' && {
-        local _exit=false opt_names=( inet_bridge storage pool_name pool_desc take_snapshots run_vm_after_installation access_{create,user_{name,desc,enable},pass_{length,chars},auth_{pve,pam}_desc} dry-run verbose vmnetif_reload_fix)
+        local _exit=false opt_names=( inet_bridge storage pool_name pool_desc take_snapshots run_vm_after_installation access_{create,user_{name,desc,enable},pass_{length,chars},auth_{pve,pam}_desc} dry-run verbose)
         
         while true; do
             echo_tty "$( show_config install-change )"
@@ -1899,6 +1905,7 @@ function install_stands() {
 
     $opt_dry_run && echo_warn '[Предупреждение]: включен режим dry-run. Никакие изменения в конфигурацию/ВМ внесены не будут'
     echo_info "Для выхода из программы нажмите Ctrl-C"
+    ! $opt_dry_run && ! $silent_mode && ! ${config_base[run_ifreload_tweak]} && $data_is_alt_os && read_question '[Alt VIRT] Применить фикс сетевых интерфейсов запущенных ВМ после установки стендов?' && config_base[run_ifreload_tweak]=true
     ! $silent_mode && { read_question 'Начать установку?' || return 0; }
     $silent_mode && { echo_info $'\n'"10 секунд для проверки правильности конфигурации"; sleep 10; }
 
@@ -1935,6 +1942,8 @@ function install_stands() {
         [[ "${config_base[access_auth_pam_desc]}" != '' ]] && run_cmd pve_api_request return_cmd PUT /access/domains/pam "'comment=${config_base[access_auth_pam_desc]}'"
         [[ "${config_base[access_auth_pve_desc]}" != '' ]] && run_cmd pve_api_request return_cmd PUT /access/domains/pve "default=1 'comment=${config_base[access_auth_pve_desc]}'"
     }
+
+    ${config_base[run_ifreload_tweak]} && remaster_vm_netif_tweak $var_pve_node
 
     ${config_base[run_vm_after_installation]} && manage_bulk_vm_power --start-vms
 
@@ -2340,9 +2349,11 @@ function manage_stands() {
         }
 
         $restart_network && {
+            ! ${config_base[run_ifreload_tweak]} && $data_is_alt_os && read_question '[Alt VIRT] Применить фикс сетевых интерфейсов запущенных ВМ?' && config_base[run_ifreload_tweak]=true
             for pve_host in $vm_nodes; do
                 run_cmd "pvesh set '/nodes/$pve_host/network'"
                 echo_ok "Перезагрузка сети хоста ${c_val}$pve_host"
+                ${config_base[run_ifreload_tweak]} && remaster_vm_netif_tweak $pve_host
             done
         }
     fi
@@ -2354,10 +2365,10 @@ function utilities_menu() {
     $opt_dry_run && echo_warn '[Предупреждение]: включен режим dry-run. Никакие изменения в конфигурацию/ВМ внесены не будут'
 
     local -A utilities_menu
-    local i elem switch_action is_alt_os=$( shopt -s nocasematch; source /etc/os-release && [[ "$NAME" =~ ^alt ]] && echo true || echo false )
+    local i elem switch_action 
 
-    utilities_menu[1-create_vmnetwork]='Создание WAN (VM Network) bridge интерфейса для ВМ для выхода в Интернет'
-    ! $is_alt_os && {
+    ${create_access_network} && utilities_menu[1-create_vmnetwork]='Создание WAN (VM Network) bridge интерфейса для ВМ для выхода в Интернет'
+    ! $data_is_alt_os && {
         :
         utilities_menu[2-tweek_no_subscrib_window]='Отключение уведомления об отсутствии Enterprise подписки'
         #utilities_menu[3-manage_aptrepo]='Включение no-subscription репозиториев PVE'
@@ -2563,7 +2574,7 @@ function remaster_vm_netif_tweak() {
     echo_warn 'Переприменение настроек для большого кол-ва ВМ и интерфейсов может занять продолжительное время'
     [[ ! $1 ]] && {
         echo_info 'Этот твик необходим только в случае, если по какии-то причинам в вашей версии PVE случился баг и сетевые интрерфейсы tap потеряли master-прикрепление к своим бриджам после перезагрузки сети или чего-то другого'
-        echo_info "Проверить наличие таких интерфейсов можно командой ${c_val}ip l sh type tun nomaster"
+        echo_info "Проверить наличие таких интерфейсов можно командой ${c_val}ip l sh type tun | grep -Ev master\|ether"
         read_question 'Вы хотите продолжить?' || return 0
     }
     max_count=${vm_list[count]}
@@ -2652,6 +2663,7 @@ while [ $# != 0 ]; do
                 -char|--pass-chars)     check_arg "$2"; config_base[access_pass_chars]="$2"; shift;;
                 -sctl|--silent-control) opt_silent_control=true;;
                 -api|--pve-api-url) check_arg "$2"; config_base[pve_api_url]="$2"; shift;;
+                --run-ifreload-tweak) check_arg "$2"; config_base[run_ifreload_tweak]="$2"; shift;;
                 *) echo_err "Ошибка: некорректный аргумент: '$1'"; opt_show_help=true;;
             esac
             shift;;
