@@ -105,6 +105,7 @@ declare -A config_templates=(
         acpi         = 0
         agent        = 1
         memory       = 1024
+        machine      = pc
         bios         = seabios
         disk_type    = ide
         netifs_type  = vmxnet3
@@ -117,7 +118,6 @@ declare -A config_templates=(
         rng0         = source=/dev/urandom
         disk3        = 0.2
         network_0    = {bridge=inet}
-        boot_disk1   = https://mirror.yandex.ru/altlinux/p10/images/cloud/x86_64/alt-p10-cloud-x86_64.qcow2
     '
 )
 
@@ -134,9 +134,10 @@ declare -A config_stand_1_var=(
     '
     [vm_1]='
         name            = test-vm1
-        description = rewritred описание test-vm1
-        disk_3          = 0.1
-        disk4           = 0.1
+        description     = rewritred описание test-vm1
+        disk_3          = 0.1  
+        disk4           = 0.1 
+        machine         =    pc-q35-8.2|pc-i440fx-9.2   
     	config_template = test
         startup         = order=1,up=5,down=5
         network_0       =   {   bridge=inet   ,  state   =  down  }   
@@ -144,20 +145,23 @@ declare -A config_stand_1_var=(
         network2        =         {      bridge     =      "      🖧: тест  "     , state       =      down     , trunks       =        10;20;30       }          
         network_3       =       {            bridge      =    "         🖧: тест      "        , tags=      10    ,      state             =      down       }      
         network_4       =   🖧: тест  
+        disk_type    =   sata
         iso_1           =  https://mirror.yandex.ru/debian/dists/sid/main/installer-amd64/current/images/netboot/mini.iso
+        boot_iso_1    =      https://mirror.yandex.ru/debian/dists/sid/main/installer-amd64/current/images/netboot/mini.iso
+        boot_disk1      =   https://mirror.yandex.ru/altlinux/p10/images/cloud/x86_64/alt-p10-cloud-x86_64.qcow2
+        disk2           =  https://mirror.yandex.ru/altlinux/p10/images/cloud/x86_64/alt-p10-cloud-x86_64.qcow2
     '
     [vm_2]='
         name            = test-vm2
         os_descr        = test-vm
-        description = rewritred описание test-vm2
+        description     = rewritred описание test-vm2
         disk_3          = 0.1
     	config_template =    test       
         startup         =   order=10,up=10,down=10    
-        machine         =    pc-i440fx-99.99    
+        machine         =    pc-i440fx-99.99|pc-i440fx-9.2   
         network_4       =       🖧: тест      
         network2        =      {     bridge     =   "         🖧: тест        "     ,       vtag      =      100     ,        master         =      inet       }        
-        iso_2           =  /var/lib/vz/template/iso/test.iso
-        iso_5           = /root/test.iso
+        boot_disk1      = https://disk.yandex.ru/d/QlBoJK4gqvWK2w
     '
 )
 
@@ -743,20 +747,19 @@ function del_vmconfig() {
 }
 
 function isurl_check() {
-    [[ "$2" != "yadisk" ]] && local other_proto='?|ftp'
-    [[ $(echo "$1" | grep -Pci '(*UCP)\A(https'$other_proto')://[-[:alnum:]\+&@#/%?=~_|!:,.;]*[-[:alnum:]\+&@#/%=~_|]\Z' ) == 1 ]] && return 0
+    [[ "$2" != "yadisk" ]] && local other_proto='|ftp'
+    [[ $(echo "$1" | grep -Pci '(*UCP)\A(https?'$other_proto')://[-[:alnum:]\+&@#/%?=~_|!:,.;]*[-[:alnum:]\+&@#/%=~_|]\Z' ) == 1 ]] && return 0
     return 1
 }
 
 function get_yadisk_url_info() {
     local -n ref_url="$1"; shift
-    isurl_check "$ref_url" yadisk || { echo_err "Ошибка $FUNCNAME: указанный URL '$ref_url' не является валидным. Выход"; exit_clear; }
-    [[ "$ref_url" =~ ^https\://disk\.yandex\.ru/i/ ]] && { echo_err "Ошибка $FUNCNAME: указанный URL ЯДиска '$ref_url' не является валидным, т.к. файл защищен паролем. Скачивание файлов ЯДиска защищенные паролем на даный момент недоступно. Выход"; exit_clear; }
-    local path=$( echo -n "$ref_url" | grep -Po '.*/d/[^/]*/\K.*' ) \
-        regex='\A[\s\n]*{([^{]*?|({[^}]*}))*\"{opt_name}\"\s*:\s*((\"\K[^\"]*)|\K[0-9]+)' \
-        opt_name='' reply=''
+    [[ "$ref_url" =~ ^(https?://[^/]+/([di])\/[^\/]+)(\/.*)? ]] || { echo_err "Ошибка $FUNCNAME: указанный URL ЯДиска '$ref_url' не является валидным"; exit_clear; }
 
-    reply=$( curl -sGf 'https://cloud-api.yandex.net/v1/disk/public/resources?public_key='"$( echo -n "$ref_url" | grep -Po '.*/[di]/[^/]*' )&path=/$path" ) || {
+    [[ ${BASH_REMATCH[2]} != d ]] && { echo_err "Ошибка $FUNCNAME: указанный URL ЯДиска '$ref_url' не является валидным, т.к. файл защищен паролем. Скачивание файлов ЯДиска защищенные паролем на даный момент недоступно. Выход"; exit_clear; }
+    
+    local opt_name='' reply='' regex='\A[\s\n]*{([^{]*?|({[^}]*}))*\"{opt_name}\"\s*:\s*((\"\K[^\"]*)|\K[0-9]+)'
+    reply=$( curl -sGf 'https://cloud-api.yandex.net/v1/disk/public/resources?public_key='"${BASH_REMATCH[1]}&path=${BASH_REMATCH[3]:-/}" ) || {
         case $? in
             5) echo_err "Ошибка запроса к Яндекс API: на хосте некорректные настройки прокси";;
             6|7|28) echo_err "Ошибка запроса к Яндекс API: не удалось связаться с API. Проверьте подключение к интернету/настройки DNS"$'\n'"Код ошибки curl: $?";;
@@ -772,7 +775,7 @@ function get_yadisk_url_info() {
     ref_url="$( echo -n "$reply" | grep -Poz "${regex/\{opt_name\}/$opt_name}" | sed 's/\x0//g' )"
 
     while [[ "$1" != '' ]]; do
-        [[ "$1" =~ ^([a-zA-Z][0-9a-zA-Z_]{0,32})\=(name|size|antivirus_status|mime_type|sha256|md5)$ ]] || { echo_err "Ошибка $FUNCNAME: некорректый аргумент '$1'"; exit_clear; }
+        [[ "$1" =~ ^([a-zA-Z][0-9a-zA-Z_]{0,32})\=(name|size|antivirus_status|mime_type|sha256|md5|modified|media_type)$ ]] || { echo_err "Ошибка $FUNCNAME: некорректый аргумент '$1'"; exit_clear; }
         local -n ref_var=${BASH_REMATCH[1]}
         ref_var="$( echo "$reply" | grep -Poz "${regex/\{opt_name\}/"${BASH_REMATCH[2]}"}" | sed 's/\x0//g' )"
         [[ "$ref_var" == '' ]] && { echo_err "Ошибка $FUNCNAME: API Я.Диска не вернуло запрашиваемое значение '${BASH_REMATCH[2]}'"; exit_clear; }
@@ -812,7 +815,7 @@ function get_file() {
 
     if isurl_check "$url"; then is_url=true; fi
 
-    if [[ "$url" =~ ^https://disk\.yandex\.ru/ ]]; then
+    if [[ "$url" =~ ^https://(www\.)?(disk\.yandex\.(ru|com|com\.tr|net)|yadi\.sk)/ ]]; then
         get_yadisk_url_info url filesize=size filename=name file_sha256=sha256
         echo_verbose "[YADISK API REQUEST] FILE: ${c_value}$filename${c_null} SIZE: ${c_value}$filesize${c_null} SHA-256: ${c_value}$file_sha256${c_null}"
     elif $is_url; then
@@ -1442,7 +1445,7 @@ function check_config() {
         ! isbool_check "${config_base[$val]}" && { echo_err "Ошибка: значение переменной конфигурации $val должна быть bool и равляться true или false. Выход"; exit_clear; }
     done
     ! isdigit_check "${config_base[access_pass_length]}" 5 20 && { echo_err "Ошибка: значение переменной конфигурации access_pass_length должнно быть числом от $var_pve_passwd_min до 20. Выход"; exit_clear; }
-    [[ "${config_base[access_pass_length]}" -lt $var_pve_passwd_min ]] && { config_base[access_pass_length]=$var_pve_passwd_min; echo_warn "Минимальная длина паролей пользователей установлена на ${c_val}$var_pve_passwd_min${c_warn}. Причина: требование безопасности PVE"; }
+    [[ "${config_base[access_pass_length]}" -lt $var_pve_passwd_min ]] && config_base[access_pass_length]=$var_pve_passwd_min
     isregex_check "[${config_base[access_pass_chars]}]" && deploy_access_passwd test || { echo_err "Ошибка: паттерн regexp '[${config_base[access_pass_chars]}]' для разрешенных символов в пароле некорректен или не захватывает достаточно символов для составления пароля. Выход"; exit_clear; }
 }
 
@@ -1534,9 +1537,10 @@ function deploy_stand_config() {
 
     function set_netif_conf() {
         [[ "$1" == '' || "$2" == '' && "$1" != test ]] && { echo_err 'Ошибка: set_netif_conf нет аргумента'; exit_clear; }
-        [[ "$data_aviable_net_models" == '' ]] && { data_aviable_net_models=$( kvm -net nic,model=help | awk 'NR!=1{if($1=="virtio-net-pci")print "virtio";print $1}' ) || { echo_err "Ошибка: не удалось получить список доступных моделей сетевых устройств"; exit_clear; } }
+        #[[ "$data_aviable_net_models" == '' ]] && { data_aviable_net_models=$( kvm -net nic,model=help | awk 'NR!=1{if($1=="virtio-net-pci")print "virtio";print $1}' ) || { echo_err "Ошибка: не удалось получить список доступных моделей сетевых устройств"; exit_clear; } }
         [[ "$1" == 'test' ]] && { 
-            echo -n "$data_aviable_net_models" | grep -Fxq "$netifs_type" && return 0
+            local data_aviable_net_models=$'e1000\ne1000-82540em\ne1000-82544gc\ne1000-82545em\ne1000e\ni82551\ni82557b\ni82559er\nne2k_isa\nne2k_pci\npcnet\nrtl8139\nvirtio\nvmxnet3'
+            grep -Fxq "$netifs_type" <<<$data_aviable_net_models && return 0
             echo_err "Ошибка: указаный в конфигурации модель сетевого интерфейса '$netifs_type' не является корректным"
             echo_err "Список доступных моделей можно узнать командой ${c_val}kvm -net nic,model=help"
             exit_clear
@@ -1683,7 +1687,7 @@ function deploy_stand_config() {
     function set_disk_conf() {
         [[ "$1" == '' || "$2" == '' && "$1" != test ]] && { echo_err 'Ошибка: set_disk_conf нет аргумента'; exit_clear; }
         [[ "$1" == 'test' ]] && { [[ "$disk_type" =~ ^(ide|sata|scsi|virtio)$ ]] && return 0; echo_err "Ошибка: указаный в конфигурации тип диска '$disk_type' не является корректным [ide|sata|scsi|virtio]"; exit_clear; }
-        [[ ! "$1" =~ ^(boot_|)(disk)_?[0-9]+$|^iso_[0-9]+$ ]] && { echo_err "Ошибка: неизвестный параметр ВМ '$1'" && exit_clear; }
+        [[ ! "$1" =~ ^(boot_|)(disk|iso)_?[0-9]+$ ]] && { echo_err "Ошибка: неизвестный параметр ВМ '$1'" && exit_clear; }
         local _exit=false
         case "$disk_type" in
             ide)    [[ "$disk_num" -lt 4  ]] || _exit=true;;
@@ -1693,20 +1697,27 @@ function deploy_stand_config() {
         esac
         $_exit && { echo_err "Ошибка: невозможно присоедиить больше $disk_num дисков типа '$disk_type' к ВМ '$elem'. Выход"; exit_clear;}
 
-        if [[ ${BASH_REMATCH[2]} ]]; then
+        if [[ ${BASH_REMATCH[2]} == disk ]]; then
             if [[ "${BASH_REMATCH[1]}" != boot_ ]] && [[ "$2" =~ ^([0-9]+(|\.[0-9]+))\ *([gGГг][bBБб]?)?$ ]]; then
                 cmd_line+=" --${disk_type}${disk_num} '${config_base[storage]}:${BASH_REMATCH[1]},format=$config_disk_format'";
             else
+                [[ ${BASH_REMATCH[1]} == boot_ ]] && {
+                    [[ $boot_order ]] && boot_order+=';'
+                    boot_order+="${disk_type}${disk_num}"
+                }
                 local file="$2"
                 get_file file || exit_clear
                 cmd_line+=" --${disk_type}${disk_num} '${config_base[storage]}:0,format=$config_disk_format,import-from=$file'"
-                [[ "$boot_order" != '' ]] && boot_order+=';'
-                boot_order+="${disk_type}${disk_num}"
             fi
         else
+            [[ ${BASH_REMATCH[1]} == boot_ ]] && {
+                [[ $boot_order ]] && boot_order+=';'
+                boot_order+="${disk_type}${disk_num}"
+            }
             local file="$2"
             get_file file '' iso || exit_clear
             cmd_line+=" --${disk_type}${disk_num} '${config_base[iso_storage]}:iso/$file,media=cdrom'"
+
         fi
         ((disk_num++))
     }
@@ -1738,18 +1749,27 @@ function deploy_stand_config() {
     }
 
     function set_machine_type() {
-        [[ "$1" == '' ]] && { echo_err 'Ошибка: set_machine_type нет аргумента'; exit_clear; }
-        local machine_list=$( kvm -machine help | awk 'NR>1{print $1}' )
-        local type=$1
-        if ! echo "$machine_list" | grep -Fxq "$type"; then
+        [[ "$1" == '' ]] && { echo_err "Ошибка: $FUNCNAME нет аргумента"; exit_clear; }
+        [[ ! $data_kvm_machine_list ]] && {
+            if ! pve_api_request data_kvm_machine_list GET /nodes/$var_pve_node/capabilities/qemu/machines; then
+                wcho_warn "Предупреждение: не удалось получить список совместимых machines через API"
+                data_kvm_machine_list=$( set -o pipefail; kvm -machine help | awk 'NR>1&&/q35|i440fx/{print $1}' | sort -Vr ) \
+                    || { echo_err "Ошибка: $FUNCNAME: не удалось получить список поддерживаемых machine"; exit_clear; }
+            else
+                data_kvm_machine_list=$( grep -Po '({|,)\s*"id"\s*:\s*"\K[^"]+|({|,)\s*"type"\s*:\s*"\K[^"]+' <<<$data_kvm_machine_list | sed 's/^i440fx$/pc/' | sort -uVr )
+            fi
+        }
+        local type=${1//./\\.}
+        type=$( grep -Px -m 1 "${type//+/\\+}" <<<$data_kvm_machine_list ) || {
+            type=$1
             if [[ "$type" =~ ^((pc)-i440fx|pc-(q35))-[0-9]+.[0-9]+$ ]]; then
                 type=${BASH_REMATCH[2]:-${BASH_REMATCH[3]}}
-                echo_warn "[Предупреждение]: в конфигурации ВМ '$elem' указанный тип машины '$1' не существует в этой версии PVE/QEMU. Заменен на последнюю доступную версию pc-${type/pc/i440fx}"
+                echo_warn "[Предупреждение]: в конфигурации ВМ '$elem' указанный тип машины '$1' не существует в этой версии PVE/QEMU. Заменен на последнюю доступную версию типа ${type/pc/i440fx}"
             else
                 echo_err "Ошибка: в конфигурации ВМ '$elem' указан неизвестный тип машины '$1'. Ошибка или старая версия PVE?. Выход"
                 exit_clear
             fi
-        fi
+        }
         cmd_line+=" --machine '$type'"
     }
 
@@ -1830,7 +1850,7 @@ function deploy_stand_config() {
                     cmd_line+=" --$opt '${vm_config[$opt]}'";;
                 network*) set_netif_conf "$opt" "${vm_config[$opt]}";;
                 bios) [[ "${vm_config[$opt]}" == ovmf ]] && cmd_line+=" --bios 'ovmf' --efidisk0 '${config_base[storage]}:0,format=$config_disk_format'" || cmd_line+=" --$opt '${vm_config[$opt]}'";;
-                boot_disk*|disk*|iso_*) set_disk_conf "$opt" "${vm_config[$opt]}";;
+                boot_disk*|disk*|iso*|boot_iso*) set_disk_conf "$opt" "${vm_config[$opt]}";;
                 access_role) ${config_base[access_create]} && set_role_config "${vm_config[$opt]}";;
                 machine) set_machine_type "${vm_config[$opt]}";;
                 firewall_opt) continue;;
