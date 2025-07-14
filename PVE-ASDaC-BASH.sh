@@ -108,7 +108,7 @@ declare -A config_templates=(
         bios         = seabios
         disk_type    = ide
         netifs_type  = vmxnet3
-        access_roles = Competitor
+        access_roles = PVEVMAdmin
         description  = test description
         arch         = x86_64
         args         = -no-shutdown
@@ -117,6 +117,7 @@ declare -A config_templates=(
         rng0         = source=/dev/urandom
         disk3        = 0.2
         network_0    = {bridge=inet}
+        boot_disk1   = https://mirror.yandex.ru/altlinux/p10/images/cloud/x86_64/alt-p10-cloud-x86_64.qcow2
     '
 )
 
@@ -135,6 +136,7 @@ declare -A config_stand_1_var=(
         name            = test-vm1
         description = rewritred описание test-vm1
         disk_3          = 0.1
+        disk4           = 0.1
     	config_template = test
         startup         = order=1,up=5,down=5
         network_0       =   {   bridge=inet   ,  state   =  down  }   
@@ -142,18 +144,20 @@ declare -A config_stand_1_var=(
         network2        =         {      bridge     =      "      🖧: тест  "     , state       =      down     , trunks       =        10;20;30       }          
         network_3       =       {            bridge      =    "         🖧: тест      "        , tags=      10    ,      state             =      down       }      
         network_4       =   🖧: тест  
+        iso_1           =  https://mirror.yandex.ru/debian/dists/sid/main/installer-amd64/current/images/netboot/mini.iso
     '
     [vm_2]='
         name            = test-vm2
         os_descr        = test-vm
         description = rewritred описание test-vm2
         disk_3          = 0.1
-        disk4           = 0.1
     	config_template =    test       
         startup         =   order=10,up=10,down=10    
         machine         =    pc-i440fx-99.99    
         network_4       =       🖧: тест      
         network2        =      {     bridge     =   "         🖧: тест        "     ,       vtag      =      100     ,        master         =      inet       }        
+        iso_2           =  /var/lib/vz/template/iso/test.iso
+        iso_5           = /root/test.iso
     '
 )
 
@@ -786,11 +790,12 @@ function get_url_fileinfo() {
         [[ "$1" =~ ^([a-zA-Z][0-9a-zA-Z_]{0,32})\=(name|size|mime_type)$ ]] || { echo_err "Ошибка $FUNCNAME: некорректый аргумент '$1'"; exit_clear; }
         local -n ref_var=${BASH_REMATCH[1]}
         case ${BASH_REMATCH[2]} in
-            name) ref_var=$( grep -ioP '<\s*Content-Disposition\s*:\s*attachment\s*;\s*filename\s*=\s*"?\K[^"]+' <<<$info );;
+            name) ref_var=$( grep -ioP '<\s*Content-Disposition\s*:\s*attachment\s*;\s*filename\s*=\s*"?\K[^"]+' <<<$info )
+                [[ ! $ref_var ]] && { ref_var=$( grep -Po '.*/\K[^?]+' <<<$baseurl ); printf -v ref_var "%b" "${ref_var//\%/\\x}"; } ;;
             size) ref_var=$( grep -ioP '<\s*Content-Range\s*:\s*bytes\s*[\-\d]+\/\K\d+' <<<$info );;
             mime_type) ref_var=$( grep -ioP '<\s*Content-Type\s*:\s*\K[^\s]+' <<<$info );;
         esac
-        [[ "$ref_var" == '' ]] && { echo_err "Ошибка $FUNCNAME: не удалось получить запрашиваемое значение '${BASH_REMATCH[2]}' для файла по URL '$baseurl'"; exit_clear; }
+        [[ ! $ref_var ]] && { echo_err "Ошибка $FUNCNAME: не удалось получить запрашиваемое значение '${BASH_REMATCH[2]}' для файла по URL '$baseurl'"; exit_clear; }
         shift
     done
 }
@@ -803,7 +808,7 @@ function get_file() {
     [[ -v list_url_files[$url] ]] && [[ $2 == iso || -r "${list_url_files[$url]}" ]] && url="${list_url_files[$url]}" && return 0
 
     local base_url=$url is_url=false max_filesize=${2:-5368709120} filesize='' filename='' file_sha256='' file_md5='' force=$( [[ "$3" == force ]] && echo true || echo false )
-    isdigit_check "$max_filesize" || { echo_err "Ошибка get_file max_filesize=$max_filesize не число"; exit_clear; }
+    isdigit_check "$max_filesize" || { echo_err "Ошибка $FUNCNAME: max_filesize=$max_filesize не число"; exit_clear; }
 
     if isurl_check "$url"; then is_url=true; fi
 
@@ -813,15 +818,15 @@ function get_file() {
     elif $is_url; then
         get_url_fileinfo $url filesize=size filename=name
     fi
-    if [[ $2 == iso ]]; then
+    if [[ $3 == iso ]]; then
         [[ ! $sel_iso_storage_path ]] && {
             sel_iso_storage_path=
             pve_api_request sel_iso_storage_path GET /storage/${config_base[iso_storage]}
-            sel_iso_storage_path=$( echo -n "sel_iso_storage_path" | grep -Po '({|,)\s*"path"\s*:\s*"\K[^"]+' )
+            sel_iso_storage_path=$( echo -n "$sel_iso_storage_path" | grep -Po '({|,)\s*"path"\s*:\s*"\K[^"]+' )
         }
         local norm_filename
         if $is_url; then
-            [[ $filesize || $filesize == 0 ]] && { echo_err "Ошибка $FUNCNAME: не удалось получить размер файла ISO: '$url'"; exit_clear; }
+            [[ ! $filesize || $filesize == 0 ]] && { echo_err "Ошибка $FUNCNAME: не удалось получить размер файла ISO: '$url'"; exit_clear; }
             [[ ${#filename} -eq 0 ]] && filename="noname_$filesize.iso"
             norm_filename=$( echo -n "$filename" | sed 's/[^a-zA-Z0-9_.-]/_/g' | grep -Pio '^.*?(?=([-._]pve[-._]asdac([-._]bash)?|).iso$)' )
             norm_filename+='.PVE-ASDaC.iso'
@@ -839,7 +844,7 @@ function get_file() {
         isdigit_check $filesize && [[ "$filesize" -gt 0 ]] && maxfilesize=$filesize || filesize='0'
         if [[ ! $filename ]]; then
             filename="$( mktemp 'ASDaC_noname_downloaded_file.XXXXXXXXXX' -p "${config_base[mk_tmpfs_imgdir]}" )"
-        elif [[ $2 != iso ]]; then
+        elif [[ $3 != iso ]]; then
             filename="${config_base[mk_tmpfs_imgdir]}/$filename"
         fi
         if [[ $filesize -gt $max_filesize ]]; then
@@ -854,7 +859,7 @@ function get_file() {
         [[ -e "$filename" && ! -f "$filename" ]] && { echo_err "Ошибка: Попытка скачать файл в '$filename': этот файловый путь уже используется"; exit_clear; }
         if $opt_force_download || ! { [[ -r "$filename" ]] && [[ "$filesize" == '0' || "$( wc -c "$filename" | awk '{printf $1;exit}' )" == "$filesize" ]] \
         && [[ "$filesize" -gt 102400 || "${#file_sha256}" != 64 || "$( sha256sum "$filename" | awk '{printf $1}' )" == "$file_sha256" ]]; }; then
-            [[ $2 != iso ]] && configure_imgdir add-size $max_filesize
+            [[ $3 != iso ]] && configure_imgdir add-size $max_filesize
             echo_tty "[${c_info}Info${c_null}] Скачивание файла ${c_value}$filename${c_null} Размер: ${c_value}$( echo "$filesize" | awk 'BEGIN{split("Б|КБ|МБ|ГБ|ТБ",x,"|")}{for(i=1;$1>=1024&&i<length(x);i++)$1/=1024;printf("%3.1f %s", $1, x[i]) }' )${c_null} URL: ${c_value}$base_url${c_null}"
             curl --max-filesize $max_filesize -fGL "$url" -o "$filename" || { echo_err "Ошибка скачивания файла ${c_value}$filename${c_err} URL: ${c_value}$url${c_err} curl exit code: $?"; exit_clear; }
             
@@ -864,12 +869,12 @@ function get_file() {
             ### | iconv -f windows-1251 -t utf-8 > $tempfile
         fi
         url="$filename"
-    elif [[ $2 == iso ]]; then
+    elif [[ $3 == iso ]]; then
         filesize=$( wc -c "$url" | awk '{printf $1;exit}' )
         [[ "$filesize" -le 102400 ]] && file_sha256=$( sha256sum "$url" | awk '{printf $1;exit}' )
         if $opt_force_download || ! { [[ -r "$filename" ]] && [[ "$filesize" == '0' || "$( wc -c "$filename" | awk '{printf $1;exit}' )" == "$filesize" ]] \
         && [[ "${#file_sha256}" != 64 || "$( sha256sum "$filename" | awk '{printf $1}' )" == "$file_sha256" ]]; }; then
-            echo_tty "[${c_info}Info${c_null}] Копирование ISO файла ${c_value}$url${c_null} Размер: ${c_value}$( echo "$filesize" | awk 'BEGIN{split("Б|КБ|МБ|ГБ|ТБ",x,"|")}{for(i=1;$1>=1024&&i<length(x);i++)$1/=1024;printf("%3.1f %s", $1, x[i]) }' )${c_null} URL: ${c_value}$base_url${c_null}"
+            echo_tty "[${c_info}Info${c_null}] Копирование ISO файла ${c_value}$url${c_null} в ${c_value}$filename${c_null} Размер: ${c_value}$( echo "$filesize" | awk 'BEGIN{split("Б|КБ|МБ|ГБ|ТБ",x,"|")}{for(i=1;$1>=1024&&i<length(x);i++)$1/=1024;printf("%3.1f %s", $1, x[i]) }' )${c_null}"
             cp -f "$url" "$filename"
         fi
         url=$( grep -Po '.*/\K.*' <<<$filename ) 
@@ -1700,7 +1705,7 @@ function deploy_stand_config() {
             fi
         else
             local file="$2"
-            get_file file iso || exit_clear
+            get_file file '' iso || exit_clear
             cmd_line+=" --${disk_type}${disk_num} '${config_base[iso_storage]}:iso/$file,media=cdrom'"
         fi
         ((disk_num++))
