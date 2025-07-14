@@ -831,7 +831,7 @@ function get_file() {
             norm_filename=$( echo -n "$filename" | sed 's/[^a-zA-Z0-9_.-]/_/g' | grep -Pio '^.*?(?=([-._]pve[-._]asdac([-._]bash)?|).iso$)' )
             norm_filename+='.PVE-ASDaC.iso'
         else
-            norm_filename=$( echo -n "$url" | sed 's/[^a-zA-Z0-9_.-]/_/g' | grep -Pio '.*/\K.*?(?=([-._]pve[-._]asdac([-._]bash)?|).iso$)' )
+            norm_filename=$( echo -n "$url" | sed 's/^.*\///;s/[^a-zA-Z0-9_.-]/_/g' | grep -Pio '^.*?(?=([-._]pve[-._]asdac([-._]bash)?|).iso$)' )
             norm_filename+='.PVE-ASDaC.iso'
             [[ "$url" == $sel_iso_storage_path/template/iso/* ]] && norm_filename=$( echo -n "$url" | grep -Po '.*/\K.*' )
         fi
@@ -877,11 +877,11 @@ function get_file() {
             echo_tty "[${c_info}Info${c_null}] Копирование ISO файла ${c_value}$url${c_null} в ${c_value}$filename${c_null} Размер: ${c_value}$( echo "$filesize" | awk 'BEGIN{split("Б|КБ|МБ|ГБ|ТБ",x,"|")}{for(i=1;$1>=1024&&i<length(x);i++)$1/=1024;printf("%3.1f %s", $1, x[i]) }' )${c_null}"
             cp -f "$url" "$filename"
         fi
-        url=$( grep -Po '.*/\K.*' <<<$filename ) 
     else
         filename=$url
     fi
     [[ -r "$filename" ]] || { echo_err "Ошибка: файл '$filename' должен существовать и быть доступен для чтения"; exit_clear; }
+    [[ $3 == iso ]] && url=$( grep -Po '.*/\K.*' <<<$filename ) 
     list_url_files[base_url]="$url"
 }
 
