@@ -217,7 +217,7 @@ function get_val_print() {
 }
 
 echo_tty() {
-    echo "$@${c_null}" >/dev/tty
+    echo "$*${c_null}" >/dev/tty
 }
 
 echo_2out() {
@@ -462,7 +462,7 @@ function pve_api_request() {
                     return $?
               }
               ! [[ $http_code =~ ^(400|500|501|596)$ ]] && {
-                    echo_err "Ошибка: запрос к API был обработан с ошибкой: ${c_val}${@:2}"
+                    echo_err "Ошибка: запрос к API был обработан с ошибкой: ${c_val}${*:2}"
                     echo_err "API токен: ${c_val}${var_pve_token_id}"
                     echo_err "HTTP код ответа: ${c_val}$http_code"
                     echo_err "Ответ сервера: ${c_val}$( echo -n "$res" | awk 'NF>0{if (n!=1) {printf $0;n=1;next}; printf "\n"$0 }' )"
@@ -471,7 +471,7 @@ function pve_api_request() {
               return $http_code;;
         7|28) echo_err "Ошибка: не удалось подключиться к PVE API. PVE запущен/работает?";;
         2)    echo_err "Ошибка: неизвестная опция curl. Старая версия?";;
-        *)    echo_err "Ошибка: не удалось выполнить запрос к API: ${c_val}${@:2}${c_err}. Токен ${c_val}${var_pve_token_id}${c_err}. Код ошибки curl: ${c_val}$?";;
+        *)    echo_err "Ошибка: не удалось выполнить запрос к API: ${c_val}${*:2}${c_err}. Токен ${c_val}${var_pve_token_id}${c_err}. Код ошибки curl: ${c_val}$?";;
     esac
     configure_api_token clear force
     exit_clear
@@ -576,7 +576,7 @@ function pve_tapi_request() {
 					return $?
 			  }
               ! [[ $http_code =~ ^(500|501|596)$ ]] && {
-                    echo_err "Ошибка: запрос к API (ticket) был обработан с ошибкой: ${c_val}${@:2}"
+                    echo_err "Ошибка: запрос к API (ticket) был обработан с ошибкой: ${c_val}${*:2}"
                     echo_err "API пользователь: ${c_val}$var_pve_ticket_user"
                     echo_err "HTTP код ответа: ${c_val}$http_code"
                     echo_err "Ответ сервера: ${c_val}$ref_result"
@@ -585,7 +585,7 @@ function pve_tapi_request() {
               return $http_code;;
         7|28) echo_err "Не удалось подключиться к PVE API. PVE запущен/работает?";;
         2)    echo_err "Неизвестная опция curl. Старая версия";;
-        *)    echo_err "Ошибка: не удалось выполнить запрос к API (ticket): ${c_val}${@:2}${c_err}. API пользователь: ${c_val}${var_pve_ticket_user}${c_err}. Код ошибки curl: $?"
+        *)    echo_err "Ошибка: не удалось выполнить запрос к API (ticket): ${c_val}${*:2}${c_err}. API пользователь: ${c_val}${var_pve_ticket_user}${c_err}. Код ошибки curl: $?"
     esac
     exit_clear
 }
@@ -808,11 +808,15 @@ function get_file() {
     [[ "$1" == '' ]] && exit_clear
     local -n url="$1"
 
-    [[ -v list_url_files[$url] ]] && [[ $2 == iso || -r "${list_url_files[$url]}" ]] && url="${list_url_files[$url]}" && return 0
+    [[ -v list_url_files[${4:-$url}] ]] && url="${list_url_files[${4:-$url}]}" && return 0
 
     local base_url=$url is_url=false max_filesize=${2:-5368709120} filesize='' filename='' file_sha256='' file_md5='' force=$( [[ "$3" == force ]] && echo true || echo false )
     isdigit_check "$max_filesize" || { echo_err "Ошибка $FUNCNAME: max_filesize=$max_filesize не число"; exit_clear; }
 
+    if [[ $3 == diff ]]; then
+        local diff_base=$url diff_full
+        url=$4
+    fi
     if isurl_check "$url"; then is_url=true; fi
 
     if [[ "$url" =~ ^https://(www\.)?(disk\.yandex\.(ru|com|com\.tr|net)|yadi\.sk)/ ]]; then
@@ -843,6 +847,7 @@ function get_file() {
 
         filename="$sel_iso_storage_path/template/iso/$norm_filename"
     fi
+
     if $is_url; then
         isdigit_check $filesize && [[ "$filesize" -gt 0 ]] && maxfilesize=$filesize || filesize='0'
         if [[ ! $filename ]]; then
@@ -884,7 +889,16 @@ function get_file() {
         filename=$url
     fi
     [[ -r "$filename" ]] || { echo_err "Ошибка: файл '$filename' должен существовать и быть доступен для чтения"; exit_clear; }
-    [[ $3 == iso ]] && url=$( grep -Po '.*/\K.*' <<<$filename ) 
+    [[ $3 == iso ]] && url=$( grep -Po '.*/\K.*' <<<$filename )
+    [[ $3 == diff ]] && {
+        qemu-img rebase -u -b "$diff_base" "$url" || exit_clear
+        [[ ! -v var_tmp_full_img ]] && var_tmp_full_img=()
+        diff_full=$(mktemp -up "${config_base[mk_tmpfs_imgdir]}" "fulldif-XXXX.$url" )
+        var_tmp_full_img+=( "$diff_full" )
+        configure_imgdir add-size "$( wc -c "$diff_base" "$url" | awk 'END{print $1}' )"
+        qemu-img convert -O qcow2 "$url" "$diff_full" || exit_clear
+        url="$diff_full"
+    }
     list_url_files[base_url]="$url"
 }
 
@@ -1196,6 +1210,7 @@ function configure_imgdir() {
         && { echo_err "Ошибка: путь временой директории некоректен: '${config_base[mk_tmpfs_imgdir]}'. Выход"; exit_clear; }
 
     [[ "$1" == 'clear' ]] && {
+        [[ ${#var_tmp_full_img} != 0 ]] && rm -f "${var_tmp_full_img[@]}"
         { ! $opt_rm_tmpfs || $opt_not_tmpfs; } && [[ "$2" != 'force' ]] && return 0
         [[ $( findmnt -T "${config_base[mk_tmpfs_imgdir]}" -o FSTYPE -t tmpfs | wc -l ) != 1 ]] && {
             echo_tty
@@ -1406,6 +1421,7 @@ function check_config() {
         check_min_version 7.2 "$data_pve_version" || { echo_err "Ошибка: версия PVE '$data_pve_version' уже устарела и установка стендов данным скриптом не поддерживается."$'\nМиннимально подерживаемая версия: PVE 7.2'; exit_clear; }
         create_access_network=$( check_min_version 8 "$data_pve_version" && echo true || echo false )
         check_min_version 8.3 "$data_pve_version" && var_pve_passwd_min=8 || var_pve_passwd_min=5
+        check_min_version 8.3.7 "$data_pve_version" && var_pve_import=true || var_pve_import=false
 
         data_is_alt_os=false data_is_alt_virt=false
         local alt_check=$( source /etc/os-release && { [[ $NAME == 'ALT Virtualization' ]] && val=2 || { [[ $ID == 'altlinux' ]] && val=1; }; printf "$val"; }  )
@@ -1500,8 +1516,8 @@ function run_cmd() {
     [[ "$1" == '' ]] && { echo_err 'Ошибка run_cmd: нет команды'; exit_clear; }
 
     if $opt_dry_run; then
-        if ! $opt_verbose && [[ "$1" == pve_api_request || "$1" == pve_tapi_request ]]; then echo_tty "[${c_warning}Выполнение запроса API${c_null}] ${@:3}"
-        else echo_tty "[${c_warning}Выполнение команды${c_null}] $@"; fi
+        if ! $opt_verbose && [[ "$1" == pve_api_request || "$1" == pve_tapi_request ]]; then echo_tty "[${c_warning}Выполнение запроса API${c_null}] ${*:3}"
+        else echo_tty "[${c_warning}Выполнение команды${c_null}] $*"; fi
     else
         
         if [[ "$1" == pve_api_request || "$1" == pve_tapi_request ]]; then
@@ -1515,16 +1531,16 @@ function run_cmd() {
         fi
         if [[ "$code" == 0 ]]; then
             $opt_verbose && {
-                if [[ "$1" == pve_api_request || "$1" == pve_tapi_request ]]; then echo_tty "[${c_ok}Выполнен запрос API${c_null}] ${c_info}${@:3}"
-                else echo_tty "[${c_ok}Выполнена команда${c_null}] ${c_info}$@${c_null}"; fi
+                if [[ "$1" == pve_api_request || "$1" == pve_tapi_request ]]; then echo_tty "[${c_ok}Выполнен запрос API${c_null}] ${c_info}${*:3}"
+                else echo_tty "[${c_ok}Выполнена команда${c_null}] ${c_info}$*${c_null}"; fi
             }
         else
             ! $to_exit && {
-                echo_tty "[${c_warning}Выполнена команда${c_null}] ${c_info}$@${c_null}"
+                echo_tty "[${c_warning}Выполнена команда${c_null}] ${c_info}$*${c_null}"
                 return $code
             }
-            [[ "$1" == pve_api_request || "$1" == pve_tapi_request ]] && echo_tty "[${c_err}Запрос API${c_null}] $3 ${config_base[pve_api_url]}${@:4}"
-            echo_err "Ошибка выполнения команды: $@"
+            [[ "$1" == pve_api_request || "$1" == pve_tapi_request ]] && echo_tty "[${c_err}Запрос API${c_null}] $3 ${config_base[pve_api_url]}${*:4}"
+            echo_err "Ошибка выполнения команды: $*"
             echo_tty "${c_red}Error output: ${c_warning}$return_cmd${c_null}"
             exit_clear
         fi
@@ -1705,9 +1721,17 @@ function deploy_stand_config() {
                     [[ $boot_order ]] && boot_order+=';'
                     boot_order+="${disk_type}${disk_num}"
                 }
-                local file="$2"
+                local file="$2" disk_opts cmd_disk_opts
                 get_file file || exit_clear
-                cmd_line+=" --${disk_type}${disk_num} '${config_base[storage]}:0,format=$config_disk_format,import-from=$file'"
+                if [[ -v vm_config[$1_opt] ]] && false; then
+                    [[ ${vm_config[$1_opt]} =~ ^\{\ *([^{}]*)\ *\}$ ]] || exit_clear
+                    disk_opts=${BASH_REMATCH[1]}
+                    [[ $disk_opts =~ (^|,\ *)diff_img\ *=\ *([^, ]+(\ +[^, ]+|))* ]] && {
+                        get_file file '' diff "${BASH_REMATCH[2]}" || exit_clear
+                    }
+                    [[ $disk_opts =~ (^|,\ *)iothread\ *=\ *1($|\ *,) ]] && cmd_disk_opts+=',iothread=1'
+                fi
+                cmd_line+=" --${disk_type}${disk_num} '${config_base[storage]}:0,format=$config_disk_format$cmd_disk_opts,import-from=$file'"
             fi
         else
             [[ ${BASH_REMATCH[1]} == boot_ ]] && {
@@ -1723,8 +1747,8 @@ function deploy_stand_config() {
     }
 
     function set_role_config() {
-        [[ "$1" == '' ]] && { echo_err 'Ошибка: set_role_config нет аргумента'; exit_clear; }
-        [[ "$1" =~ ^[a-zA-Z0-9\.\-_]+$ ]] || { echo_err "Ошибка: имя роли '$1' некорректное"; exit_clear; }
+        [[ "$1" == '' ]] && { echo_err "Ошибка $FUNCNAME: нет аргумента"; exit_clear; }
+        [[ "$1" =~ ^[a-zA-Z0-9\.\-_]+$ ]] || { echo_err "Ошибка $FUNCNAME: указанное имя роли '$1' некорректное"; exit_clear; }
         local i role role_exists
         role_exists=false
         for ((i=1; i<=$( echo -n "${roles_list[roleid]}" | grep -c \^ ); i++)); do
@@ -1846,14 +1870,14 @@ function deploy_stand_config() {
 
         for opt in $( printf '%s\n' "${!vm_config[@]}" | sort -V ); do
             case "$opt" in
-                startup|tags|ostype|serial0|serial1|serial2|serial3|agent|scsihw|cpu|cores|memory|bwlimit|description|args|arch|vga|kvm|rng0|acpi|tablet|reboot|startdate|tdf|cpulimit|cpuunits|balloon|hotplug)
+                startup|tags|ostype|serial[0-3]|agent|scsihw|cpu|cores|memory|bwlimit|description|args|arch|vga|kvm|rng0|acpi|tablet|reboot|startdate|tdf|cpulimit|cpuunits|balloon|hotplug)
                     cmd_line+=" --$opt '${vm_config[$opt]}'";;
                 network*) set_netif_conf "$opt" "${vm_config[$opt]}";;
                 bios) [[ "${vm_config[$opt]}" == ovmf ]] && cmd_line+=" --bios 'ovmf' --efidisk0 '${config_base[storage]}:0,format=$config_disk_format'" || cmd_line+=" --$opt '${vm_config[$opt]}'";;
-                boot_disk*|disk*|iso*|boot_iso*) set_disk_conf "$opt" "${vm_config[$opt]}";;
+                ?(boot_)@(disk|iso)_+([0-9])) set_disk_conf "$opt" "${vm_config[$opt]}";;
                 access_role) ${config_base[access_create]} && set_role_config "${vm_config[$opt]}";;
                 machine) set_machine_type "${vm_config[$opt]}";;
-                firewall_opt) continue;;
+                firewall_opt|?(boot_)@(disk|iso)_+([0-9])_opt|templ_*) continue;;
                 *) echo_warn "[Предупреждение]: обнаружен неизвестный параметр конфигурации '$opt = ${vm_config[$opt]}' ВМ '$vm_name'. Пропущен"
             esac
         done
@@ -2079,7 +2103,7 @@ function manage_bulk_vm_power() {
 
     [[ "$action" == add ]] && {
         local node="$1"; shift
-        bulk_vms_power_list[$node]+=" $@"
+        bulk_vms_power_list[$node]+=" $*"
         return 0
     }
     
@@ -2596,7 +2620,7 @@ function tweek_no_subscrib_window() {
     
     
     readarray -t js_files < <( dpkg -L proxmox-widget-toolkit pve-manager 2>/dev/null | grep '\.js$' \
-        | xargs -rd'\n' grep -lzZ ',\s*checked_command:\s*function([a-z_]\+)\s*{\s*Proxmox\.Utils\.API2Request(\s*{\s*url:\s*\("\|'\''\)/nodes/localhost/subscription\("\|'\''\)' \
+        | xargs -rd'\n' grep -lzZ ',\s*checked_command:\s*function\s*(\s*\w\+\s*)\s*{\s*Proxmox\.Utils\.API2Request\s*(\s*{\s*url:\s*\("\|'\''\)/nodes/localhost/subscription\("\|'\''\)' \
         | xargs -0ri echo '{}' )
     [[ "${#js_files[@]}" == 0 ]] && { echo_warn "Файлы для изменения не найдены. Твик устарел или уже был применен сторонний твик?"; read_question "Вы хотите продолжить?" || return 0; } \
     || {
@@ -2605,7 +2629,7 @@ function tweek_no_subscrib_window() {
         echo_tty "$( printf ' - %s\n' "${js_files[@]}" )"
         read_question "Вы хотите продолжить?" || return 0
         echo_tty
-        run_cmd "sed -zri.backup 's/(,\s*checked_command:\s*function\((orig_cmd|\w)\)\s*\{)(\s*Proxmox\.Utils\.API2Request\(\s*\{\s*url:\s*(\"|'\'')\/nodes\/localhost\/subscription(\"|'\''),)/\1 console.log(\"[PVE-ASDaC-BASH] tweak running: pve-no-subscribtion-notice\"); \2(); return; \3/'" "${js_files[@]}"
+        run_cmd "sed -zri.backup 's/(,\s*checked_command:\s*function\s*\((\w+)\)\s*\{)(\s*Proxmox\.Utils\.API2Request\s*\(\s*\{\s*url:\s*(\"|'\'')\/nodes\/localhost\/subscription(\"|'\'')\s*,)/\1 console.log(\"[PVE-ASDaC-BASH] tweak running: pve-no-subscribtion-notice\"); \2(); return; \3/'" "${js_files[@]}"
         echo_ok "Готово"
         echo_tty
         ! [[ "$pname" =~ ^task\ UPID: ]] && {
@@ -2635,7 +2659,7 @@ function tweek_no_subscrib_window() {
     [[ -w /etc/apt/apt.conf.d ]] || { echo_err "Каталог конфигураций APT не найден или недостцпен для записи"; return; }
 
     read -r -d '' invoke_cmd <<-'EOF'
-        DPkg::Post-Invoke { "! { dpkg -V proxmox-widget-toolkit 2>/dev/null|grep -q '\.js$'&&dpkg -V pve-manager 2>/dev/null|grep -q '\.js$';}&&{ q=$(echo '\042');dpkg -L proxmox-widget-toolkit pve-manager 2>/dev/null|grep '\.js$'|xargs -rd'\n' grep -lzZ ',\s*checked_command:\s*function([a-z_]\+)\s*{\s*Proxmox\.Utils\.API2Request(\s*{\s*url:\s*\('$q'\|'\''\)/nodes/localhost/subscription\('$q'\|'\''\)'|xargs -0ri sh -c 'echo '\''[PVE-ASDaC-BASH] Removing PVE subscription notification: {}'\'';sed -zri.backup '\''s/(,\s*checked_command:\s*function\((orig_cmd|\w)\)\s*\{)(\s*Proxmox\.Utils\.API2Request\(\s*\{\s*url:\s*('$q'|'\'\\\'\'')\/nodes\/localhost\/subscription('$q'|'\'\\\'\''),)/\1 console.log('\'\\\'\''[PVE-ASDaC-BASH] tweak running: pve-no-subscribtion-notice'\'\\\'\''); \2(); return; \3/'\'' {}';}||:"; }
+        DPkg::Post-Invoke { "! { dpkg -V proxmox-widget-toolkit 2>/dev/null|grep -q '\.js$'&&dpkg -V pve-manager 2>/dev/null|grep -q '\.js$';}&&{ q=$(echo '\042');dpkg -L proxmox-widget-toolkit pve-manager 2>/dev/null|grep '\.js$'|xargs -rd'\n' grep -lzZ ',\s*checked_command:\s*function\s*(\s*\w\+\s*)\s*{\s*Proxmox\.Utils\.API2Request\s*(\s*{\s*url:\s*\('$q'\|'\''\)/nodes/localhost/subscription\('$q'\|'\''\)'|xargs -0ri sh -c 'echo '\''[PVE-ASDaC-BASH] Removing PVE subscription notification: {}'\'';sed -zri.backup '\''s/(,\s*checked_command:\s*function\s*\(\s*(\w+)\s*\)\s*\{)(\s*Proxmox\.Utils\.API2Request\s*\(\s*\{\s*url:\s*('$q'|'\'\\\'\'')\/nodes\/localhost\/subscription('$q'|'\'\\\'\''),)/\1 console.log('\'\\\'\''[PVE-ASDaC-BASH] tweak running: pve-no-subscribtion-notice'\'\\\'\''); \2(); return; \3/'\'' {}';}||:"; }
 EOF
     run_cmd "printf '%s' \"\$invoke_cmd\" > \"$apt_conf\"" || { echo_err "Не удалось создать файл apt конфигурации"; return; }
 
