@@ -136,7 +136,7 @@ declare -A config_stand_2_var=(
         pool_name            = Test_C-{0}
         description          = test descr
         access_user_desc     = Описание учетной записи стенда тестирования функционала #{0}
-		deployment_condition = NET_ACL_SUPPORT = false
+		deployment_condition = PVE > 7.0 || WARNING
     '
     [vm_1]='
         name            = test-vm1
@@ -168,6 +168,7 @@ declare -A config_stand_2_var=(
         network_4       =       🖧: тест      
         network2        =      {     bridge     =   "         🖧: тест        "     ,       vtag      =      100     ,        master         =      inet       }        
         boot_disk1      = https://disk.yandex.ru/d/QlBoJK4gqvWK2w
+        boot_disk1_opt      = { iothread=1 }
     '
 )
 
@@ -706,7 +707,7 @@ function show_config() {
             [[ "$description" == '' ]] && description="Вариант $i (без названия)"
             pool_name="$( get_dict_value "$conf[stand_config]" pool_name )"
             [[ "$pool_name" == "" ]] && pool_name=${config_base[def_pool_name]}
-            description="$pool_name${c_null} : ${c_val}${description//'\n'/$'\n\t'$c_lyellow}${c_null}"
+            description="$pool_name${c_null} : ${c_val}${description//'\n'/$'\n    '$c_lyellow}${c_null}"
             first_elem=true
             num_color='    '
             grep -Fwq "$conf" <<<"${var_warning_configs[@]}" && num_color="${c_err}[!]${c_null} ${c_warn}"
@@ -721,7 +722,7 @@ function show_config() {
 
                 [[ "$vm_name" == '' || "$description" == '' ]] && {
                     vm_template="$( get_dict_value "$conf[$var]" config_template )"
-                    [[ ! -v "config_templates[$vm_template]" ]] && { echo_err "Ошибка: шаблон конфигурации '$vm_template' для ВМ '$var' не найден. Выход"; exit_pid; } 
+                    [[ ! -v "config_templates[$vm_template]" ]] && { echo_err "Ошибка: шаблон конфигурации '$vm_template' для ВМ '$var'${vm_name:+($vm_name)} не найден. Выход"; exit_pid; } 
                     [[ "$vm_name" == '' ]] && vm_name="$( get_dict_value "config_templates[$vm_template]" name )"
                     [[ "$description" == '' ]] && description="$( get_dict_value "config_templates[$vm_template]" os_descr )"
                 }
@@ -822,7 +823,7 @@ function get_file() {
     isdigit_check "$max_filesize" || { echo_err "Ошибка $FUNCNAME: max_filesize=$max_filesize не число"; exit_clear; }
 
     if [[ $3 == diff ]]; then
-        local diff_base=$url diff_full
+        local diff_base=$url diff_full diff_tmp
         url=$4
     fi
     if isurl_check "$url"; then is_url=true; fi
@@ -899,12 +900,15 @@ function get_file() {
     [[ -r "$filename" ]] || { echo_err "Ошибка: файл '$filename' должен существовать и быть доступен для чтения"; exit_clear; }
     [[ $3 == iso ]] && url=$( grep -Po '.*/\K.*' <<<$filename )
     [[ $3 == diff ]] && {
-        qemu-img rebase -u -b "$diff_base" "$url" || exit_clear
-        [[ ! -v var_tmp_full_img ]] && var_tmp_full_img=()
-        diff_full=$(mktemp -up "${config_base[mk_tmpfs_imgdir]}" "fulldif-XXXX.$url" )
-        var_tmp_full_img+=( "$diff_full" )
-        configure_imgdir add-size "$( wc -c "$diff_base" "$url" | awk 'END{print $1}' )"
-        qemu-img convert -O qcow2 "$url" "$diff_full" || exit_clear
+        [[ ! -v var_tmp_img ]] && var_tmp_img=()
+        diff_full=$(mktemp -up "${config_base[mk_tmpfs_imgdir]}" "diff_full-XXXX.$url" )
+        diff_tmp=$(mktemp -up "${config_base[mk_tmpfs_imgdir]}" "diff_tmp-XXXX.$url" )
+        configure_imgdir add-size "$( wc -c "$diff_base" "$url" | awk 'NR==2{n=$0}END{print $1+n}' )"
+        cp "$url" "$diff_tmp"
+        qemu-img rebase -u -b "$diff_base" "$diff_tmp" || exit_clear
+        var_tmp_img+=( "$diff_full" )
+        qemu-img convert -O qcow2 "$diff_tmp" "$diff_full" || exit_clear
+        rm -f $diff_tmp
         url="$diff_full"
     }
     list_url_files[base_url]="$url"
@@ -1072,7 +1076,7 @@ function configure_varnum() {
     echo_tty -n $'\n'"Выбранный вариант инсталляции - ${var}: "
     var="$( get_dict_value "config_stand_${opt_sel_var}_var[stand_config]" description )"
     [[ "$var" == '' ]] && var="Вариант $i (без названия)"
-    echo_tty "${c_value}$var"
+    echo_tty "${c_value}${var%%\\n*}"
 }
 
 function configure_wan_vmbr() {
@@ -1221,7 +1225,7 @@ function configure_imgdir() {
         && { echo_err "Ошибка: путь временой директории некоректен: '${config_base[mk_tmpfs_imgdir]}'. Выход"; exit_clear; }
 
     [[ "$1" == 'clear' ]] && {
-        [[ ${#var_tmp_full_img} != 0 ]] && rm -f "${var_tmp_full_img[@]}"
+        [[ ${#var_tmp_img} != 0 ]] && rm -f "${var_tmp_img[@]}"
         { ! $opt_rm_tmpfs || $opt_not_tmpfs; } && [[ "$2" != 'force' ]] && return 0
         [[ $( findmnt -T "${config_base[mk_tmpfs_imgdir]}" -o FSTYPE -t tmpfs | wc -l ) != 1 ]] && {
             echo_tty
@@ -1705,7 +1709,7 @@ function deploy_stand_config() {
 
         local if_num=${BASH_REMATCH[1]} if_config="$2" if_desc="$2" create_if=false net_options='' master='' iface='' vlan_aware='' vlan_slave='' access_role='' if_mac=''
 
-        if [[ "$if_config" =~ ^\{\ *bridge\ *=\ *([0-9\.a-z]+|\"\ *((\\\"|[^\"])+)\")\ *(,.*)?\}$ ]]; then
+        if [[ "$if_config" =~ ^\{\ *bridge\ *=\ *([0-9\.a-zA-Z]+|\"\ *((\\\"|[^\"])+)\")\ *(,.*)?\}$ ]]; then
             if_bridge="${BASH_REMATCH[1]/\\\"/\"}"
             if_desc=$( echo "${BASH_REMATCH[2]/\\\"/\"}" | sed 's/[[:space:]]*$//' )
             if_config="${BASH_REMATCH[4]}"
@@ -1800,7 +1804,7 @@ function deploy_stand_config() {
                 }
                 local file="$2" disk_opts cmd_disk_opts
                 get_file file || exit_clear
-                if [[ -v vm_config[$1_opt] ]] && false; then
+                if [[ -v vm_config[$1_opt] ]]; then
                     [[ ${vm_config[$1_opt]} =~ ^\{\ *([^{}]*)\ *\}$ ]] || exit_clear
                     disk_opts=${BASH_REMATCH[1]}
                     [[ $disk_opts =~ (^|,\ *)overlay_img\ *=\ *([^, ]+(\ +[^, ]+|))* ]] && {
