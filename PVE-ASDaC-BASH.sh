@@ -7,7 +7,7 @@
 shopt -s extglob
 
 # Необходимые команды для работы скрипта
-script_requirements_cmd=( grep sed awk curl md5sum sha256sum qm pvesh kvm socat )
+script_requirements_cmd=( grep sed awk curl sha256sum qm pvesh qemu-img )
 
 # Приоритет параметров: значения в этом файле -> значения из импортированного файла конфигурации -> переопределенные значения из аргуметов командной строки
 
