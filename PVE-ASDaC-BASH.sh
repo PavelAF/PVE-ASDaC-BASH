@@ -53,7 +53,7 @@ declare -A config_base=(
     [_create_templates_pool]='Создать шаблонный пул для развертки ВМ'
     [create_templates_pool]=false
 
-    [_create_linked_clones]='Создавать ВМ как связанные клоны шаблона'
+    [_create_linked_clones]='[WIP] Создавать ВМ как связанные клоны шаблона'
     [create_linked_clones]=false
 
     [_access_create]='Создавать пользователей, группы, роли для разграничения доступа'
