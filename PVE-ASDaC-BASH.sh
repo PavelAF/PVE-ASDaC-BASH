@@ -823,7 +823,7 @@ function get_file() {
     isdigit_check "$max_filesize" || { echo_err "Ошибка $FUNCNAME: max_filesize=$max_filesize не число"; exit_clear; }
 
     if [[ $3 == diff ]]; then
-        local diff_base=$url diff_full diff_tmp
+        local diff_base=$url diff_full diff_backing
         url=$4
     fi
     if isurl_check "$url"; then is_url=true; fi
@@ -901,14 +901,14 @@ function get_file() {
     [[ $3 == iso ]] && url=$( grep -Po '.*/\K.*' <<<$filename )
     [[ $3 == diff ]] && {
         [[ ! -v var_tmp_img ]] && var_tmp_img=()
-        diff_full=$(mktemp -up "${config_base[mk_tmpfs_imgdir]}" "diff_full-XXXX.$url" )
-        diff_tmp=$(mktemp -up "${config_base[mk_tmpfs_imgdir]}" "diff_tmp-XXXX.$url" )
-        configure_imgdir add-size "$( wc -c "$diff_base" "$url" | awk 'NR==2{n=$0}END{print $1+n}' )"
-        cp "$url" "$diff_tmp"
-        qemu-img rebase -u -b "$diff_base" "$diff_tmp" || exit_clear
+        diff_backing=$( qemu-img info "$url" | grep -Po 'backing file: \K.*'; printf 2 ) || exit_clear
+        diff_backing=${diff_backing::-2}
+        diff_full=$( mktemp -up "${config_base[mk_tmpfs_imgdir]}" "diff_full-XXXX.$url" )
+        configure_imgdir add-size "$( wc -c "$diff_base" "$url" | awk 'END{print $1}' )"
+        qemu-img rebase -u -b "$diff_base" "$url" || exit_clear
         var_tmp_img+=( "$diff_full" )
-        qemu-img convert -O qcow2 "$diff_tmp" "$diff_full" || exit_clear
-        rm -f $diff_tmp
+        qemu-img convert -O qcow2 "$url" "$diff_full" || exit_clear
+        qemu-img rebase -u -b "$diff_backing" "$url" || exit_clear
         url="$diff_full"
     }
     list_url_files[base_url]="$url"
