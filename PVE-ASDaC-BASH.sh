@@ -901,14 +901,14 @@ function get_file() {
     [[ $3 == iso ]] && url=$( grep -Po '.*/\K.*' <<<$filename )
     [[ $3 == diff ]] && {
         [[ ! -v var_tmp_img ]] && var_tmp_img=()
-        diff_backing=$( qemu-img info "$url" | grep -Po 'backing file: \K.*'; printf 2 ) || exit_clear
+        diff_backing=$( qemu-img info "$url" | grep -Po 'backing file: \K.*'; printf 2 ) || { echo_err "Ошибка: диск '$url' не является qcow2 overlay образом"; exit_clear; }
         diff_backing=${diff_backing::-2}
         diff_full=$( mktemp -up "${config_base[mk_tmpfs_imgdir]}" "diff_full-XXXX.$url" )
         configure_imgdir add-size "$( wc -c "$diff_base" "$url" | awk 'END{print $1}' )"
-        qemu-img rebase -u -b "$diff_base" "$url" || exit_clear
+        qemu-img rebase -u -b "$diff_base" "$url" || { echo_err "Ошибка: манипуляция с диском '$url' завершилась с ошибкой. qemu-img rebase exit code: $?"; exit_clear; }
         var_tmp_img+=( "$diff_full" )
-        qemu-img convert -O qcow2 "$url" "$diff_full" || exit_clear
-        qemu-img rebase -u -b "$diff_backing" "$url" || exit_clear
+        qemu-img convert -O qcow2 "$url" "$diff_full" || { echo_err "Ошибка: создание полного образа '$url' завершилось с ошибкой. qemu-img convert exit code: $?"; exit_clear; }
+        qemu-img rebase -u -b "$diff_backing" "$url" || { echo_err "Ошибка: откат манипуляции с диском '$url' завершилось с ошибкой. qemu-img rebase exit code: $?"; exit_clear; }
         url="$diff_full"
     }
     list_url_files[base_url]="$url"
