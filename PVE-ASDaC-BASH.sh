@@ -905,10 +905,10 @@ function get_file() {
         diff_backing=${diff_backing::-2}
         diff_full=$( mktemp -up "${config_base[mk_tmpfs_imgdir]}" "diff_full-XXXX.$url" )
         configure_imgdir add-size "$( wc -c "$diff_base" "$url" | awk 'END{print $1}' )"
-        qemu-img rebase -u -b "$diff_base" "$url" || { echo_err "Ошибка: манипуляция с диском '$url' завершилась с ошибкой. qemu-img rebase exit code: $?"; exit_clear; }
+        qemu-img rebase -u -F qcow2 -b "$diff_base" "$url" || { echo_err "Ошибка: манипуляция с диском '$url' завершилась с ошибкой. qemu-img rebase exit code: $?"; exit_clear; }
         var_tmp_img+=( "$diff_full" )
         qemu-img convert -O qcow2 "$url" "$diff_full" || { echo_err "Ошибка: создание полного образа '$url' завершилось с ошибкой. qemu-img convert exit code: $?"; exit_clear; }
-        qemu-img rebase -u -b "$diff_backing" "$url" || { echo_err "Ошибка: откат манипуляции с диском '$url' завершилось с ошибкой. qemu-img rebase exit code: $?"; exit_clear; }
+        qemu-img rebase -u -F qcow2 -b "$diff_backing" "$url" || { echo_err "Ошибка: откат манипуляции с диском '$url' завершилось с ошибкой. qemu-img rebase exit code: $?"; exit_clear; }
         url="$diff_full"
     }
     list_url_files[base_url]="$url"
@@ -1428,7 +1428,7 @@ function check_condition_expr() {
     compare_expr() {
     ! [[ -v var_deployment_conditions[$1] ]] && { echo_err "Ошибка чтения конфигурации: ${2:+$2->}deployment_condition: неизвестная переменная '$1'"; exit_clear; }
     local a="${!var_deployment_conditions[${1^^}]}" op="$2" b="$3"
-    ! [[ "$op" =~ ^(\!?=|>=?|<=?)$ ]] && { echo_err "Ошибка чтения конфигурации: ${2:+$2->}deployment_condition: некорректный оператор сравнения '$op'"; exit_clear; }
+    ! [[ "$op" =~ ^(==|\!?=|>=?|<=?)$ ]] && { echo_err "Ошибка чтения конфигурации: ${2:+$2->}deployment_condition: некорректный оператор сравнения '$op'"; exit_clear; }
     if [[ "$a" == "$b" ]]; then
         case "$op" in
         !=|\<|\>) return 1 ;;
@@ -1436,7 +1436,7 @@ function check_condition_expr() {
         esac
     else
         case "$op" in
-        =) return 1;;
+        =|==) return 1;;
         !=) return 0;;
         esac
     fi
