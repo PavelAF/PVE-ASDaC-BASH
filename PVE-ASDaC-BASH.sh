@@ -906,7 +906,7 @@ function get_file() {
         local diff_full diff_backing convert_threads convert_compress
         convert_threads=$( lscpu | awk '/^Core\(s\) per socket:/ {cores=$4} /^Socket\(s\):/ {sockets=$2} END{n=cores*sockets;if(n>16) print 16; else print n}' )
         convert_compress=$( awk '/MemAvailable/ {if($2<16000000) {exit 1} }' /proc/meminfo || printf '-c' )
-        [[ ${config_base[convert_full_compress]} ]] && convert_compress='-c'
+        ${config_base[convert_full_compress]} && convert_compress='-c'
         [[ ! -v var_tmp_img ]] && var_tmp_img=()
         diff_backing=$( qemu-img info --output=json "$url" | grep -Po '"backing-filename"\s*:\s*"\K[^"]+'; printf 2 ) || { echo_err "Ошибка: диск '$url' не является qcow2 overlay образом"; exit_clear; }
         diff_backing=${diff_backing::-2}
@@ -919,7 +919,7 @@ function get_file() {
         qemu-img rebase -u -F qcow2 -b "$diff_backing" "$url" || { echo_err "Ошибка: откат манипуляции с диском '$url' завершилось с ошибкой. qemu-img rebase exit code: $?"; exit_clear; }
         url="$diff_full"
     }
-    list_url_files[base_url]="$url"
+    list_url_files[${4:-$base_url}]=$url
 }
 
 function terraform_config_vars() {
