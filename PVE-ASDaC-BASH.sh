@@ -50,7 +50,7 @@ declare -A config_base=(
     [_ignore_deployment_conditions]='Игнорировать проверки требований к хосту для развертки конфигурации'
     [ignore_deployment_conditions]=false
 
-    [_convert_full_compress]='Создавать сжатые версии full образов (для overlay дисков)'
+    [_convert_full_compress]='Создавать сжатые версии full образов (для overlay дисков. Экономит ОЗУ)'
     [convert_full_compress]=false
 
     [_create_templates_pool]='Создать шаблонный пул для развертки ВМ'
@@ -903,17 +903,19 @@ function get_file() {
     [[ -r "$filename" ]] || { echo_err "Ошибка: файл '$filename' должен существовать и быть доступен для чтения"; exit_clear; }
     [[ $3 == iso ]] && url=$( grep -Po '.*/\K.*' <<<$filename )
     [[ $3 == diff ]] && {
-        local diff_full diff_backing convert_threads
+        local diff_full diff_backing convert_threads convert_compress
         convert_threads=$( lscpu | awk '/^Core\(s\) per socket:/ {cores=$4} /^Socket\(s\):/ {sockets=$2} END{n=cores*sockets;if(n>16) print 16; else print n}' )
+        convert_compress=$( awk '/MemAvailable/ {if($2<16000000) {exit 1} }' /proc/meminfo || printf '-c' )
+        [[ ${config_base[convert_full_compress]} ]] && convert_compress='-c'
         [[ ! -v var_tmp_img ]] && var_tmp_img=()
         diff_backing=$( qemu-img info --output=json "$url" | grep -Po '"backing-filename"\s*:\s*"\K[^"]+'; printf 2 ) || { echo_err "Ошибка: диск '$url' не является qcow2 overlay образом"; exit_clear; }
         diff_backing=${diff_backing::-2}
         diff_full=$( mktemp -up "${config_base[mk_tmpfs_imgdir]}" "diff_full-XXXX.${filename##*/}" )
         configure_imgdir add-size "$( wc -c "$diff_base" "$url" | awk 'END{print $1}' )"
-        echo_tty "[${c_info}Info${c_null}] Формирование full образа для ${filename##*/}"
+        echo_tty "[${c_info}Info${c_null}] Формирование full${convert_compress:+(compress)} образа для ${filename##*/}"
         qemu-img rebase -u -F qcow2 -b "$diff_base" "$url" || { echo_err "Ошибка: манипуляция с диском '$url' завершилась с ошибкой. qemu-img rebase exit code: $?"; exit_clear; }
         var_tmp_img+=( "$diff_full" )
-        qemu-img convert -m $convert_threads -O qcow2 "$url" "$diff_full" || { echo_err "Ошибка: создание полного образа '$url' завершилось с ошибкой. qemu-img convert exit code: $?"; exit_clear; }
+        qemu-img convert -m $convert_threads $convert_compress -O qcow2 "$url" "$diff_full" || { echo_err "Ошибка: создание полного образа '$url' завершилось с ошибкой. qemu-img convert exit code: $?"; exit_clear; }
         qemu-img rebase -u -F qcow2 -b "$diff_backing" "$url" || { echo_err "Ошибка: откат манипуляции с диском '$url' завершилось с ошибкой. qemu-img rebase exit code: $?"; exit_clear; }
         url="$diff_full"
     }
@@ -1544,7 +1546,7 @@ function check_config() {
 
     [[ "${config_base[access_auth_pam_desc]}" != '' && "${config_base[access_auth_pam_desc]}" == "${config_base[access_auth_pve_desc]}" ]] && { echo_err 'Ошибка: выводимое имя типов аутентификации не должны быть одинаковыми'; exit_clear; }
 
-    for var in take_snapshots access_create access_user_enable run_vm_after_installation ignore_deployment_conditions create_templates_pool create_linked_clones; do
+    for var in take_snapshots access_create access_user_enable convert_full_compress run_vm_after_installation ignore_deployment_conditions create_templates_pool create_linked_clones; do
         ! isbool_check "${config_base[$var]}" && { echo_err "Ошибка: значение переменной конфигурации $var должна быть bool и равляться true или false. Выход"; exit_clear; }
     done
     ! isdigit_check "${config_base[access_pass_length]}" 5 20 && { echo_err "Ошибка: значение переменной конфигурации access_pass_length должнно быть числом от $var_pve_passwd_min до 20. Выход"; exit_clear; }
