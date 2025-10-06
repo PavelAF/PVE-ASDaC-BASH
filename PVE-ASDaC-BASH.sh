@@ -4,8 +4,10 @@
 
 ############################# -= Встроенная конфигурация =- #############################
 
+shopt -s extglob
+
 # Необходимые команды для работы скрипта
-script_requirements_cmd=( curl qm pvesh qemu-img kvm md5sum sha256sum )
+script_requirements_cmd=( grep sed awk curl sha256sum qm pvesh qemu-img )
 
 # Приоритет параметров: значения в этом файле -> значения из импортированного файла конфигурации -> переопределенные значения из аргуметов командной строки
 
@@ -23,8 +25,11 @@ declare -A config_base=(
     [_mk_tmpfs_imgdir]='Временный раздел tmpfs в ОЗУ для хранения образов ВМ (уничтожается в конце установки)'
     [mk_tmpfs_imgdir]='/root/ASDaC_TMPFS_IMGDIR'
 
-    [_storage]='Хранилище для развертывания дисков ВМ'
+    [_storage]='Хранилище для дисков виртуальных машин'
     [storage]='{auto}'
+
+    [_iso_storage]='Хранилище для образов ISO'
+    [iso_storage]='{auto}'
 
     [_pool_name]='Шаблон имени пула стенда'
     [_def_pool_name]='Шаблон имени пула стенда по умолчанию'
@@ -42,10 +47,16 @@ declare -A config_base=(
     [_run_ifreload_tweak]='Запустить твик-фикс потери сетевой связности ВМ после перезагрузки сети (для ОС Alt VIRT)'
     [run_ifreload_tweak]=false
 
+    [_ignore_deployment_conditions]='Игнорировать проверки требований к хосту для развертки конфигурации'
+    [ignore_deployment_conditions]=false
+
+    [_convert_full_compress]='Создавать сжатые версии full образов (для overlay дисков. Экономит ОЗУ)'
+    [convert_full_compress]=false
+
     [_create_templates_pool]='Создать шаблонный пул для развертки ВМ'
     [create_templates_pool]=false
 
-    [_create_linked_clones]='Создавать ВМ как связанные клоны шаблона'
+    [_create_linked_clones]='[WIP] Создавать ВМ как связанные клоны шаблона'
     [create_linked_clones]=false
 
     [_access_create]='Создавать пользователей, группы, роли для разграничения доступа'
@@ -75,7 +86,7 @@ declare -A config_base=(
 
     [_pool_access_role]='Роль, устанавливаемая для пула по умолчанию'
 
-    [_pve_api_url]='Локальный URL адрес для PVE API, с которым скрипт будет взаимодействовать. Формат: https://%ADDR%:%PORT%/api2/json. НЕ ИЗМЕНЯТЬ ЕСЛИ РАБОТАЕТ!'
+    [_pve_api_url]=$'Локальный URL адрес для PVE API, с которым скрипт будет взаимодействовать.\n\tФормат: https://%ADDR%:%PORT%/api2/json. НЕ ИЗМЕНЯТЬ ЕСЛИ РАБОТАЕТ!'
     [pve_api_url]='https://127.0.0.1:8006/api2/json'
 )
 
@@ -102,10 +113,11 @@ declare -A config_templates=(
         acpi         = 0
         agent        = 1
         memory       = 1024
+        machine      = pc
         bios         = seabios
         disk_type    = ide
         netifs_type  = vmxnet3
-        access_roles = Competitor
+        access_roles = PVEVMAdmin
         description  = test description
         arch         = x86_64
         args         = -no-shutdown
@@ -119,19 +131,22 @@ declare -A config_templates=(
 
 _config_stand_vars='Варианты развертывания стендов'
 
-declare -A config_stand_1_var=(
+declare -A config_stand_2_var=(
     [stand_config]='
-        stands_display_desc = Поле описания служебной группы стендов тестирования функционала
-        pool_desc           = Описание пула стенда тестирования функционала
-        access_user_name    = Test-A{0}
-        pool_name           = Test_C-{0}
-        description         = test descr
-        access_user_desc    = Описание учетной записи стенда тестирования функционала #{0}
+        stands_display_desc  = Поле описания служебной группы стендов тестирования функционала
+        pool_desc            = Описание пула стенда тестирования функционала
+        access_user_name     = Test-A{0}
+        pool_name            = Test_C-{0}
+        description          = test descr
+        access_user_desc     = Описание учетной записи стенда тестирования функционала #{0}
+		deployment_condition = PVE > 7.0 || WARNING
     '
     [vm_1]='
         name            = test-vm1
-        description = rewritred описание test-vm1
-        disk_3          = 0.1
+        description     = rewritred описание test-vm1
+        disk_3          = 0.1  
+        disk4           = 0.1 
+        machine         =    pc-q35-8.2|pc-i440fx-9.2   
     	config_template = test
         startup         = order=1,up=5,down=5
         network_0       =   {   bridge=inet   ,  state   =  down  }   
@@ -139,18 +154,24 @@ declare -A config_stand_1_var=(
         network2        =         {      bridge     =      "      🖧: тест  "     , state       =      down     , trunks       =        10;20;30       }          
         network_3       =       {            bridge      =    "         🖧: тест      "        , tags=      10    ,      state             =      down       }      
         network_4       =   🖧: тест  
+        disk_type    =   sata
+        iso_1           =  https://mirror.yandex.ru/debian/dists/sid/main/installer-amd64/current/images/netboot/mini.iso
+        boot_iso_1    =      https://mirror.yandex.ru/debian/dists/sid/main/installer-amd64/current/images/netboot/mini.iso
+        boot_disk1      =   https://mirror.yandex.ru/altlinux/p10/images/cloud/x86_64/alt-p10-cloud-x86_64.qcow2
+        disk2           =  https://mirror.yandex.ru/altlinux/p10/images/cloud/x86_64/alt-p10-cloud-x86_64.qcow2
     '
     [vm_2]='
         name            = test-vm2
         os_descr        = test-vm
-        description = rewritred описание test-vm2
+        description     = rewritred описание test-vm2
         disk_3          = 0.1
-        disk4           = 0.1
     	config_template =    test       
         startup         =   order=10,up=10,down=10    
-        machine         =    pc-i440fx-99.99    
+        machine         =    pc-i440fx-99.99|pc-i440fx-9.2   
         network_4       =       🖧: тест      
         network2        =      {     bridge     =   "         🖧: тест        "     ,       vtag      =      100     ,        master         =      inet       }        
+        boot_disk1      = https://disk.yandex.ru/d/QlBoJK4gqvWK2w
+        boot_disk1_opt      = { iothread=1 }
     '
 )
 
@@ -192,8 +213,11 @@ c_success=${c_green}
 function get_val_print() {
     [[ "$1" == true ]] && echo "${c_ok}Да${c_null}" && return 0
     [[ "$1" == false ]] && echo "${c_error}Нет${c_null}" && return 0
-    if [[ "$2" == storage ]] && ! [[ "$1" =~ ^\{(manual|auto)\}$ ]] && [[ "$sel_storage_space" != '' ]]; then
-        echo "${c_value}$1${c_null} (свободно $(echo "$sel_storage_space" | awk 'BEGIN{ split("|К|М|Г|Т",x,"|") } { for(i=1;$1>=1024&&i<length(x);i++) $1/=1024; printf("%3.1f %sБ",$1,x[i]) }'))"
+    if [[ "$2" == storage ]] && ! [[ "$1" =~ ^\{(manual|auto)\}$ ]] && [[ $sel_storage_space ]]; then
+        echo "${c_value}$1${c_null} (свободно $( echo "$sel_storage_space" | awk 'BEGIN{ split("|К|М|Г|Т",x,"|") } { for(i=1;$1>=1024&&i<length(x);i++) $1/=1024; printf("%3.1f %sБ",$1,x[i]) }' ))"
+        return 0
+    elif [[ "$2" == iso_storage ]] && ! [[ "$1" =~ ^\{(manual|auto)\}$ ]] && [[ $sel_iso_storage_space ]]; then
+        echo "${c_value}$1${c_null} (свободно $( echo "$sel_iso_storage_space" | awk 'BEGIN{ split("|К|М|Г|Т",x,"|") } { for(i=1;$1>=1024&&i<length(x);i++) $1/=1024; printf("%3.1f %sБ",$1,x[i]) }' ))"
         return 0
     elif [[ "$2" == access_pass_chars ]]; then
         echo "[${c_value}$1${c_null}]"
@@ -328,7 +352,7 @@ function get_numtable_indexOf() {
 }
 
 function check_min_version { 
-	[[ "$(echo $1$'\n'$2 | sort -V )" == $1$'\n'$2 ]] && return 0 || return 1
+	[[ "$(echo $1$'\n'$2 | sort -V )" == "$1"$'\n'"$2" ]] && return 0 || return 1
 }
 
 function get_main_pname() {
@@ -372,6 +396,19 @@ function exit_pid() {
     kill $var_script_pid
 }
 
+function test_connection () {
+    [[ ${#1} == 0 ]] && return 1
+    ( IFS=$'\n'; echo "${var_test_connections[*]}" ) | grep -qFx "$1" && return
+    local http_code
+    http_code=$( curl -sIX GET -w '%{stderr}%{http_code}' --connect-timeout 5 "$1" 2>&1 >/dev/null ) || return
+
+    [[ $http_code != 200 ]] && return $http_code
+
+    [[ -v var_test_connections ]] || declare -ag var_test_connections
+    var_test_connections+=( "$1" )
+}
+
+
 function show_help() {
     local t=$'\t'
     echo
@@ -388,13 +425,16 @@ function show_help() {
         -n, --stand-num [string]$t$_opt_stand_nums
         -var, --set-var-num [int]$t$_opt_sel_var
         -st, --storage [string]$t${config_base[_storage]}
+        -iso, --iso-storage [string]$t${config_base[_iso_storage]}
         -vmid, --start-vm-id [integer]$t${config_base[_start_vmid]}
         -vmbr, --wan-bridge [string]$t${config_base[_inet_bridge]}
         -snap, --take-snapshots [boolean]$t${config_base[_take_snapshots]}
         -inst-start-vms, --run-vm-after-installation [boolean]$t${config_base[_run_vm_after_installation]}
-        --run-ifreload-tweak [boolean]$t{config_base[_run_ifreload_tweak]}
+        --run-ifreload-tweak [boolean]$t${config_base[_run_ifreload_tweak]}
         -dir, --mk-tmpfs-dir [boolean]$t${config_base[_mk_tmpfs_imgdir]}
         -norm, --no-clear-tmpfs$t$_opt_rm_tmpfs
+        --force-re-download$t$_opt_force_download
+        -idc, --ignore-deployment-conditions$t${config_base[_ignore_deployment_conditions]}
         -pn, --pool-name [string]$t${config_base[_pool_name]}
         -acl, --access-create [boolean]$t${config_base[_access_create]}
         -u, --user-name [string]$t${config_base[_access_user_name]}
@@ -403,7 +443,7 @@ function show_help() {
         -si, --silent-install$t$_opt_silent_install
         -c, --config [in-file]${t}Импорт конфигурации из файла или URL
         -z, --clear-vmconfig$t$_opt_zero_vms
-        -api,--pve-api-url$t${config_base[_pve_api_url]}
+        -api, --pve-api-url$t${config_base[_pve_api_url]}
 EOL
 }
 
@@ -433,7 +473,7 @@ function pve_api_request() {
                     return $?
               }
               ! [[ $http_code =~ ^(400|500|501|596)$ ]] && {
-                    echo_err "Ошибка: запрос к API был обработан с ошибкой: ${c_val}${@:2}"
+                    echo_err "Ошибка: запрос к API был обработан с ошибкой: ${c_val}${*:2}"
                     echo_err "API токен: ${c_val}${var_pve_token_id}"
                     echo_err "HTTP код ответа: ${c_val}$http_code"
                     echo_err "Ответ сервера: ${c_val}$( echo -n "$res" | awk 'NF>0{if (n!=1) {printf $0;n=1;next}; printf "\n"$0 }' )"
@@ -442,7 +482,7 @@ function pve_api_request() {
               return $http_code;;
         7|28) echo_err "Ошибка: не удалось подключиться к PVE API. PVE запущен/работает?";;
         2)    echo_err "Ошибка: неизвестная опция curl. Старая версия?";;
-        *)    echo_err "Ошибка: не удалось выполнить запрос к API: ${c_val}${@:2}${c_err}. Токен ${c_val}${var_pve_token_id}${c_err}. Код ошибки curl: ${c_val}$?";;
+        *)    echo_err "Ошибка: не удалось выполнить запрос к API: ${c_val}${*:2}${c_err}. Токен ${c_val}${var_pve_token_id}${c_err}. Код ошибки curl: ${c_val}$?";;
     esac
     configure_api_token clear force
     exit_clear
@@ -471,7 +511,7 @@ function configure_api_token() {
         var_pve_token_id="PVE-ASDaC-BASH_$( cat /proc/sys/kernel/random/uuid )" || { echo_err 'Ошибка: не удалось сгенерировать уникальный идентификатор для API токена'; configure_api_token clear force; exit_clear; }
         local data
 
-        data=$( pvesh create /access/users/root@pam/token/$var_pve_token_id --privsep '0' --comment "Токен скрипта PVE-ASDaC-BASH. Создан: $( date '+%H:%M:%S %d.%m.%Y' )" --expire "$(( $( date +%s ) + 86400 ))" --output-format json ) \
+        data=$( pvesh create /access/users/root@pam/token/$var_pve_token_id --privsep '0' --comment "Токен для PVE-ASDaC-BASH. Создан: $( date '+%H:%M:%S %d.%m.%Y' )" --expire "$(( $( date +%s ) + 86400 ))" --output-format json ) \
             || { echo_err "Ошибка: не удалось создать новый API токен ${c_val}${var_pve_token_id}"; configure_api_token clear force; exit_clear; }
 
         [[ "$data" =~ '"value":"'([^\"]+) ]] && var_pve_api_curl=${BASH_REMATCH[1]}
@@ -547,7 +587,7 @@ function pve_tapi_request() {
 					return $?
 			  }
               ! [[ $http_code =~ ^(500|501|596)$ ]] && {
-                    echo_err "Ошибка: запрос к API (ticket) был обработан с ошибкой: ${c_val}${@:2}"
+                    echo_err "Ошибка: запрос к API (ticket) был обработан с ошибкой: ${c_val}${*:2}"
                     echo_err "API пользователь: ${c_val}$var_pve_ticket_user"
                     echo_err "HTTP код ответа: ${c_val}$http_code"
                     echo_err "Ответ сервера: ${c_val}$ref_result"
@@ -556,7 +596,7 @@ function pve_tapi_request() {
               return $http_code;;
         7|28) echo_err "Не удалось подключиться к PVE API. PVE запущен/работает?";;
         2)    echo_err "Неизвестная опция curl. Старая версия";;
-        *)    echo_err "Ошибка: не удалось выполнить запрос к API (ticket): ${c_val}${@:2}${c_err}. API пользователь: ${c_val}${var_pve_ticket_user}${c_err}. Код ошибки curl: $?"
+        *)    echo_err "Ошибка: не удалось выполнить запрос к API (ticket): ${c_val}${*:2}${c_err}. API пользователь: ${c_val}${var_pve_ticket_user}${c_err}. Код ошибки curl: $?"
     esac
     exit_clear
 }
@@ -569,8 +609,10 @@ function jq_data_to_array() {
 	[[ "$1" =~ ^var=(.+) ]] && data=${!BASH_REMATCH[1]} || pve_api_request data GET "$1"
 	data=$( echo -n "$data" | grep -Po '(?(DEFINE)(?<str>"[^"\\]*(?:\\.[^"\\]*)*")(?<other>null|true|false|[0-9\-\.Ee\+]+)(?<arr>\[[^\[\]]*+(?:(?-1)[^\[\]]*)*+\])(?<obj>{[^{}]*+(?:(?-1)[^{}]*)*+}))(?:^\s*{\s*(?:(?&str)\s*:\s*(?:(?&other)|(?&str)|(?&arr)|(?&obj))\s*,\s*)*?"data"\s*:\s*(?:\[|(?={))|\G\s*,\s*)(?:(?:(?&other)|(?&str)|(?&arr))\s*,\s*)*\K(?>(?&obj)|)(?=\s*(?:\]|})|\s*,[^,])' ) \
         || { echo_err "Ошибка jq_data_to_array: не удалось получить корректные JSON данные от API: ${c_val}GET '$1'"$'\n'"API_DATA: $data"; exit_clear; }
-    [[ "${#data}" == 0 ]] && return 0
-	local -n ref_dict_table=$2
+	
+    local -n ref_dict_table=$2
+    [[ "${#data}" == 0 ]] && { ref_dict_table[count]=0; return 0; }
+
 	while read -r line || [[ -n $line ]]; do
 		while read -r var_line || [[ -n $var_line ]]; do
 			[[ "$var_line" =~ ^\"([^\"\\]*(\\.[^\"\\]*)*)\"\ *:\ *\"?(.*[^\"]|) ]] || { echo_err "Ошибка parse_json: некорректный bash парсинг: ${c_val}'$var_line'"; exit_clear; }
@@ -584,7 +626,6 @@ function jq_data_to_array() {
 
 function make_local_configs() {
     exit 1
-
 }
 
 function show_config() {
@@ -592,7 +633,7 @@ function show_config() {
     [[ "$1" != opt_verbose ]] && echo
     [[ "$1" == install-change ]] && {
             echo $'Список параметров конфигурации:\n   0. Выйти из режима изменения настроек'
-            for var in inet_bridge storage pool_name pool_desc take_snapshots run_vm_after_installation access_create $( ${config_base[access_create]} && echo access_{user_{name,desc,enable},pass_{length,chars},auth_{pve,pam}_desc} ); do
+            for var in inet_bridge storage iso_storage pool_name pool_desc take_snapshots run_vm_after_installation access_create $( ${config_base[access_create]} && echo access_{user_{name,desc,enable},pass_{length,chars},auth_{pve,pam}_desc} ); do
                 printf '%4s' $((++i)); echo ". ${config_base[_$var]:-$var}: $( get_val_print "${config_base[$var]}" "$var" )"
             done
             printf '%4s' $((++i)); echo ". $_opt_dry_run: $( get_val_print $opt_dry_run )"
@@ -642,7 +683,7 @@ function show_config() {
     else
         if [[ "$1" != var ]]; then
             echo $'#>------------------ Основные параметры конфигурации -------------------<#\n'
-            for var in inet_bridge storage $( [[ $opt_sel_var != 0 && "${config_base[pool_name]}" != '' ]] && echo pool_name ) take_snapshots access_create; do
+            for var in inet_bridge storage iso_storage $( [[ $opt_sel_var != 0 && "${config_base[pool_name]}" != '' ]] && echo pool_name ) take_snapshots access_create; do
                 echo "  $((++i)). ${config_base[_$var]:-$var}: $(get_val_print "${config_base[$var]}" "$var" )"
             done
 
@@ -653,38 +694,38 @@ function show_config() {
             fi
         fi
         i=1
-        local first_elem=true no_elem=true pool_name='' vm_name='' vm_template=''
+        local first_elem=true no_elem=true pool_name='' vm_name='' vm_template='' num_color
 
         if [[ $opt_sel_var != 0 ]]; then
-            i=$opt_sel_var
+            i=$( compgen -v | grep -Po '^config_stand_\K[1-9][0-9]{0,3}(?=_var$)' | sort -n  | awk "\$0==$opt_sel_var{print NR;exit}" )
             echo $'\nВыбранный вариант установки стендов:'
             local vars="config_stand_${opt_sel_var}_var"
         else
             echo $'\nВарианты установки стендов:'
-            local vars=$( compgen -v | grep -P '^config_stand_[1-9][0-9]{0,3}_var$' | awk '{if (NR>1) printf " ";printf $0}' )
+            local vars=$( compgen -v | grep -P '^config_stand_[1-9][0-9]{0,3}_var$' | sort -V | awk '{if (NR>1) printf " ";printf $0}' )
         fi
         for conf in $vars; do
             local -n ref_conf="$conf"
-            pool_name=''; description=''
             description="$( get_dict_value "$conf[stand_config]" description )"
             [[ "$description" == '' ]] && description="Вариант $i (без названия)"
             pool_name="$( get_dict_value "$conf[stand_config]" pool_name )"
             [[ "$pool_name" == "" ]] && pool_name=${config_base[def_pool_name]}
-            description="$pool_name : ${c_val}${description//'\n'/$'\n\t'$c_lyellow}${c_null}"
+            description="$pool_name${c_null} : ${c_val}${description//'\n'/$'\n    '$c_lyellow}${c_null}"
             first_elem=true
-            echo -n $'\n  '"$((i++)). $description"$'\n  - ВМ: '
+            num_color='    '
+            grep -Fwq "$conf" <<<"${var_warning_configs[@]}" && num_color="${c_err}[!]${c_null} ${c_warn}"
+            echo -n $'\n'"$num_color$((i++)). $description"$'\n    - ВМ: '
             for var in $( printf '%s\n' "${!ref_conf[@]}" | sort -V ); do
                 [[ "$var" == 'stand_config' ]] && continue
                 $first_elem && first_elem=false
                 no_elem=false
 
-                vm_name=''; description=''
                 vm_name="$( get_dict_value "$conf[$var]" name )"
                 description="$( get_dict_value "$conf[$var]" os_descr )"
 
                 [[ "$vm_name" == '' || "$description" == '' ]] && {
                     vm_template="$( get_dict_value "$conf[$var]" config_template )"
-                    [[ ! -v "config_templates[$vm_template]" ]] && { echo_err "Ошибка: шаблон конфигурации '$vm_template' для ВМ '$var' не найден. Выход"; exit_pid; } 
+                    [[ ! -v "config_templates[$vm_template]" ]] && { echo_err "Ошибка: шаблон конфигурации '$vm_template' для ВМ '$var'${vm_name:+($vm_name)} не найден. Выход"; exit_pid; } 
                     [[ "$vm_name" == '' ]] && vm_name="$( get_dict_value "config_templates[$vm_template]" name )"
                     [[ "$description" == '' ]] && description="$( get_dict_value "config_templates[$vm_template]" os_descr )"
                 }
@@ -711,26 +752,26 @@ function show_config() {
 }
 
 function del_vmconfig() {
-    for conf in $( compgen -v | grep -P '^_?config_stand_[1-9][0-9]{0,3}_var$' | awk '{if (NR>1) printf " ";printf $0}' ); do
+    local conf
+    for conf in $( compgen -v | grep -P '^_?config_stand_[1-9][0-9]{0,3}_var$' | sort -V | awk '{if (NR>1) printf " ";printf $0}' ); do
         unset $conf
     done
 }
 
 function isurl_check() {
-    [[ "$2" != "yadisk" ]] && local other_proto='?|ftp'
-    [[ $(echo "$1" | grep -Pci '(*UCP)\A(https'$other_proto')://[-[:alnum:]\+&@#/%?=~_|!:,.;]*[-[:alnum:]\+&@#/%=~_|]\Z' ) == 1 ]] && return 0
+    [[ "$2" != "yadisk" ]] && local other_proto='|ftp'
+    [[ $(echo "$1" | grep -Pci '(*UCP)\A(https?'$other_proto')://[-[:alnum:]\+&@#/%?=~_|!:,.;]*[-[:alnum:]\+&@#/%=~_|]\Z' ) == 1 ]] && return 0
     return 1
 }
 
-function yadisk_url() {
+function get_yadisk_url_info() {
     local -n ref_url="$1"; shift
-    isurl_check "$ref_url" yadisk || { echo_err "Ошибка yadisk_url: указанный URL '$ref_url' не является валидным. Выход"; exit_clear; }
-    [[ "$ref_url" =~ ^https\://disk\.yandex\.ru/i/ ]] && { echo_err "Ошибка yadisk_url: указанный URL ЯДиска '$ref_url' не является валидным, т.к. файл защищен паролем. Скачивание файлов ЯДиска защищенные паролем на даный момент недоступно. Выход"; exit_clear; }
-    local path=$( echo -n "$ref_url" | grep -Po '.*/d/[^/]*/\K.*' ) \
-        regex='\A[\s\n]*{([^{]*?|({[^}]*}))*\"{opt_name}\"\s*:\s*((\"\K[^\"]*)|\K[0-9]+)' \
-        opt_name='' reply=''
+    [[ "$ref_url" =~ ^(https?://[^/]+/([di])\/[^\/]+)(\/.*)? ]] || { echo_err "Ошибка $FUNCNAME: указанный URL ЯДиска '$ref_url' не является валидным"; exit_clear; }
 
-    reply=$( curl -sGf 'https://cloud-api.yandex.net/v1/disk/public/resources?public_key='"$( echo -n "$ref_url" | grep -Po '.*/[di]/[^/]*' )&path=/$path" ) || {
+    [[ ${BASH_REMATCH[2]} != d ]] && { echo_err "Ошибка $FUNCNAME: указанный URL ЯДиска '$ref_url' не является валидным, т.к. файл защищен паролем. Скачивание файлов ЯДиска защищенные паролем на даный момент недоступно. Выход"; exit_clear; }
+    
+    local opt_name='' reply='' regex='\A[\s\n]*{([^{]*?|({[^}]*}))*\"{opt_name}\"\s*:\s*((\"\K[^\"]*)|\K[0-9]+)'
+    reply=$( curl -sGf 'https://cloud-api.yandex.net/v1/disk/public/resources?public_key='"${BASH_REMATCH[1]}&path=${BASH_REMATCH[3]:-/}" ) || {
         case $? in
             5) echo_err "Ошибка запроса к Яндекс API: на хосте некорректные настройки прокси";;
             6|7|28) echo_err "Ошибка запроса к Яндекс API: не удалось связаться с API. Проверьте подключение к интернету/настройки DNS"$'\n'"Код ошибки curl: $?";;
@@ -746,55 +787,89 @@ function yadisk_url() {
     ref_url="$( echo -n "$reply" | grep -Poz "${regex/\{opt_name\}/$opt_name}" | sed 's/\x0//g' )"
 
     while [[ "$1" != '' ]]; do
-        [[ "$1" =~ ^[a-zA-Z][0-9a-zA-Z_]{0,32}\=(name|size|antivirus_status|mime_type|sha256|md5)$ ]] || { echo_err "Ошибка yadisk_url: некорректый аргумент '$1'"; exit_clear; }
-        opt_name="${1#*=}"
-        local -n ref_var="${1%=*}"
-        ref_var="$( echo "$reply" | grep -Poz "${regex/\{opt_name\}/"$opt_name"}" | sed 's/\x0//g' )"
-        [[ "$ref_var" == '' ]] && { echo_err "Ошибка yadisk_url: API Я.Диска не вернуло запрашиваемое значение '$opt_name'"; exit_clear; }
+        [[ "$1" =~ ^([a-zA-Z][0-9a-zA-Z_]{0,32})\=(name|size|antivirus_status|mime_type|sha256|md5|modified|media_type)$ ]] || { echo_err "Ошибка $FUNCNAME: некорректый аргумент '$1'"; exit_clear; }
+        local -n ref_var=${BASH_REMATCH[1]}
+        ref_var="$( echo "$reply" | grep -Poz "${regex/\{opt_name\}/"${BASH_REMATCH[2]}"}" | sed 's/\x0//g' )"
+        [[ "$ref_var" == '' ]] && { echo_err "Ошибка $FUNCNAME: API Я.Диска не вернуло запрашиваемое значение '${BASH_REMATCH[2]}'"; exit_clear; }
         shift
     done
 }
 
-function get_url_filesize() {
-    isurl_check "$1" || { echo_err "Ошибка get_url_filesize: указанный URL '$1' не является валидным. Выход"; exit_pid; }
-    curl -s -L -f -I "$1" | grep -Poi '^Content-Length: \K[0-9]+(?=\s*$)' || exit_pid
-}
-#TODO
-function get_url_filename() {
-    isurl_check "$1" || { echo_err "Ошибка get_url_filename: указанный URL '$1' не является валидным. Выход"; exit_pid; }
-    curl -L --head -f -w '%{url_effective}' "$1" 2>/dev/null | tail -n1 || exit_pid
+function get_url_fileinfo() {
+    isurl_check "$1" || { echo_err "Ошибка get_url_filesize: указанный URL '$1' не является валидным. Выход"; exit_clear; }
+    local baseurl=$( grep -Po '^[^:]+://[^/]+' <<<$1 ) info
+    info=$( curl -sLv -H "Referer: $baseurl" -H "Sec-Fetch-Dest: document" -H "Range: bytes=0-0" -r 0-0 "$1" 2>&1 >/dev/null ) || exit_clear
+    baseurl=$1
+    shift
+    while [[ $1 ]]; do
+        [[ "$1" =~ ^([a-zA-Z][0-9a-zA-Z_]{0,32})\=(name|size|mime_type)$ ]] || { echo_err "Ошибка $FUNCNAME: некорректый аргумент '$1'"; exit_clear; }
+        local -n ref_var=${BASH_REMATCH[1]}
+        case ${BASH_REMATCH[2]} in
+            name) ref_var=$( grep -ioP '<\s*Content-Disposition\s*:\s*attachment\s*;\s*filename\s*=\s*"?\K[^"]+' <<<$info )
+                [[ ! $ref_var ]] && { ref_var=$( grep -Po '.*/\K[^?]+' <<<$baseurl ); printf -v ref_var "%b" "${ref_var//\%/\\x}"; } ;;
+            size) ref_var=$( grep -ioP '<\s*Content-Range\s*:\s*bytes\s*[\-\d]+\/\K\d+' <<<$info );;
+            mime_type) ref_var=$( grep -ioP '<\s*Content-Type\s*:\s*\K[^\s]+' <<<$info );;
+        esac
+        [[ ! $ref_var ]] && { echo_err "Ошибка $FUNCNAME: не удалось получить запрашиваемое значение '${BASH_REMATCH[2]}' для файла по URL '$baseurl'"; exit_clear; }
+        shift
+    done
 }
 
 function get_file() {
 
     [[ "$1" == '' ]] && exit_clear
-
     local -n url="$1"
-    local base_url="$url" md5=$( echo -n "$url" | md5sum )
-    md5="h${md5::-3}"
 
-    [[ -v list_url_files[$md5] && -r "${list_url_files[$md5]}" ]] && url="${list_url_files[$md5]}" && return 0
+    [[ -v list_url_files[${4:-$url}] ]] && url="${list_url_files[${4:-$url}]}" && return 0
 
-    local max_filesize=${2:-5368709120} filesize='' filename='' file_sha256='' force=$( [[ "$3" == force ]] && echo true || echo false )
-    isdigit_check "$max_filesize" || { echo_err "Ошибка get_file max_filesize=$max_filesize не число"; exit_clear; }
+    local base_url=$url is_url=false max_filesize=${2:-5368709120} filesize='' filename='' file_sha256='' file_md5='' force=$( [[ "$3" == force ]] && echo true || echo false )
+    isdigit_check "$max_filesize" || { echo_err "Ошибка $FUNCNAME: max_filesize=$max_filesize не число"; exit_clear; }
 
-    if [[ "$url" =~ ^https://disk\.yandex\.ru/ ]]; then
-        yadisk_url url filesize=size filename=name file_sha256=sha256
-        echo_verbose "[YADISK API REQUEST] FILE: ${c_value}$filename${c_null} SIZE: ${c_value}$filesize${c_null} SHA-256: ${c_value}$file_sha256${c_null}"
-    elif isurl_check "$url"; then
-        filesize=$( get_url_filesize $url )
-        filename=$( get_url_filename $url )
+    if [[ $3 == diff ]]; then
+        local diff_base=$url
+        url=$4
     fi
-    if isurl_check "$url"; then
-        isdigit_check $filesize && [[ "$filesize" -gt 0 ]] && maxfilesize=$filesize || filesize='0'
-        if [[ "$filename" == '' ]]; then
-            filename="$(mktemp 'ASDaC_noname_downloaded_file.XXXXXXXXXX' -p "${config_base[mk_tmpfs_imgdir]}")"
+    if isurl_check "$url"; then is_url=true; fi
+
+    if [[ "$url" =~ ^https://(www\.)?(disk\.yandex\.(ru|com|com\.tr|net)|yadi\.sk)/ ]]; then
+        get_yadisk_url_info url filesize=size filename=name file_sha256=sha256
+        echo_verbose "[YADISK API REQUEST] FILE: ${c_value}$filename${c_null} SIZE: ${c_value}$filesize${c_null} SHA-256: ${c_value}$file_sha256${c_null}"
+    elif $is_url; then
+        get_url_fileinfo $url filesize=size filename=name
+    fi
+    if [[ $3 == iso ]]; then
+        [[ ! $sel_iso_storage_path ]] && {
+            sel_iso_storage_path=
+            pve_api_request sel_iso_storage_path GET /storage/${config_base[iso_storage]}
+            sel_iso_storage_path=$( echo -n "$sel_iso_storage_path" | grep -Po '({|,)\s*"path"\s*:\s*"\K[^"]+' )
+        }
+        local norm_filename
+        if $is_url; then
+            [[ ! $filesize || $filesize == 0 ]] && { echo_err "Ошибка $FUNCNAME: не удалось получить размер файла ISO: '$url'"; exit_clear; }
+            [[ ${#filename} -eq 0 ]] && filename="noname_$filesize.iso"
+            norm_filename=$( echo -n "$filename" | sed 's/[^a-zA-Z0-9_.-]/_/g' | grep -Pio '^.*?(?=([-._]pve[-._]asdac([-._]bash)?|).iso$)' )
+            norm_filename+='.PVE-ASDaC.iso'
         else
+            norm_filename=$( echo -n "$url" | sed 's/^.*\///;s/[^a-zA-Z0-9_.-]/_/g' | grep -Pio '^.*?(?=([-._]pve[-._]asdac([-._]bash)?|).iso$)' )
+            norm_filename+='.PVE-ASDaC.iso'
+            [[ "$url" == "$sel_iso_storage_path/template/iso/"* ]] && norm_filename=$( echo -n "$url" | grep -Po '.*/\K.*' )
+        fi
+        [[ ${#norm_filename} -eq 0 ]] && { echo_err "Ошибка $FUNCNAME: некорректное имя файла для ISO тип файла: '$filename'"; exit_clear; }
+        [[ ${#norm_filename} -gt 200 ]] && { echo_err "Ошибка $FUNCNAME: имя файла ISO '$filename' больше 200 символов"; exit_clear; }
+
+        filename="$sel_iso_storage_path/template/iso/$norm_filename"
+    fi
+
+    if $is_url; then
+        isdigit_check $filesize && [[ "$filesize" -gt 0 ]] && maxfilesize=$filesize || filesize='0'
+        if [[ ! $filename ]]; then
+            filename="$( mktemp 'ASDaC_noname_downloaded_file.XXXXXXXXXX' -p "${config_base[mk_tmpfs_imgdir]}" )"
+        elif [[ $3 != iso ]]; then
             filename="${config_base[mk_tmpfs_imgdir]}/$filename"
         fi
         if [[ $filesize -gt $max_filesize ]]; then
             if $force && [[ "$filesize" -le $(($filesize+4194304)) ]]; then
-                echo_warn "Предупреждение: загружаемый файл $filename больше разрешенного значения: $((filesize/1024/1024/1024)) ГБ"
+                echo_warn "Предупреждение: загружаемый файл '$filename' больше разрешенного значения: $((filesize/1024/1024/1024)) ГБ"
                 max_filesize=$(($filesize+4194304))
             else
                 echo_err 'Ошибка: загружаемый файл больше разрешенного размера или сервер отправил ответ о неверном размере файла'
@@ -802,23 +877,49 @@ function get_file() {
             fi
         fi
         [[ -e "$filename" && ! -f "$filename" ]] && { echo_err "Ошибка: Попытка скачать файл в '$filename': этот файловый путь уже используется"; exit_clear; }
-        [[ -r "$filename" ]] && [[ "$filesize" == '0' || "$( wc -c "$filename" | awk '{printf $1;exit}' )" == "$filesize" ]] \
-        && [[ "$filesize" -gt 102400 || "${#file_sha256}" == 64 && "$( sha256sum "$filename" | awk '{printf $1}' )" == "$file_sha256" ]] || {
-            configure_imgdir add-size $max_filesize
-            echo_tty "[${c_info}Info${c_null}] Скачивание файла ${c_value}$filename${c_null} Размер: ${c_value}$( echo "$filesize" | awk 'BEGIN{split("Б|КБ|МБ|ГБ|ТБ",x,"|")}{for(i=1;$1>=1024&&i<length(x);i++)$1/=1024;printf("%3.1f %s", $1, x[i]) }' )${c_null} URL: ${c_value}$base_url${c_null}"
+        if $opt_force_download || ! { [[ -r "$filename" ]] && [[ "$filesize" == '0' || "$( wc -c "$filename" | awk '{printf $1;exit}' )" == "$filesize" ]] \
+        && [[ "$filesize" -gt 102400 || "${#file_sha256}" != 64 || "$( sha256sum "$filename" | awk '{printf $1}' )" == "$file_sha256" ]]; }; then
+            [[ $3 != iso ]] && configure_imgdir add-size $max_filesize
+            echo_tty "[${c_info}Info${c_null}] Скачивание файла ${c_value}${filename##*/}${c_null} Размер: ${c_value}$( echo "$filesize" | awk 'BEGIN{split("Б|КБ|МБ|ГБ|ТБ",x,"|")}{for(i=1;$1>=1024&&i<length(x);i++)$1/=1024;printf("%3.1f %s", $1, x[i]) }' )${c_null} URL: ${c_value}${diff_base:-$base_url}${c_null}"
             curl --max-filesize $max_filesize -fGL "$url" -o "$filename" || { echo_err "Ошибка скачивания файла ${c_value}$filename${c_err} URL: ${c_value}$url${c_err} curl exit code: $?"; exit_clear; }
             
             [[ -r "$filename" ]] || { echo_err "Файл $filename недоступен"; exit_clear; }
-            [[ "$filesize" == '0' || "$( wc -c "$filename" | awk '{printf $1;exit}' )" == "$filesize" ]] || { echo_warn "Ошибка скачивания файла ${c_value}$filename${c_err}: размер файла не совпадает со значением, которое отправил сервер. URL: ${c_value}$url${c_err}"$'\n'"Размер скачанного файла: ${c_value}$( wc -c "$filename" | awk '{printf $1;exit}' )${c_err} Ожидалось: ${c_value}$filesize${c_err}"; $filesize=0; }
-            [[ "$filesize" -gt 102400 || "${#file_sha256}" == 64 && "$( sha256sum "$filename" | awk '{printf $1}' )" == "$file_sha256" ]] || { echo_err "Ошибка скачивания файла ${c_value}$filename${c_err}: хеш сумма SHA-256 не совпадает с заявленной. URL: ${c_value}$url${c_err}"$'\n'"Хеш скачанного файла: ${c_value}$( sha256sum "$filename" | awk '{printf $1}' )${c_err} Ожидалось: ${c_value}$file_sha256${c_err}"; exit_clear; }
-            # | iconv -f windows-1251 -t utf-8 > $tempfile
-        }
+            [[ "$filesize" == '0' || "$( wc -c "$filename" | awk '{printf $1;exit}' )" == "$filesize" ]] || { echo_warn "Ошибка скачивания файла ${c_value}$filename${c_err}: размер файла не совпадает со значением, которое отправил сервер. URL: ${c_value}$url${c_err}"$'\n'"Размер скачанного файла: ${c_value}$( wc -c "$filename" | awk '{printf $1;exit}' )${c_err} Ожидалось: ${c_value}$filesize${c_err}"; filesize=0; }
+            [[ "$filesize" -gt 102400 || "${#file_sha256}" != 64 || "$( sha256sum "$filename" | awk '{printf $1}' )" == "$file_sha256" ]] || { echo_err "Ошибка скачивания файла ${c_value}$filename${c_err}: хеш сумма SHA-256 не совпадает с заявленной. URL: ${c_value}$url${c_err}"$'\n'"Хеш скачанного файла: ${c_value}$( sha256sum "$filename" | awk '{printf $1}' )${c_err} Ожидалось: ${c_value}$file_sha256${c_err}"; exit_clear; }
+            ### | iconv -f windows-1251 -t utf-8 > $tempfile
+        fi
         url="$filename"
+    elif [[ $3 == iso ]]; then
+        filesize=$( wc -c "$url" | awk '{printf $1;exit}' )
+        [[ "$filesize" -le 102400 ]] && file_sha256=$( sha256sum "$url" | awk '{printf $1;exit}' )
+        if $opt_force_download || ! { [[ -r "$filename" ]] && [[ "$filesize" == '0' || "$( wc -c "$filename" | awk '{printf $1;exit}' )" == "$filesize" ]] \
+        && [[ "${#file_sha256}" != 64 || "$( sha256sum "$filename" | awk '{printf $1}' )" == "$file_sha256" ]]; }; then
+            echo_tty "[${c_info}Info${c_null}] Копирование ISO файла ${c_value}$url${c_null} в ${c_value}$filename${c_null} Размер: ${c_value}$( echo "$filesize" | awk 'BEGIN{split("Б|КБ|МБ|ГБ|ТБ",x,"|")}{for(i=1;$1>=1024&&i<length(x);i++)$1/=1024;printf("%3.1f %s", $1, x[i]) }' )${c_null}"
+            cp -f "$url" "$filename"
+        fi
     else
         filename=$url
     fi
     [[ -r "$filename" ]] || { echo_err "Ошибка: файл '$filename' должен существовать и быть доступен для чтения"; exit_clear; }
-    list_url_files[$md5]="$url"
+    [[ $3 == iso ]] && url=$( grep -Po '.*/\K.*' <<<$filename )
+    [[ $3 == diff ]] && {
+        local diff_full diff_backing convert_threads convert_compress
+        convert_threads=$( lscpu | awk '/^Core\(s\) per socket:/ {cores=$4} /^Socket\(s\):/ {sockets=$2} END{n=cores*sockets;if(n>16) print 16; else print n}' )
+        convert_compress=$( awk '/MemAvailable/ {if($2<16000000) {exit 1} }' /proc/meminfo || printf '-c' )
+        ${config_base[convert_full_compress]} && convert_compress='-c'
+        [[ ! -v var_tmp_img ]] && var_tmp_img=()
+        diff_backing=$( qemu-img info --output=json "$url" | grep -Po '"backing-filename"\s*:\s*"\K[^"]+'; printf 2 ) || { echo_err "Ошибка: диск '$url' не является qcow2 overlay образом"; exit_clear; }
+        diff_backing=${diff_backing::-2}
+        diff_full=$( mktemp -up "${config_base[mk_tmpfs_imgdir]}" "diff_full-XXXX.${filename##*/}" )
+        configure_imgdir add-size "$( wc -c "$diff_base" "$url" | awk 'END{print $1}' )"
+        echo_tty "[${c_info}Info${c_null}] Формирование full${convert_compress:+(compress)} образа для ${filename##*/}"
+        qemu-img rebase -u -F qcow2 -b "$diff_base" "$url" || { echo_err "Ошибка: манипуляция с диском '$url' завершилась с ошибкой. qemu-img rebase exit code: $?"; exit_clear; }
+        var_tmp_img+=( "$diff_full" )
+        qemu-img convert -m $convert_threads $convert_compress -O qcow2 "$url" "$diff_full" || { echo_err "Ошибка: создание полного образа '$url' завершилось с ошибкой. qemu-img convert exit code: $?"; exit_clear; }
+        qemu-img rebase -u -F qcow2 -b "$diff_backing" "$url" || { echo_err "Ошибка: откат манипуляции с диском '$url' завершилось с ошибкой. qemu-img rebase exit code: $?"; exit_clear; }
+        url="$diff_full"
+    }
+    list_url_files[${4:-$base_url}]=$url
 }
 
 function terraform_config_vars() {
@@ -837,7 +938,7 @@ function terraform_config_vars() {
         [[ "${config_access_roles[$var]}" != '' ]] && config_access_roles[$var]="${config_access_roles[$var]::-1}"
     done
 
-    vars="$(compgen -v | grep -P '^config_(templates|stand_[1-9][0-9]{0,3}_var)$' | awk '{if (NR>1) printf " ";printf $0}')"
+    vars="$(compgen -v | grep -P '^config_(templates|stand_[1-9][0-9]{0,3}_var)$' | sort -V | awk '{if (NR>1) printf " ";printf $0}')"
 
     for conf in $vars; do
         local -n conf_var="$conf"
@@ -908,32 +1009,31 @@ function set_configfile() {
     local file="$1" error=false
     get_file file 655360
 
-    if [[ "$( file -bi "$file" )" == 'text/plain; charset=utf-8' ]]; then
-        source <( sed -r "s/\x1B\[([0-9]{1,3}(;[0-9]{1,2};?)?)?[mGK]//g;s/\r//g" "$file" \
-            | grep -Pzo '(\R|^)\s*config_(((access_roles|templates)\[_?[a-zA-Z0-9][a-zA-Z0-9\_\-\.]+\])|(base\[('$( printf '%q\n' "${!config_base[@]}" | grep -Pv '^_' | awk '{if (NR>1) printf "|";printf $0}' )')\]))=(([^\ "'\'']|\\["'\''\ ])*|(['\''][^'\'']*['\'']))(?=\s*($|\R))' | sed 's/\x0//g' ) \
-        || { echo_err 'Ошибка при импорте файла конфигурации. Выход'; exit 1; }
-
-        start_var=$(compgen -v | grep -Po '^config_stand_\K[1-9][0-9]{0,3}(?=_var$)' | awk 'BEGIN{max=0}{if ($1>max) max=$1}END{print max}')
-
-        source <(
-            i=$start_var
-            arr=()
-            sed -r "s/\x1B\[([0-9]{1,3}(;[0-9]{1,2};?)?)?[mGK]//g;s/\r//g" "$file" \
-                | grep -Pzo '(\R|^)\s*_?config_stand_[1-9][0-9]{0,3}_var(\[([\w\d]+(|(\.|-+)(?=[\w\d])))+\]|)='\''[^'\'']*'\''(?=\s*($|\R))' \
-                | sed 's/\x0//g' | cat - <(echo) \
-                | while IFS= read -r line; do
-                if [[ "$line" =~ ((\R|^)_?config_stand_)([1-9][0-9]*)(.*) ]]; then
-                    num=${BASH_REMATCH[3]}
-                    [[ ! ${arr[num]+1} ]] && arr[num]=$((++i)) && echo "declare -A -g config_stand_${i}_var";
-                    echo "${BASH_REMATCH[1]}${arr[num]}${BASH_REMATCH[4]}"
-                else echo "$line"
-                fi
-                done
-        )
-    else
+    if [[ "$( file -bi "$file" )" != 'text/plain; charset=utf-8' ]]; then
         echo_err 'Ошибка: файл должен иметь тип "file=text/plain; charset=utf-8"'
         exit 1
     fi
+    source <( sed -r "s/\x1B\[([0-9]{1,3}(;[0-9]{1,2};?)?)?[mGK]//g;s/\r$//;s/\r/\n/g" "$file" \
+        | grep -Pzo '(\R|^)\s*config_(((access_roles|templates)\[_?[a-zA-Z0-9][a-zA-Z0-9\_\-\.]+\])|(base\[('$( printf '%q\n' "${!config_base[@]}" | grep -Pv '^_' | awk '{if (NR>1) printf "|";printf $0}' )')\]))=(([^\ "'\'']|\\["'\''\ ])*|(['\''][^'\'']*['\'']))(?=\s*($|\R))' | sed 's/\x0//g' ) \
+    || { echo_err 'Ошибка при импорте файла конфигурации. Выход'; exit 1; }
+
+    start_var=$(compgen -v | grep -Po '^config_stand_\K[1-9][0-9]{0,3}(?=_var$)' | sort -n | awk 'BEGIN{max=0}{if ($1>max) max=$1}END{print max}')
+
+    source <(
+        i=$start_var
+        arr=()
+        sed -r "s/\x1B\[([0-9]{1,3}(;[0-9]{1,2};?)?)?[mGK]//g;s/\r//g" "$file" \
+            | grep -Pzo '(\R|^)\s*_?config_stand_[1-9][0-9]{0,3}_var(\[([\w\d]+(|(\.|-+)(?=[\w\d])))+\]|)='\''[^'\'']*'\''(?=\s*($|\R))' \
+            | sed 's/\x0//g' | cat - <(echo) \
+            | while IFS= read -r line; do
+            if [[ "$line" =~ ((\R|^)_?config_stand_)([1-9][0-9]*)(.*) ]]; then
+                num=${BASH_REMATCH[3]}
+                [[ ! ${arr[num]+1} ]] && arr[num]=$((++i)) && echo "declare -A -g config_stand_${i}_var";
+                echo "${BASH_REMATCH[1]}${arr[num]}${BASH_REMATCH[4]}"
+            else echo "$line"
+            fi
+            done
+    )
 }
 
 function set_standnum() {
@@ -957,8 +1057,12 @@ function configure_standnum() {
 }
 
 function set_varnum() {
-    isdigit_check "$1" && [[ "$1" -ge 1 ]] && isdict_var_check "config_stand_$1_var" && opt_sel_var=$1 && return 0
-    echo_err 'Ошибка: номер варианта развертки должен быть числом и больше 0 и такой вариант должен существовать. Возможна некорректная конфигурация этого варианта развертывания. Выход'; exit_clear;
+    isdigit_check "$1" && [[ "$1" -ge 1 ]] && {
+        local conf
+        conf=$( compgen -v | grep -Po '^config_stand_\K[1-9][0-9]{0,3}(?=_var$)' | sort -n | awk "NR==$1{print;exit}" )
+        [[ $conf ]] && isdict_var_check "config_stand_${conf}_var" && opt_sel_var=$conf && return 0
+    }
+    echo_err 'Ошибка: номер варианта развертки должен быть числом и больше 0 и такой вариант должен существовать. Возможна некорректная конфигурация этого варианта развертывания или ошибка скрипта. Выход'; exit_clear;
 }
 
 function configure_varnum() {
@@ -968,7 +1072,7 @@ function configure_varnum() {
     [[ $count == 0 ]] && { echo_info $'\n'"Варианты конфигураций развертывания не найдены"$'\n'; return 1; }
 
     [[ "$is_show_config" == 'false' ]] && { is_show_config=true; echo_2out "$( show_config var )"; }
-    local var=0
+    local var=0 i
     if [[ $count -gt 1 ]]; then
         echo_tty
         var=$( read_question_select 'Вариант развертывания стендов' '^[0-9]+$' 1 $( compgen -v | grep -P '^config_stand_[1-9][0-9]{0,3}_var$' | wc -l ) '' 2 )
@@ -976,11 +1080,11 @@ function configure_varnum() {
     else var=1
     fi
     set_varnum $var
-
+    i=$var
     echo_tty -n $'\n'"Выбранный вариант инсталляции - ${var}: "
-    var="$( get_dict_value "config_stand_${var}_var[stand_config]" description )"
+    var="$( get_dict_value "config_stand_${opt_sel_var}_var[stand_config]" description )"
     [[ "$var" == '' ]] && var="Вариант $i (без названия)"
-    echo_tty "${c_value}$var"
+    echo_tty "${c_value}${var%%\\n*}"
 }
 
 function configure_wan_vmbr() {
@@ -1129,6 +1233,7 @@ function configure_imgdir() {
         && { echo_err "Ошибка: путь временой директории некоректен: '${config_base[mk_tmpfs_imgdir]}'. Выход"; exit_clear; }
 
     [[ "$1" == 'clear' ]] && {
+        [[ ${#var_tmp_img} != 0 ]] && rm -f "${var_tmp_img[@]}"
         { ! $opt_rm_tmpfs || $opt_not_tmpfs; } && [[ "$2" != 'force' ]] && return 0
         [[ $( findmnt -T "${config_base[mk_tmpfs_imgdir]}" -o FSTYPE -t tmpfs | wc -l ) != 1 ]] && {
             echo_tty
@@ -1139,8 +1244,8 @@ function configure_imgdir() {
     }
 
     if [[ "$1" == 'check-only' ]]; then
-        awk '/MemAvailable/ {if($2<8388608) {exit 1} }' /proc/meminfo || \
-            { echo_err $'Ошибка: Недостаточно свободной оперативной памяти!\nДля развертывания стенда необходимо как минимум 8 ГБ свободоной ОЗУ'; exit_clear; }
+        awk '/MemAvailable/ {if($2<6291456) {exit 1} }' /proc/meminfo || \
+            { echo_err $'Ошибка: Недостаточно свободной оперативной памяти!\nДля развертывания стенда необходимо как минимум 6 ГБ свободоной ОЗУ'; exit_clear; }
         return 0
     fi
 
@@ -1151,7 +1256,7 @@ function configure_imgdir() {
 
     if [[ "$1" == add-size ]]; then
         isdigit_check "$2" || { echo_err "Ошибка: "; exit_clear; }
-        awk -v size=$((($2+8388608)/1024)) '/MemAvailable/ {if($2<size) {exit 1} }' /proc/meminfo || \
+        awk -v size=$((($2+6291456)/1024)) '/MemAvailable/ {if($2<size) {exit 1} }' /proc/meminfo || \
             { echo_err $'Ошибка: Недостаточно свободной оперативной памяти!\nДля развертывания стенда необходимо как минимум '$((size/1024/1024))' ГБ свободоной ОЗУ'; exit_clear; }
         local size="$( df | awk -v dev="${config_base[mk_tmpfs_imgdir]}" '$6==dev{print $3}' )"
         isdigit_check "$size" || { echo_err "Ошибка: 1 \$size=$size"; exit_clear; }
@@ -1164,7 +1269,7 @@ function check_name() {
     local -n ref_var="$1"
 
     if [[ "$ref_var" =~ ^[\-0-9a-zA-Z\_\.]+(\{0\})?[\-0-9a-zA-Z\_\.]*$ ]] \
-        && [[ "$( echo -n "$ref_var" | wc -m)" -ge 4 && "$(echo -n "$ref_var" | wc -m )" -le 32 ]]; then
+        && [[ "$( echo -n "$ref_var" | wc -m)" -ge 4 && "$(echo -n "$ref_var" | wc -m )" -le 64 ]]; then
         [[ ! "$ref_var" =~ \{0\} ]] && ref_var+='{0}'
         return 0
     else
@@ -1241,49 +1346,61 @@ function descr_string_check() {
 
 
 function configure_storage() {
-    [[ "$1" == check-only ]] && [[ "${config_base[storage]}" == '{auto}' || "${config_base[storage]}" == '{manual}' ]] && return 0
+    [[ "$1" == check-only ]] && [[ "${config_base[storage]}" == '{auto}' || "${config_base[storage]}" == '{manual}' ]]  \
+        && [[ "${config_base[iso_storage]}" == '{auto}' || "${config_base[iso_storage]}" == '{manual}' ]] && return 0
     set_storage() {
             echo $'\nСписок доступных хранилищ:'
             echo "$data_pve_storage_list" | awk -F $'\t' 'BEGIN{split("|К|М|Г|Т",x,"|")}{for(i=1;$3>=1024&&i<length(x);i++)$3/=1024;printf("%s\t%s\t%s\t%3.1f %sБ\n",NR,$1,$2,$3,x[i]) }' \
             | column -t -s$'\t' -N'Номер,Имя хранилища,Тип хранилища,Свободное место' -o$'\t' -R1
-            config_base[storage]=$( read_question_select 'Выберите номер хранилища'  '^[1-9][0-9]*$' 1 $( echo "$data_pve_storage_list" | wc -l ) )
-            config_base[storage]=$( echo "$data_pve_storage_list" | awk -F $'\t' -v nr="${config_base[storage]}" 'NR==nr{print $1}' )
+            config_base[$content_config]=$( read_question_select 'Выберите номер хранилища'  '^[1-9][0-9]*$' 1 $( echo "$data_pve_storage_list" | wc -l ) )
+            config_base[$content_config]=$( echo "$data_pve_storage_list" | awk -F $'\t' -v nr="${config_base[$content_config]}" 'NR==nr{print $1}' )
     }
 	
-	declare -gA data_pve_node_storages=()
-	data_pve_storage_list=''
-    jq_data_to_array "/nodes/$var_pve_node/storage?enabled=1&content=images" data_pve_node_storages
-    [[ "${data_pve_node_storages[0,storage]}" == '' || "${data_pve_node_storages[0,avail]}" == '' ]] && { echo_err 'Ошибка: не найдено ни одного активного PVE хранилища для дисков ВМ. Выход'; exit_clear; }
+	declare -Ag data_pve_node_storages=()
+    local data_pve_storage_list='' content_types='images iso' content_config max_index i
+    jq_data_to_array "/nodes/$var_pve_node/storage?enabled=1&content=${content_types// /'%20'}" data_pve_node_storages
+    [[ $1 == iso || $1 == images ]] && content_types=$1
+    
+    for content_storage in $content_types; do
+        if [[ $content_storage == images ]]; then content_config='storage'; else content_config='iso_storage'; fi
 
-	local max_index i
-	max_index=${data_pve_node_storages[count]}
-	for ((i=0;i<$max_index;i++)); do
-		data_pve_storage_list+=${data_pve_node_storages[$i,storage]}$'\t'${data_pve_node_storages[$i,type]}$'\t'${data_pve_node_storages[$i,avail]}$'\n'
-    done
+        [[ "${data_pve_node_storages[0,storage]}" == '' || "${data_pve_node_storages[0,avail]}" == '' ]] && { echo_err 'Ошибка: не найдено ни одного подходящего PVE хранилища. Выход'; exit_clear; }
 
-    data_pve_storage_list=$( echo -n "$data_pve_storage_list" | sort -t $'\t' -k3nr )
+        max_index=${data_pve_node_storages[count]}
+        data_pve_storage_list=''
+        for ((i=0;i<$max_index;i++)); do
+            [[ ${data_pve_node_storages[$i,active]} != 1 || ! ${data_pve_node_storages[$i,content]} =~ (^|,)"$content_storage"(,|$) ]] && continue
+            data_pve_storage_list+=${data_pve_node_storages[$i,storage]}$'\t'${data_pve_node_storages[$i,type]}$'\t'${data_pve_node_storages[$i,avail]}$'\n'
+        done
+        [[ ${#data_pve_storage_list} -eq 0 ]] && { echo_err "Ошибка: не найдено ни одного подходящего PVE хранилища для контента типа '$content_storage'. Выход"; exit_clear; }
 
-    if [[ "$1" != check-only ]]; then
-        if [[ "${config_base[storage]}" == '{manual}' ]]; then
-            $silent_mode && config_base[storage]='{auto}' || set_storage
+        data_pve_storage_list=$( echo -n "$data_pve_storage_list" | sort -t $'\t' -k3nr )
+
+        if [[ "$1" != check-only ]]; then
+            if [[ "${config_base[$content_config]}" == '{manual}' ]]; then
+                $silent_mode && config_base[$content_config]='{auto}' || set_storage
+            fi
+            [[ "${config_base[$content_config]}" == '{auto}' ]] && config_base[$content_config]=$( echo -n "$data_pve_storage_list" | awk -F $'\t' 'NR==1{print $1;exit}' )
         fi
-        [[ "${config_base[storage]}" == '{auto}' ]] && config_base[storage]=$(echo "$data_pve_storage_list" | awk -F $'\t' 'NR==1{print $1;exit}')
-    fi
 
-    if ! [[ "${config_base[storage]}" =~ ^\{(auto|manual)\}$ ]]; then
-        local index
-        index=$( get_numtable_indexOf data_pve_node_storages "storage=${config_base[storage]}" ) 
-
-        sel_storage_type=${data_pve_node_storages[$index,type]}
-        sel_storage_space=${data_pve_node_storages[$index,avail]}
-        
-        [[ "$sel_storage_type" == '' || "$sel_storage_space" == '' ]] && { echo_err "Ошибка: выбранное имя хранилища \"${config_base[storage]}\" не существует. Выход"; exit_clear; }
-        case $sel_storage_type in
-            dir|glusterfs|cifs|nfs|btrfs) config_disk_format=qcow2;;
-            rbd|iscsidirect|iscsi|zfs|zfspool|lvmthin|lvm) config_disk_format=raw;;
-            *) echo_err "Ошибка: тип хранилища '$sel_storage_type' неизвестен. Ошибка скрипта или более новая версия PVE? Выход"; exit_clear;;
-        esac
-    fi
+        if ! [[ "${config_base[$content_config]}" =~ ^\{(auto|manual)\}$ ]]; then
+            local index
+            index=$( get_numtable_indexOf data_pve_node_storages "storage=${config_base[$content_config]}" )
+            if [[ $content_storage == images ]]; then
+                sel_storage_type=${data_pve_node_storages[$index,type]}
+                sel_storage_space=${data_pve_node_storages[$index,avail]}
+                
+                [[ "$sel_storage_type" == '' || "$sel_storage_space" == '' ]] && { echo_err "Ошибка: выбранное имя хранилища \"${config_base[$content_config]}\" не существует. Выход"; exit_clear; }
+                case $sel_storage_type in
+                    dir|glusterfs|cifs|nfs|btrfs) config_disk_format=qcow2;;
+                    rbd|iscsidirect|iscsi|zfs|zfspool|lvmthin|lvm) config_disk_format=raw;;
+                    *) echo_err "Ошибка: тип хранилища '$sel_storage_type' неизвестен. Ошибка скрипта или более новая версия PVE? Выход"; exit_clear;;
+                esac
+            else
+                sel_iso_storage_space=${data_pve_node_storages[$index,avail]}
+            fi
+        fi
+    done
 }
 
 #_configure_roles='Проверка валидности списка access ролей (привилегий) Proxmox-а'
@@ -1304,6 +1421,71 @@ function configure_roles() {
     done
 }
 
+declare -Ag var_deployment_conditions=(
+  [PVE]=data_pve_version
+  [IS_ALT_OS]=data_is_alt_os
+  [NET_ACL_SUPPORT]=create_access_network
+)
+
+function check_condition_expr() {
+    ! [[ $1 ]] && return
+    local warning_flag=0 result=1 cmd_expr=$1 cmd
+
+    grep -Pq '(?(DEFINE)(?<var>[A-Z][A-Z.\_\-0-9]*[A-Z0-9])(?<comp>!?=|(?:<|>)=?)(?<value>([^"\\\s]+|"[^"\\]*(?:\\.[^"\\]*)*"))(?<op>&&|\|\|)(?<cmd>WARNING|(?&var)\s*(?&comp)\s*(?&value))(?<block>(?>(?&cmd)\s*(?>(?&op)\s*(?>(?&block)|\(\s*(?&block)\s*\))|))))^(?<s>\()?\s*(?&block)(?(s)\s*\)|)\s*$' <<<"$cmd_expr" || { echo_err "Ошибка чтения конфигурации: ${2:+$2->}deployment_condition: недействительное условие '$cmd_expr'"; exit_clear; }
+
+    compare_expr() {
+    ! [[ -v var_deployment_conditions[$1] ]] && { echo_err "Ошибка чтения конфигурации: ${2:+$2->}deployment_condition: неизвестная переменная '$1'"; exit_clear; }
+    local a="${!var_deployment_conditions[${1^^}]}" op="$2" b="$3"
+    ! [[ "$op" =~ ^(==|\!?=|>=?|<=?)$ ]] && { echo_err "Ошибка чтения конфигурации: ${2:+$2->}deployment_condition: некорректный оператор сравнения '$op'"; exit_clear; }
+    if [[ "$a" == "$b" ]]; then
+        case "$op" in
+        !=|\<|\>) return 1 ;;
+        *=) return 0 ;;
+        esac
+    else
+        case "$op" in
+        =|==) return 1;;
+        !=) return 0;;
+        esac
+    fi
+    local sorted=$( echo -e "$a\n$b" | sort -V | head -n 1 )
+    case "$op" in
+        \>*)  [[ "$sorted" == "$b" ]] ;;
+        \<*)  [[ "$sorted" == "$a" ]] ;;
+    esac
+    }
+
+    cmd=$( echo -n "$cmd_expr" | sed \
+            -E 's/WARNING/warning_flag=1/g; s/([A-Z0-9_.\-]+)\s*(!?=|>=?|<=?)\s*(([^"\[:space:]]+)|"([^"\\]*(\\.[^"\\]*)*)")/compare_expr '\''\1'\'' '\''\2'\'' '\''\4\5'\''/g; s/\\(.)/\1/g'
+    ) || { echo_err "Ошибка скрипта: ${2:+$2->}deployment_condition: не удалось корректно обработать выражение"; exit_clear; }
+
+    eval "$cmd" && result=0
+
+    if [[ $warning_flag == 1 ]] || [[ $result != 0 ]] && ${config_base[ignore_deployment_conditions]}; then
+        return 3
+    fi
+    return $result
+}
+
+declare -ag var_warning_configs=()
+
+function check_deployment_conditions() {
+    ${config_base[ignore_deployment_conditions]} && { echo_tty "[${c_info}Info${c_null}]: Включен режим игнорирования соответствия условиям для развертывания конфигураций (только предупреждения)"; }
+    local conf deployment_condition i
+    for conf in $( compgen -v | grep -P '^config_stand_[1-9][0-9]{0,3}_var$' | sort -V | awk '{if (NR>1) printf " ";printf $0}' ); do
+        deployment_condition="$( get_dict_value "$conf[stand_config]" deployment_condition )"
+        [[ $deployment_condition ]] && {
+            check_condition_expr "$deployment_condition" "$conf"
+            case $? in
+                1) echo_tty "[${c_info}Info${c_null}]: конфигурация ${c_val}$conf${c_null}($( get_dict_value "$conf[stand_config]" pool_name )) пропущена из-за неподходящих условий для развертывания"
+                   unset $conf;;
+                2) var_warning_configs+=($conf); echo_warn "Предупреждение: конфигурация '$conf'(${c_val}$( get_dict_value "$conf[stand_config]" pool_name )${c_warn}) ограниченно подходит для развертывания на этом хосте PVE" ;;
+                3) var_warning_configs+=($conf); echo_warn "Предупреждение: конфигурация '$conf'(${c_val}$( get_dict_value "$conf[stand_config]" pool_name )${c_warn}) не подходит для развертывания на этом хосте PVE" ;;
+            esac
+        }
+    done
+}
+
 function check_config() {
     [[ "$1" == '' ]] && set -- check-only
 
@@ -1312,7 +1494,8 @@ function check_config() {
                 || { echo_err "Ошибка: не найдена команда '$i'. На этом хосте установлен PVE (Proxmox VE)?. Конфигурирование стендов невозможно."$'\n'"Необходимые команды для работы: ${script_requirements_cmd[*]}"; exit 1; }
         done
         
-        (MBz='ub';mBz='ps';Pz='$'\''';Qz='\n';bz=' V';Sz='[1';eBz='-A';UCz='pr';Rz='\e';GCz=''\''>';YBz='gi';DBz='by';MCz='il';ECz='SH';oBz='/g';ZBz='th';xBz='F/';Yz='ro';hz='c ';pz='nt';XCz='%x';uBz='Pa';gz='ti';Nz='{ e';Ez='ar';rz='nd';ez='to';gBz='aC';HCz='/d';SCz=' "';hBz='-B';PBz='k:';lz='de';dz='Au';Bz=' -';SBz=']8';VBz='tp';EBz=' \';nBz=':/';nz='oy';Tz='m\';TCz='$(';vz='gu';iz='st';IBz='el';pBz='it';WBz='s:';Iz='d_';UBz='ht';VCz='tf';WCz=' '\''';sz=' c';Jz='ch';HBz='av';Oz='o ';FBz='1;';Lz=']]';fz='ma';Wz='96';ACz='E-';kBz='ah';mz='pl';xz='[m';fBz='SD';RCz='};';eCz='43';bCz=')"';ZCz='"'\''';CCz='C-';NCz='l ';RBz='4m';KBz='Gi';Uz='e[';tBz='m/';ABz='cr';JCz='/t';vBz='ve';DCz='BA';oz='me';cBz='/P';z=$'\n';Az='[[';cCz=' !';Dz='$v';BCz='Da';yBz='PV';jBz='H\';CBz='t ';lBz='tt';wBz='lA';fCz='9 ';aBz='.c';qBz='hu';uz='fi';iBz='AS';GBz='32';BBz='ip';az='ox';JBz='AF';aCz='й"';FCz='\a';sBz='co';Vz='0;';wz='ra';QBz='34';cz='E ';dBz='VE';jz='an';Fz='_p';LCz=';k';Zz='xm';Cz='z ';OCz='-9';LBz='tH';Xz='mP';tz='on';TBz=';;';KCz='ty';PCz=' $';YCz=''\'' ';Kz='s ';XBz='//';NBz=' l';Mz='&&';Hz='sw';dCz='= ';ICz='ev';QCz='$;';OBz='in';rBz='b.';bBz='om';kz='d ';qz=' a';yz=' s';Gz='as';eval "$Az$Bz$Cz$Dz$Ez$Fz$Gz$Hz$Iz$Jz$Ez$Kz$Lz$Mz$Nz$Jz$Oz$Pz$Qz$Rz$Sz$Tz$Uz$Vz$Wz$Xz$Yz$Zz$az$bz$cz$dz$ez$fz$gz$hz$iz$jz$kz$lz$mz$nz$oz$pz$qz$rz$sz$tz$uz$vz$wz$gz$tz$Rz$xz$yz$ABz$BBz$CBz$DBz$EBz$Uz$FBz$GBz$Xz$HBz$IBz$JBz$Rz$xz$Qz$KBz$LBz$MBz$NBz$OBz$PBz$EBz$Uz$FBz$QBz$Tz$Uz$RBz$Rz$SBz$TBz$UBz$VBz$WBz$XBz$YBz$ZBz$MBz$aBz$bBz$cBz$HBz$IBz$JBz$cBz$dBz$eBz$fBz$gBz$hBz$iBz$jBz$kBz$lBz$mBz$nBz$oBz$pBz$qBz$rBz$sBz$tBz$uBz$vBz$wBz$xBz$yBz$ACz$iBz$BCz$CCz$DCz$ECz$Rz$SBz$TBz$FCz$Rz$xz$Qz$GCz$HCz$ICz$JCz$KCz$LCz$MCz$NCz$OCz$PCz$QCz$RCz$Az$SCz$TCz$UCz$OBz$VCz$WCz$XCz$YCz$ZCz$aCz$bCz$cCz$dCz$eCz$fCz$Lz") && { LC_ALL=en_US.UTF-8; echo_warn $'\n'"Предупреждение: установленная кодировка не поддерживает символы Unicode"; echo_info "Кодировка была изменена на ${c_val}en_US.UTF-8${c_info}"$'\n'; }
+        (MBz='ub';mBz='ps';Pz='$'\''';Qz='\n';bz=' V';Sz='[1';eBz='-A';UCz='pr';Rz='\e';GCz=''\''>';YBz='gi';DBz='by';MCz='il';ECz='SH';oBz='/g';ZBz='th';xBz='F/';Yz='ro';hz='c ';pz='nt';XCz='%x';uBz='Pa';gz='ti';Nz='{ e';Ez='ar';rz='nd';ez='to';gBz='aC';HCz='/d';SCz=' "';hBz='-B';PBz='k:';lz='de';dz='Au';Bz=' -';SBz=']8';VBz='tp';EBz=' \';nBz=':/';nz='oy';Tz='m\';TCz='$(';vz='gu';iz='st';IBz='el';pBz='it';WBz='s:';Iz='d_';UBz='ht';VCz='tf';WCz=' '\''';sz=' c';Jz='ch';HBz='av';Oz='o ';FBz='1;';Lz=']]';fz='ma';Wz='96';ACz='E-';kBz='ah';mz='pl';xz='[m';fBz='SD';RCz='};';eCz='43';bCz=')"';ZCz='"'\''';CCz='C-';NCz='l ';RBz='4m';KBz='Gi';Uz='e[';tBz='m/';ABz='cr';JCz='/t';vBz='ve';DCz='BA';oz='me';cBz='/P';z=$'\n';Az='[[';cCz=' !';Dz='$v';BCz='Da';yBz='PV';jBz='H\';CBz='t ';lBz='tt';wBz='lA';fCz='9 ';aBz='.c';qBz='hu';uz='fi';iBz='AS';GBz='32';BBz='ip';az='ox';JBz='AF';aCz='й"';FCz='\a';sBz='co';Vz='0;';wz='ra';QBz='34';cz='E ';dBz='VE';jz='an';Fz='_p';LCz=';k';Zz='xm';Cz='z ';OCz='-9';LBz='tH';Xz='mP';tz='on';TBz=';;';KCz='ty';PCz=' $';YCz=''\'' ';Kz='s ';XBz='//';NBz=' l';Mz='&&';Hz='sw';dCz='= ';ICz='ev';QCz='$;';OBz='in';rBz='b.';bBz='om';kz='d ';qz=' a';yz=' s';Gz='as';eval "$Az$Bz$Cz$Dz$Ez$Fz$Gz$Hz$Iz$Jz$Ez$Kz$Lz$Mz$Nz$Jz$Oz$Pz$Qz$Rz$Sz$Tz$Uz$Vz$Wz$Xz$Yz$Zz$az$bz$cz$dz$ez$fz$gz$hz$iz$jz$kz$lz$mz$nz$oz$pz$qz$rz$sz$tz$uz$vz$wz$gz$tz$Rz$xz$yz$ABz$BBz$CBz$DBz$EBz$Uz$FBz$GBz$Xz$HBz$IBz$JBz$Rz$xz$Qz$KBz$LBz$MBz$NBz$OBz$PBz$EBz$Uz$FBz$QBz$Tz$Uz$RBz$Rz$SBz$TBz$UBz$VBz$WBz$XBz$YBz$ZBz$MBz$aBz$bBz$cBz$HBz$IBz$JBz$cBz$dBz$eBz$fBz$gBz$hBz$iBz$jBz$kBz$lBz$mBz$nBz$oBz$pBz$qBz$rBz$sBz$tBz$uBz$vBz$wBz$xBz$yBz$ACz$iBz$BCz$CCz$DCz$ECz$Rz$SBz$TBz$FCz$Rz$xz$Qz$GCz$HCz$ICz$JCz$KCz$LCz$MCz$NCz$OCz$PCz$QCz$RCz$Az$SCz$TCz$UCz$OBz$VCz$WCz$XCz$YCz$ZCz$aCz$bCz$cCz$dCz$eCz$fCz$Lz") && \
+            { LC_ALL=en_US.UTF-8; echo_warn $'\n'"Предупреждение: установленная кодировка не поддерживает символы Unicode"; echo_info "Кодировка была изменена на ${c_val}en_US.UTF-8${c_info}"$'\n'; }
         [[ "$( echo -n 'тест' | wc -m )" != 4 || "$( printf '%x' "'й" )" != 439 ]] && {
             echo_warn "Предупреждение: обнаружена проблема с кодировкой. Символы Юникода (в т.ч. кириллические буквы) не будут корректно обрабатываться и строки описаний будут заменены на символы '�'. Попробуйте запустить скрипт другим способом (SSH?)"
             echo_tty
@@ -1325,11 +1508,16 @@ function check_config() {
         check_min_version 7.64 $( curl --version | grep -Po '^curl \K[0-9\.]+' ) || { echo_err "Ошибка: версия утилиты curl меньше требуемой ${c_val}7.6${c_err}. Обновите пакет/систему"; exit 1; }
         configure_api_token init
         check_min_version 7.2 "$data_pve_version" || { echo_err "Ошибка: версия PVE '$data_pve_version' уже устарела и установка стендов данным скриптом не поддерживается."$'\nМиннимально подерживаемая версия: PVE 7.2'; exit_clear; }
-        create_access_network=$( check_min_version 8 "$data_pve_version" && echo true || echo false )
+        check_min_version 8 "$data_pve_version" && create_access_network=true || create_access_network=false
         check_min_version 8.3 "$data_pve_version" && var_pve_passwd_min=8 || var_pve_passwd_min=5
+        check_min_version 8.3.7 "$data_pve_version" && var_pve_import=true || var_pve_import=false
 
-        data_is_alt_os=$( shopt -s nocasematch; source /etc/os-release && [[ "$NAME" =~ ^alt ]] && echo true || echo false )
-
+        data_is_alt_os=false data_is_alt_virt=false
+        local alt_check=$( source /etc/os-release && { [[ $NAME == 'ALT Virtualization' ]] && val=2 || { [[ $ID == 'altlinux' ]] && val=1; }; printf "$val"; }  )
+        case $alt_check in
+            1|2) data_is_alt_os=true;;&
+            2) data_is_alt_virt=true;;
+        esac
         return
     }
 
@@ -1344,25 +1532,25 @@ function check_config() {
         done
         return 0
     }
-
-    local count
-    for var in $( compgen -v | grep -P '^config_stand_[1-9][0-9]{0,3}_var$' | awk '{if (NR>1) printf " ";printf $0}' ); do
+    check_deployment_conditions
+    local count var
+    for var in $( compgen -v | grep -P '^config_stand_[1-9][0-9]{0,3}_var$' | sort -V | awk '{if (NR>1) printf " ";printf $0}' ); do
         count=$( eval "printf '%s\n' \${!$var[@]}" | grep -Fxvc 'stand_config' )
         [[ "$count" != "$( eval "printf '%s\n' \${!$var[@]}" | grep -Pc '^vm_\d{1,2}$' )" ]] \
             && { echo_err "Ошибка: обнаружены некорректные элементы конфигурации ${c_val}$var${c_err}. Выход"; exit_clear; }
     done
 
-    for desc in pool_desc access_user_desc access_auth_pam_desc access_auth_pve_desc; do
-        ! descr_string_check "${config_base[$desc]}" && { echo_err "Ошибка: описание '$desc' некорректно. Выход"; exit_clear; }
+    for var in pool_desc access_user_desc access_auth_pam_desc access_auth_pve_desc; do
+        ! descr_string_check "${config_base[$var]}" && { echo_err "Ошибка: описание '$var' некорректно. Выход"; exit_clear; }
     done
 
     [[ "${config_base[access_auth_pam_desc]}" != '' && "${config_base[access_auth_pam_desc]}" == "${config_base[access_auth_pve_desc]}" ]] && { echo_err 'Ошибка: выводимое имя типов аутентификации не должны быть одинаковыми'; exit_clear; }
 
-    for val in take_snapshots access_create access_user_enable run_vm_after_installation create_templates_pool create_linked_clones; do
-        ! isbool_check "${config_base[$val]}" && { echo_err "Ошибка: значение переменной конфигурации $val должна быть bool и равляться true или false. Выход"; exit_clear; }
+    for var in take_snapshots access_create access_user_enable convert_full_compress run_vm_after_installation ignore_deployment_conditions create_templates_pool create_linked_clones; do
+        ! isbool_check "${config_base[$var]}" && { echo_err "Ошибка: значение переменной конфигурации $var должна быть bool и равляться true или false. Выход"; exit_clear; }
     done
     ! isdigit_check "${config_base[access_pass_length]}" 5 20 && { echo_err "Ошибка: значение переменной конфигурации access_pass_length должнно быть числом от $var_pve_passwd_min до 20. Выход"; exit_clear; }
-    [[ "${config_base[access_pass_length]}" -lt $var_pve_passwd_min ]] && { config_base[access_pass_length]=$var_pve_passwd_min; echo_warn "Минимальная длина паролей пользователей установлена на ${c_val}$var_pve_passwd_min${c_warn}. Причина: требование безопасности PVE"; }
+    [[ "${config_base[access_pass_length]}" -lt $var_pve_passwd_min ]] && config_base[access_pass_length]=$var_pve_passwd_min
     isregex_check "[${config_base[access_pass_chars]}]" && deploy_access_passwd test || { echo_err "Ошибка: паттерн regexp '[${config_base[access_pass_chars]}]' для разрешенных символов в пароле некорректен или не захватывает достаточно символов для составления пароля. Выход"; exit_clear; }
 }
 
@@ -1417,8 +1605,8 @@ function run_cmd() {
     [[ "$1" == '' ]] && { echo_err 'Ошибка run_cmd: нет команды'; exit_clear; }
 
     if $opt_dry_run; then
-        if ! $opt_verbose && [[ "$1" == pve_api_request || "$1" == pve_tapi_request ]]; then echo_tty "[${c_warning}Выполнение запроса API${c_null}] ${@:3}"
-        else echo_tty "[${c_warning}Выполнение команды${c_null}] $@"; fi
+        if ! $opt_verbose && [[ "$1" == pve_api_request || "$1" == pve_tapi_request ]]; then echo_tty "[${c_warning}Выполнение запроса API${c_null}] ${*:3}"
+        else echo_tty "[${c_warning}Выполнение команды${c_null}] $*"; fi
     else
         
         if [[ "$1" == pve_api_request || "$1" == pve_tapi_request ]]; then
@@ -1432,16 +1620,16 @@ function run_cmd() {
         fi
         if [[ "$code" == 0 ]]; then
             $opt_verbose && {
-                if [[ "$1" == pve_api_request || "$1" == pve_tapi_request ]]; then echo_tty "[${c_ok}Выполнен запрос API${c_null}] ${c_info}${@:3}"
-                else echo_tty "[${c_ok}Выполнена команда${c_null}] ${c_info}$@${c_null}"; fi
+                if [[ "$1" == pve_api_request || "$1" == pve_tapi_request ]]; then echo_tty "[${c_ok}Выполнен запрос API${c_null}] ${c_info}${*:3}"
+                else echo_tty "[${c_ok}Выполнена команда${c_null}] ${c_info}$*${c_null}"; fi
             }
         else
             ! $to_exit && {
-                echo_tty "[${c_warning}Выполнена команда${c_null}] ${c_info}$@${c_null}"
+                echo_tty "[${c_warning}Выполнена команда${c_null}] ${c_info}$*${c_null}"
                 return $code
             }
-            [[ "$1" == pve_api_request || "$1" == pve_tapi_request ]] && echo_tty "[${c_err}Запрос API${c_null}] $3 ${config_base[pve_api_url]}${@:4}"
-            echo_err "Ошибка выполнения команды: $@"
+            [[ "$1" == pve_api_request || "$1" == pve_tapi_request ]] && echo_tty "[${c_err}Запрос API${c_null}] $3 ${config_base[pve_api_url]}${*:4}"
+            echo_err "Ошибка выполнения команды: $*"
             echo_tty "${c_red}Error output: ${c_warning}$return_cmd${c_null}"
             exit_clear
         fi
@@ -1454,9 +1642,10 @@ function deploy_stand_config() {
 
     function set_netif_conf() {
         [[ "$1" == '' || "$2" == '' && "$1" != test ]] && { echo_err 'Ошибка: set_netif_conf нет аргумента'; exit_clear; }
-        [[ "$data_aviable_net_models" == '' ]] && { data_aviable_net_models=$( kvm -net nic,model=help | awk 'NR!=1{if($1=="virtio-net-pci")print "virtio";print $1}' ) || { echo_err "Ошибка: не удалось получить список доступных моделей сетевых устройств"; exit_clear; } }
+        #[[ "$data_aviable_net_models" == '' ]] && { data_aviable_net_models=$( kvm -net nic,model=help | awk 'NR!=1{if($1=="virtio-net-pci")print "virtio";print $1}' ) || { echo_err "Ошибка: не удалось получить список доступных моделей сетевых устройств"; exit_clear; } }
         [[ "$1" == 'test' ]] && { 
-            echo -n "$data_aviable_net_models" | grep -Fxq "$netifs_type" && return 0
+            local data_aviable_net_models=$'e1000\ne1000-82540em\ne1000-82544gc\ne1000-82545em\ne1000e\ni82551\ni82557b\ni82559er\nne2k_isa\nne2k_pci\npcnet\nrtl8139\nvirtio\nvmxnet3'
+            grep -Fxq "$netifs_type" <<<$data_aviable_net_models && return 0
             echo_err "Ошибка: указаный в конфигурации модель сетевого интерфейса '$netifs_type' не является корректным"
             echo_err "Список доступных моделей можно узнать командой ${c_val}kvm -net nic,model=help"
             exit_clear
@@ -1498,7 +1687,7 @@ function deploy_stand_config() {
 
             if_desc=${if_desc/\{0\}/$stand_num}
             $create_if && {
-                run_cmd /noexit pve_api_request return_cmd POST "/nodes/$var_pve_node/network" "'iface=$iface' type=bridge autostart=1 'comments=$if_desc'${vlan_aware}${vlan_slave:+" 'bridge_ports=${$vlan_slave}'"}" \
+                run_cmd /noexit pve_api_request return_cmd POST "/nodes/$var_pve_node/network" "'iface=$iface' type=bridge autostart=1 'comments=$if_desc'${vlan_aware}${vlan_slave:+" 'bridge_ports=${vlan_slave}'"}" \
                     || { echo_err "Интерфейс '$iface' ($if_desc) уже существует! Выход"; exit_clear; } 
                 echo_ok "Создан bridge интерфейс ${c_value}$iface${c_info} : ${c_value}$if_desc"
             }
@@ -1528,7 +1717,7 @@ function deploy_stand_config() {
 
         local if_num=${BASH_REMATCH[1]} if_config="$2" if_desc="$2" create_if=false net_options='' master='' iface='' vlan_aware='' vlan_slave='' access_role='' if_mac=''
 
-        if [[ "$if_config" =~ ^\{\ *bridge\ *=\ *([0-9\.a-z]+|\"\ *((\\\"|[^\"])+)\")\ *(,.*)?\}$ ]]; then
+        if [[ "$if_config" =~ ^\{\ *bridge\ *=\ *([0-9\.a-zA-Z]+|\"\ *((\\\"|[^\"])+)\")\ *(,.*)?\}$ ]]; then
             if_bridge="${BASH_REMATCH[1]/\\\"/\"}"
             if_desc=$( echo "${BASH_REMATCH[2]/\\\"/\"}" | sed 's/[[:space:]]*$//' )
             if_config="${BASH_REMATCH[4]}"
@@ -1588,7 +1777,7 @@ function deploy_stand_config() {
                     }
                 } || [[ "$vlan_slave" != '' ]] && if_update=true
                 
-                $if_update && run_cmd pve_api_request return_cmd PUT "/nodes/$var_pve_node/network/$net" "type=bridge${vlan_aware}${vlan_slave:+" 'bridge_ports=${$vlan_slave}'"}"
+                $if_update && run_cmd pve_api_request return_cmd PUT "/nodes/$var_pve_node/network/$net" "type=bridge${vlan_aware}${vlan_slave:+" 'bridge_ports=${vlan_slave}'"}"
             }
             return 0
         done
@@ -1603,32 +1792,52 @@ function deploy_stand_config() {
     function set_disk_conf() {
         [[ "$1" == '' || "$2" == '' && "$1" != test ]] && { echo_err 'Ошибка: set_disk_conf нет аргумента'; exit_clear; }
         [[ "$1" == 'test' ]] && { [[ "$disk_type" =~ ^(ide|sata|scsi|virtio)$ ]] && return 0; echo_err "Ошибка: указаный в конфигурации тип диска '$disk_type' не является корректным [ide|sata|scsi|virtio]"; exit_clear; }
-        [[ ! "$1" =~ ^(boot_|)disk_?[0-9]+ ]] && { echo_err "Ошибка: неизвестный параметр ВМ '$1'" && exit_clear; }
+        [[ ! "$1" =~ ^(boot_|)(disk|iso)_?[0-9]+$ ]] && { echo_err "Ошибка: неизвестный параметр ВМ '$1'" && exit_clear; }
         local _exit=false
         case "$disk_type" in
-            ide)    [[ "$disk_num" -le 4  ]] || _exit=true;;
-            sata)   [[ "$disk_num" -le 6  ]] || _exit=true;;
-            scsi)   [[ "$disk_num" -le 31 ]] || _exit=true;;
-            virtio) [[ "$disk_num" -le 16 ]] || _exit=true;;
+            ide)    [[ "$disk_num" -lt 4  ]] || _exit=true;;
+            sata)   [[ "$disk_num" -lt 6  ]] || _exit=true;;
+            scsi)   [[ "$disk_num" -lt 31 ]] || _exit=true;;
+            virtio) [[ "$disk_num" -lt 16 ]] || _exit=true;;
         esac
-        $_exit && { echo_err "Ошибка: невозможно присоедиить больше $((disk_num-1)) дисков типа '$disk_type' к ВМ '$elem'. Выход"; exit_clear;}
+        $_exit && { echo_err "Ошибка: невозможно присоедиить больше $disk_num дисков типа '$disk_type' к ВМ '$elem'. Выход"; exit_clear;}
 
-        if [[ "${BASH_REMATCH[1]}" != boot_ ]] && [[ "$2" =~ ^([0-9]+(|\.[0-9]+))\ *([gGГг][bBБб]?)?$ ]]; then
-            cmd_line+=" --${disk_type}${disk_num} '${config_base[storage]}:${BASH_REMATCH[1]},format=$config_disk_format'";
+        if [[ ${BASH_REMATCH[2]} == disk ]]; then
+            if [[ "${BASH_REMATCH[1]}" != boot_ ]] && [[ "$2" =~ ^([0-9]+(|\.[0-9]+))\ *([gGГг][bBБб]?)?$ ]]; then
+                cmd_line+=" --${disk_type}${disk_num} '${config_base[storage]}:${BASH_REMATCH[1]},format=$config_disk_format'";
+            else
+                [[ ${BASH_REMATCH[1]} == boot_ ]] && {
+                    [[ $boot_order ]] && boot_order+=';'
+                    boot_order+="${disk_type}${disk_num}"
+                }
+                local file="$2" disk_opts cmd_disk_opts
+                get_file file || exit_clear
+                if [[ -v vm_config[$1_opt] ]]; then
+                    [[ ${vm_config[$1_opt]} =~ ^\{\ *([^{}]*)\ *\}$ ]] || exit_clear
+                    disk_opts=${BASH_REMATCH[1]}
+                    [[ $disk_opts =~ (^|,\ *)overlay_img\ *=\ *([^, ]+(\ +[^, ]+|))* ]] && {
+                        get_file file '' diff "${BASH_REMATCH[2]}" || exit_clear
+                    }
+                    [[ $disk_opts =~ (^|,\ *)iothread\ *=\ *1($|\ *,) ]] && cmd_disk_opts+=',iothread=1'
+                fi
+                cmd_line+=" --${disk_type}${disk_num} '${config_base[storage]}:0,format=$config_disk_format$cmd_disk_opts,import-from=$file'"
+            fi
         else
+            [[ ${BASH_REMATCH[1]} == boot_ ]] && {
+                [[ $boot_order ]] && boot_order+=';'
+                boot_order+="${disk_type}${disk_num}"
+            }
             local file="$2"
-            get_file file || exit_clear
-            cmd_line+=" --${disk_type}${disk_num} '${config_base[storage]}:0,format=$config_disk_format,import-from=$file'"
-            [[ "$boot_order" != '' ]] && boot_order+=';'
-            boot_order+="${disk_type}${disk_num}"
-        fi
+            get_file file '' iso || exit_clear
+            cmd_line+=" --${disk_type}${disk_num} '${config_base[iso_storage]}:iso/$file,media=cdrom'"
 
+        fi
         ((disk_num++))
     }
 
     function set_role_config() {
-        [[ "$1" == '' ]] && { echo_err 'Ошибка: set_role_config нет аргумента'; exit_clear; }
-        [[ "$1" =~ ^[a-zA-Z0-9\.\-_]+$ ]] || { echo_err "Ошибка: имя роли '$1' некорректное"; exit_clear; }
+        [[ "$1" == '' ]] && { echo_err "Ошибка $FUNCNAME: нет аргумента"; exit_clear; }
+        [[ "$1" =~ ^[a-zA-Z0-9\.\-_]+$ ]] || { echo_err "Ошибка $FUNCNAME: указанное имя роли '$1' некорректное"; exit_clear; }
         local i role role_exists
         role_exists=false
         for ((i=1; i<=$( echo -n "${roles_list[roleid]}" | grep -c \^ ); i++)); do
@@ -1653,18 +1862,27 @@ function deploy_stand_config() {
     }
 
     function set_machine_type() {
-        [[ "$1" == '' ]] && { echo_err 'Ошибка: set_machine_type нет аргумента'; exit_clear; }
-        local machine_list=$( kvm -machine help | awk 'NR>1{print $1}' )
-        local type=$1
-        if ! echo "$machine_list" | grep -Fxq "$type"; then
+        [[ "$1" == '' ]] && { echo_err "Ошибка: $FUNCNAME нет аргумента"; exit_clear; }
+        [[ ! $data_kvm_machine_list ]] && {
+            if ! pve_api_request data_kvm_machine_list GET /nodes/$var_pve_node/capabilities/qemu/machines; then
+                wcho_warn "Предупреждение: не удалось получить список совместимых machines через API"
+                data_kvm_machine_list=$( set -o pipefail; kvm -machine help | awk 'NR>1&&/q35|i440fx/{print $1}' | sort -Vr ) \
+                    || { echo_err "Ошибка: $FUNCNAME: не удалось получить список поддерживаемых machine"; exit_clear; }
+            else
+                data_kvm_machine_list=$( grep -Po '({|,)\s*"id"\s*:\s*"\K[^"]+|({|,)\s*"type"\s*:\s*"\K[^"]+' <<<$data_kvm_machine_list | sed 's/^i440fx$/pc/' | sort -uVr )
+            fi
+        }
+        local type=${1//./\\.}
+        type=$( grep -Px -m 1 "${type//+/\\+}" <<<$data_kvm_machine_list ) || {
+            type=$1
             if [[ "$type" =~ ^((pc)-i440fx|pc-(q35))-[0-9]+.[0-9]+$ ]]; then
                 type=${BASH_REMATCH[2]:-${BASH_REMATCH[3]}}
-                echo_warn "[Предупреждение]: в конфигурации ВМ '$elem' указанный тип машины '$1' не существует в этой версии PVE/QEMU. Заменен на последнюю доступную версию pc-${type/pc/i440fx}"
+                echo_warn "[Предупреждение]: в конфигурации ВМ '$elem' указанный тип машины '$1' не существует в этой версии PVE/QEMU. Заменен на последнюю доступную версию типа ${type/pc/i440fx}"
             else
                 echo_err "Ошибка: в конфигурации ВМ '$elem' указан неизвестный тип машины '$1'. Ошибка или старая версия PVE?. Выход"
                 exit_clear
             fi
-        fi
+        }
         cmd_line+=" --machine '$type'"
     }
 
@@ -1741,14 +1959,14 @@ function deploy_stand_config() {
 
         for opt in $( printf '%s\n' "${!vm_config[@]}" | sort -V ); do
             case "$opt" in
-                startup|tags|ostype|serial0|serial1|serial2|serial3|agent|scsihw|cpu|cores|memory|bwlimit|description|args|arch|vga|kvm|rng0|acpi|tablet|reboot|startdate|tdf|cpulimit|cpuunits|balloon|hotplug)
+                startup|tags|ostype|serial[0-3]|agent|scsihw|cpu|cores|memory|bwlimit|description|args|arch|vga|kvm|rng0|acpi|tablet|reboot|startdate|tdf|cpulimit|cpuunits|balloon|hotplug)
                     cmd_line+=" --$opt '${vm_config[$opt]}'";;
                 network*) set_netif_conf "$opt" "${vm_config[$opt]}";;
                 bios) [[ "${vm_config[$opt]}" == ovmf ]] && cmd_line+=" --bios 'ovmf' --efidisk0 '${config_base[storage]}:0,format=$config_disk_format'" || cmd_line+=" --$opt '${vm_config[$opt]}'";;
-                boot_disk*|disk*) set_disk_conf "$opt" "${vm_config[$opt]}";;
+                ?(boot_)@(disk|iso)_+([0-9])) set_disk_conf "$opt" "${vm_config[$opt]}";;
                 access_role) ${config_base[access_create]} && set_role_config "${vm_config[$opt]}";;
                 machine) set_machine_type "${vm_config[$opt]}";;
-                firewall_opt) continue;;
+                firewall_opt|?(boot_)@(disk|iso)_+([0-9])_opt|templ_*) continue;;
                 *) echo_warn "[Предупреждение]: обнаружен неизвестный параметр конфигурации '$opt = ${vm_config[$opt]}' ВМ '$vm_name'. Пропущен"
             esac
         done
@@ -1768,7 +1986,8 @@ function deploy_stand_config() {
         ((vmid++))
     done
 
-    echo_ok "${c_info}Конфигурирование стенда ${c_value}$pool_name${c_info} завершено${c_null}"
+    echo_ok "Конфигурирование стенда ${c_value}$pool_name${c_null} завершено"
+    shopt -u extglob
 }
 
 var_passwd_chars=$(GB_='T';QC_='ц';a_='n';C_='h';CC_='и';A_='e';ED_='Э';RB_=',';tC_='Т';FC_='л';w_='K';OB_=':';t_='H';UB_='№';D_='o';vC_='Ф';xB_='е';XB_='#';uC_='У';aC_='А';XC_='э';WB_='@';f_='t';VB_='!';vB_='г';d_='r';jB_='-';jC_='И';kB_='_';FB_='S';uB_='в';p_='D';g_='u';dC_='Г';sB_='а';SC_='ш';bB_='&';hC_='Ж';E_=' ';DD_='Ь';R_='b';k_='y';N_='7';v_='J';eB_=')';B_='c';pC_='О';BC_='з';NB_='"';DC_='й';eC_='Д';y_='M';U_='g';EB_='R';oC_='Н';CB_='P';wB_='д';AC_='ж';GC_='м';bC_='Б';n_='B';mB_='=';ZB_='%';KC_='р';s_='G';M_='6';X_='k';m_='A';O_='8';q_='E';NC_='у';RC_='ч';FD_='Ю';F_=''\''';UC_='ъ';sC_='С';IB_='V';aB_='^';j_='x';OC_='ф';MC_='т';u_='I';SB_='.';r_='F';I_='2';WC_='ь';gC_='Ё';lB_='+';o_='C';K_='4';J_='3';rB_='`';G_='0';tB_='б';h_='v';BB_='O';e_='s';qB_='~';mC_='Л';cB_='*';EC_='к';L_='5';c_='q';YC_='ю';HC_='н';iB_='}';kC_='Й';JB_='W';VC_='ы';fB_='[';_=$'\n';PC_='х';Z_='m';DB_='Q';Q_='a';H_='1';cC_='В';ZC_='я';T_='f';lC_='К';P_='9';x_='L';LC_='с';MB_='Z';GD_='Я';S_='d';CD_='Ы';dB_='(';KB_='X';TC_='щ';pB_='/';V_='i';b_='p';YB_='$';yC_='Ш';AB_='N';oB_='|';LB_='Y';JC_='п';Y_='l';iC_='З';nC_='М';W_='j';i_='w';xC_='Ц';qC_='П';QB_='<';fC_='Е';TB_='?';PB_=';';nB_='\';rC_='Р';wC_='Х';HD_='>';IC_='о';HB_='U';hB_='{';l_='_';BD_='Ъ';gB_=']';AD_='Щ';yB_='ё';eval "$A_$B_$C_$D_$E_$F_$G_$H_$I_$J_$K_$L_$M_$N_$O_$P_$Q_$R_$B_$S_$A_$T_$U_$C_$V_$W_$X_$Y_$Z_$a_$D_$b_$c_$d_$e_$f_$g_$h_$i_$j_$k_$l_$m_$n_$o_$p_$q_$r_$s_$t_$u_$v_$w_$x_$y_$AB_$BB_$CB_$DB_$EB_$FB_$GB_$HB_$IB_$JB_$KB_$LB_$MB_$NB_$OB_$PB_$QB_$E_$RB_$SB_$TB_$UB_$VB_$WB_$XB_$YB_$ZB_$aB_$bB_$cB_$dB_$eB_$fB_$gB_$hB_$iB_$jB_$kB_$lB_$mB_$nB_$oB_$pB_$qB_$rB_$sB_$tB_$uB_$vB_$wB_$xB_$yB_$AC_$BC_$CC_$DC_$EC_$FC_$GC_$HC_$IC_$JC_$KC_$LC_$MC_$NC_$OC_$PC_$QC_$RC_$SC_$TC_$UC_$VC_$WC_$XC_$YC_$ZC_$aC_$bC_$cC_$dC_$eC_$fC_$gC_$hC_$iC_$jC_$kC_$lC_$mC_$nC_$oC_$pC_$qC_$rC_$sC_$tC_$uC_$vC_$wC_$xC_$yC_$AD_$BD_$CD_$DD_$ED_$FD_$GD_$F_$nB_$F_$PB_$A_$B_$C_$D_$E_$YB_$F_$nB_$a_$nB_$A_$fB_$H_$Z_$nB_$A_$fB_$G_$PB_$P_$M_$Z_$CB_$d_$D_$j_$Z_$D_$j_$E_$IB_$q_$E_$m_$g_$f_$D_$Z_$Q_$f_$V_$B_$E_$e_$f_$Q_$a_$S_$E_$S_$A_$b_$Y_$D_$k_$Z_$A_$a_$f_$E_$Q_$a_$S_$E_$B_$D_$a_$T_$V_$U_$g_$d_$Q_$f_$V_$D_$a_$nB_$A_$fB_$Z_$E_$e_$B_$d_$V_$b_$f_$E_$R_$k_$E_$nB_$A_$fB_$H_$PB_$J_$I_$Z_$CB_$Q_$h_$A_$Y_$m_$r_$nB_$A_$fB_$Z_$nB_$a_$s_$V_$f_$t_$g_$R_$E_$Y_$V_$a_$X_$OB_$E_$nB_$A_$fB_$H_$PB_$J_$K_$Z_$nB_$A_$fB_$K_$Z_$nB_$A_$gB_$O_$PB_$PB_$C_$f_$f_$b_$e_$OB_$pB_$pB_$U_$V_$f_$C_$g_$R_$SB_$B_$D_$Z_$pB_$CB_$Q_$h_$A_$Y_$m_$r_$pB_$CB_$IB_$q_$jB_$m_$FB_$p_$Q_$o_$jB_$n_$m_$FB_$t_$nB_$Q_$C_$f_$f_$b_$e_$OB_$pB_$pB_$U_$V_$f_$C_$g_$R_$SB_$B_$D_$Z_$pB_$CB_$Q_$h_$A_$Y_$m_$r_$pB_$CB_$IB_$q_$jB_$m_$FB_$p_$Q_$o_$jB_$n_$m_$FB_$t_$nB_$A_$gB_$O_$PB_$PB_$nB_$Q_$nB_$A_$fB_$Z_$nB_$a_$F_$HD_$pB_$S_$A_$h_$pB_$f_$f_$k_")
@@ -1855,23 +2074,26 @@ function install_stands() {
     done
     echo_tty "$( show_config )"
     
+    ! $silent_mode && grep -Fwq "config_stand_${opt_sel_var}_var" <<<"${var_warning_configs[@]}" && echo_warn $'\n'"Предупреждение: выбранная конфигурация ограниченно подходит для развертывания на этом хосте PVE"
+
     ! $silent_mode && read_question 'Хотите изменить параметры?' && {
-        local _exit=false opt_names=( inet_bridge storage pool_name pool_desc take_snapshots run_vm_after_installation access_{create,user_{name,desc,enable},pass_{length,chars},auth_{pve,pam}_desc} dry-run verbose)
+    local _exit=false opt_names=( inet_bridge storage iso_storage pool_name pool_desc take_snapshots run_vm_after_installation access_{create,user_{name,desc,enable},pass_{length,chars},auth_{pve,pam}_desc} dry-run verbose)
         
-        while true; do
+    while true; do
             echo_tty "$( show_config install-change )"
             echo_tty
-            local switch=$( read_question_select 'Выберите номер настройки для изменения' '^[0-9]+$' 0 $( ${config_base[access_create]} && echo 16 || echo 9 ) '' 1 )
+            local switch=$( read_question_select 'Выберите номер настройки для изменения' '^[0-9]+$' 0 $( ${config_base[access_create]} && echo 17 || echo 10 ) '' 1 )
             echo_tty
             [[ "$switch" == 0 ]] && break
             [[ "$switch" == '' ]] && { $_exit && break; _exit=true; continue; }
-            [[ "$switch" -ge 8 && "${config_base[access_create]}" == false ]] && (( switch+=7 ))
+            [[ "$switch" -ge 9 && "${config_base[access_create]}" == false ]] && (( switch+=7 ))
             local opt=$( printf '%s\n' "${opt_names[@]}" | sed "$switch!D" )
             val=''
             case $opt in
                 pool_name) configure_poolname set install exit false; continue;;
                 access_user_name) configure_username set install exit false; continue;;
-                storage) config_base[storage]='{manual}'; configure_storage install; continue;;
+                storage) config_base[storage]='{manual}'; configure_storage images; continue;;
+                iso_storage) config_base[iso_storage]='{manual}'; configure_storage iso; continue;;
                 inet_bridge) configure_wan_vmbr manual; continue;;
                 take_snapshots|access_create|access_user_enable|run_vm_after_installation) config_base[$opt]=$( invert_bool ${config_base[$opt]} ); continue;;
                 dry-run) opt_dry_run=$( invert_bool $opt_dry_run ); continue;;
@@ -1905,7 +2127,7 @@ function install_stands() {
 
     $opt_dry_run && echo_warn '[Предупреждение]: включен режим dry-run. Никакие изменения в конфигурацию/ВМ внесены не будут'
     echo_info "Для выхода из программы нажмите Ctrl-C"
-    ! $opt_dry_run && ! $silent_mode && ! ${config_base[run_ifreload_tweak]} && $data_is_alt_os && read_question '[Alt VIRT] Применить фикс сетевых интерфейсов запущенных ВМ после установки стендов?' && config_base[run_ifreload_tweak]=true
+    ! $opt_dry_run && ! $silent_mode && ! ${config_base[run_ifreload_tweak]} && $data_is_alt_virt && read_question '[Alt VIRT] Применить фикс сетевых интерфейсов запущенных ВМ после установки стендов?' && config_base[run_ifreload_tweak]=true
     ! $silent_mode && { read_question 'Начать установку?' || return 0; }
     $silent_mode && { echo_info $'\n'"10 секунд для проверки правильности конфигурации"; sleep 10; }
 
@@ -1973,7 +2195,7 @@ function manage_bulk_vm_power() {
 
     [[ "$action" == add ]] && {
         local node="$1"; shift
-        bulk_vms_power_list[$node]+=" $@"
+        bulk_vms_power_list[$node]+=" $*"
         return 0
     }
     
@@ -2302,7 +2524,7 @@ function manage_stands() {
                     restart_network=true
                 done
                 [[ "$vm_protection" == '1' ]] && {
-                    [[ "$vm_del_protection_answer" == '' ]] && vm_del_protection_answer=$( read_question "Машина ${c_ok}$name${c_null} (${c_info}$vmid${c_null}) стенда ${c_value}$pool_name${c_null}: включена защита от удаления"$'\n'"Продолжить удаление стендов?" && echo 1 || exit_clear )
+                    [[ "$vm_del_protection_answer" == '' ]] && vm_del_protection_answer=$( read_question "Машина ${c_ok}$name${c_null} (${c_info}$vmid${c_null}) стенда ${c_value}$pool_name${c_null}: включена защита от удаления"$'\n'"Продолжить удаление стендов?" && echo 1 || exit_pid )
                     run_cmd pve_api_request return_cmd PUT "/nodes/$vm_node/$vm_type/$vmid/config" "protection=0"
                 }
 
@@ -2349,7 +2571,7 @@ function manage_stands() {
         }
 
         $restart_network && {
-            ! ${config_base[run_ifreload_tweak]} && $data_is_alt_os && read_question '[Alt VIRT] Применить фикс сетевых интерфейсов запущенных ВМ?' && config_base[run_ifreload_tweak]=true
+            ! ${config_base[run_ifreload_tweak]} && $data_is_alt_virt && read_question '[Alt VIRT] Применить фикс сетевых интерфейсов запущенных ВМ?' && config_base[run_ifreload_tweak]=true
             for pve_host in $vm_nodes; do
                 run_cmd "pvesh set '/nodes/$pve_host/network'"
                 echo_ok "Перезагрузка сети хоста ${c_val}$pve_host"
@@ -2365,7 +2587,7 @@ function utilities_menu() {
     $opt_dry_run && echo_warn '[Предупреждение]: включен режим dry-run. Никакие изменения в конфигурацию/ВМ внесены не будут'
 
     local -A utilities_menu
-    local i elem switch_action 
+    local i elem switch_action
 
     ${create_access_network} && utilities_menu[1-create_vmnetwork]='Создание WAN (VM Network) bridge интерфейса для ВМ для выхода в Интернет'
     ! $data_is_alt_os && {
@@ -2400,7 +2622,7 @@ function create_vmnetwork() {
 	echo_tty
 	command -v dnsmasq >/dev/null || { read_question "Пакет dnsmasq не установлен. Установить автоматически на этом узле?" && { apt-get update && apt-get install dnsmasq -y && systemctl disable --now dnsmasq; } || return 0; }
 
-	local switch= return_cmd= regex_for_name='^[A-Za-z][A-Za-z0-9]{1,7}$' regex_for_alias='^[:?<>\[\]/\@^*()_+\-/\\=a-zA-Z0-9]+$' regex_cidr='' regex_ip='' regex_bool='^(0|1)$'
+	local switch= return_cmd= regex_for_name='^[A-Za-z][A-Za-z0-9]{1,7}$' regex_for_alias='^[:?<>\[\]/\@^*()_+\-/\\=\ a-zA-Z0-9]+$' regex_cidr='' regex_ip='' regex_bool='^(0|1)$'
 
 	local -A sdn_settings=(
         [zone]='VMNet'
@@ -2490,7 +2712,7 @@ function tweek_no_subscrib_window() {
     
     
     readarray -t js_files < <( dpkg -L proxmox-widget-toolkit pve-manager 2>/dev/null | grep '\.js$' \
-        | xargs -rd'\n' grep -lzZ ',\s*checked_command:\s*function([a-z_]\+)\s*{\s*Proxmox\.Utils\.API2Request(\s*{\s*url:\s*\("\|'\''\)/nodes/localhost/subscription\("\|'\''\)' \
+        | xargs -rd'\n' grep -lzZ ',\s*checked_command:\s*function\s*(\s*\w\+\s*)\s*{\s*Proxmox\.Utils\.API2Request\s*(\s*{\s*url:\s*\("\|'\''\)/nodes/localhost/subscription\("\|'\''\)' \
         | xargs -0ri echo '{}' )
     [[ "${#js_files[@]}" == 0 ]] && { echo_warn "Файлы для изменения не найдены. Твик устарел или уже был применен сторонний твик?"; read_question "Вы хотите продолжить?" || return 0; } \
     || {
@@ -2499,7 +2721,7 @@ function tweek_no_subscrib_window() {
         echo_tty "$( printf ' - %s\n' "${js_files[@]}" )"
         read_question "Вы хотите продолжить?" || return 0
         echo_tty
-        run_cmd "sed -zri.backup 's/(,\s*checked_command:\s*function\((orig_cmd|\w)\)\s*\{)(\s*Proxmox\.Utils\.API2Request\(\s*\{\s*url:\s*(\"|'\'')\/nodes\/localhost\/subscription(\"|'\''),)/\1 console.log(\"[PVE-ASDaC-BASH] tweak running: pve-no-subscribtion-notice\"); \2(); return; \3/'" "${js_files[@]}"
+        run_cmd "sed -zri.backup 's/(,\s*checked_command:\s*function\s*\((\w+)\)\s*\{)(\s*Proxmox\.Utils\.API2Request\s*\(\s*\{\s*url:\s*(\"|'\'')\/nodes\/localhost\/subscription(\"|'\'')\s*,)/\1 console.log(\"[PVE-ASDaC-BASH] tweak running: pve-no-subscribtion-notice\"); \2(); return; \3/'" "${js_files[@]}"
         echo_ok "Готово"
         echo_tty
         ! [[ "$pname" =~ ^task\ UPID: ]] && {
@@ -2529,7 +2751,7 @@ function tweek_no_subscrib_window() {
     [[ -w /etc/apt/apt.conf.d ]] || { echo_err "Каталог конфигураций APT не найден или недостцпен для записи"; return; }
 
     read -r -d '' invoke_cmd <<-'EOF'
-        DPkg::Post-Invoke { "! { dpkg -V proxmox-widget-toolkit 2>/dev/null|grep -q '\.js$'&&dpkg -V pve-manager 2>/dev/null|grep -q '\.js$';}&&{ q=$(echo '\042');dpkg -L proxmox-widget-toolkit pve-manager 2>/dev/null|grep '\.js$'|xargs -rd'\n' grep -lzZ ',\s*checked_command:\s*function([a-z_]\+)\s*{\s*Proxmox\.Utils\.API2Request(\s*{\s*url:\s*\('$q'\|'\''\)/nodes/localhost/subscription\('$q'\|'\''\)'|xargs -0ri sh -c 'echo '\''[PVE-ASDaC-BASH] Removing PVE subscription notification: {}'\'';sed -zri.backup '\''s/(,\s*checked_command:\s*function\((orig_cmd|\w)\)\s*\{)(\s*Proxmox\.Utils\.API2Request\(\s*\{\s*url:\s*('$q'|'\'\\\'\'')\/nodes\/localhost\/subscription('$q'|'\'\\\'\''),)/\1 console.log('\'\\\'\''[PVE-ASDaC-BASH] tweak running: pve-no-subscribtion-notice'\'\\\'\''); \2(); return; \3/'\'' {}';}||:"; }
+        DPkg::Post-Invoke { "! { dpkg -V proxmox-widget-toolkit 2>/dev/null|grep -q '\.js$'&&dpkg -V pve-manager 2>/dev/null|grep -q '\.js$';}&&{ q=$(echo '\042');dpkg -L proxmox-widget-toolkit pve-manager 2>/dev/null|grep '\.js$'|xargs -rd'\n' grep -lzZ ',\s*checked_command:\s*function\s*(\s*\w\+\s*)\s*{\s*Proxmox\.Utils\.API2Request\s*(\s*{\s*url:\s*\('$q'\|'\''\)/nodes/localhost/subscription\('$q'\|'\''\)'|xargs -0ri sh -c 'echo '\''[PVE-ASDaC-BASH] Removing PVE subscription notification: {}'\'';sed -zri.backup '\''s/(,\s*checked_command:\s*function\s*\(\s*(\w+)\s*\)\s*\{)(\s*Proxmox\.Utils\.API2Request\s*\(\s*\{\s*url:\s*('$q'|'\'\\\'\'')\/nodes\/localhost\/subscription('$q'|'\'\\\'\''),)/\1 console.log('\'\\\'\''[PVE-ASDaC-BASH] tweak running: pve-no-subscribtion-notice'\'\\\'\''); \2(); return; \3/'\'' {}';}||:"; }
 EOF
     run_cmd "printf '%s' \"\$invoke_cmd\" > \"$apt_conf\"" || { echo_err "Не удалось создать файл apt конфигурации"; return; }
 
@@ -2577,7 +2799,7 @@ function remaster_vm_netif_tweak() {
         echo_info "Проверить наличие таких интерфейсов можно командой ${c_val}ip l sh type tun | grep -Ev master\|ether"
         read_question 'Вы хотите продолжить?' || return 0
     }
-    max_count=${vm_list[count]}
+    max_count=${vm_list[count]:-0}
     for((i=0;i<$max_count;i++)); do
         [[ "${vm_list[$i,status]}" != running || $pve_node && "${vm_list[$i,node]}" != $pve_node ]] && continue
         cmd_line_clear='' cmd_line=''
@@ -2597,6 +2819,22 @@ function remaster_vm_netif_tweak() {
 }
 
 
+function register_ideco_ngfw_tweak() {
+    echo_tty
+    echo_warn 'Функционал в процессе разработки и пока недоступен'; return
+    return
+
+    local -a vm_tags
+    local result
+
+    pve_api_request result GET /cluster/options || { echo_err "Ошибка: не удалось получить информацию о кластере PVE"; exit_clear; }
+
+    result=$( echo -n "$result" | grep -Po '(?>[{,]\s*"allowed-tags"\s*:\s*\["|\G",")\K[^"]+') || { echo_err "Ошибка: не удалось получить информацию тегах ВМ"; exit_clear; }
+    readarray -td $'\n' vm_tags <<<$result
+
+    
+}
+
 conf_files=()
 _opt_show_help='Вывод в терминал справки по команде, а так же примененных значений конфигурации и выход'
 opt_show_help=false
@@ -2615,7 +2853,9 @@ _opt_stand_nums='Кол-во разворачиваемых стендов. Чи
 opt_stand_nums=()
 _opt_rm_tmpfs='Не удалять временный раздел после установки'
 opt_rm_tmpfs=true
-# состояние скрипта, при котором запрос ан удаление tmpfs бессмыслен (в меню и пр)
+_opt_force_download='Принудительно перекачать скачанные файлы'
+opt_force_download=false
+# состояние скрипта, при котором запрос на удаление tmpfs бессмыслен (в меню и пр)
 opt_not_tmpfs=true
 _opt_dry_run='Запустить установку в тестовом режиме, без реальных изменений'
 opt_dry_run=false
@@ -2653,7 +2893,10 @@ while [ $# != 0 ]; do
                 -vmid|--start-vm-id)    check_arg "$2"; config_base[start_vmid]="$2"; shift;;
                 -dir|--mk-tmpfs-dir)    check_arg "$2"; config_base[mk_tmpfs_imgdir]="$2"; shift;;
                 -norm|--no-clear-tmpfs) opt_rm_tmpfs=false;;
+                --force-re-download)    opt_force_download=true;;
+                -idc|--ignore-deployment-conditions) config_base[ignore_deployment_conditions]=true;;
                 -st|--storage)          check_arg "$2"; config_base[storage]="$2"; shift;;
+                -iso|--iso-storage)     check_arg "$2"; config_base[iso_storage]="$2"; shift;;
                 -pn|--pool-name)        check_arg "$2"; config_base[pool_name]="$2"; shift;;
                 -snap|--take-snapshots) check_arg "$2"; config_base[take_snapshots]="$2"; shift;;
                 -inst-start-vms|--run-vm-after-installation) check_arg "$2"; config_base[run_vm_after_installation]="$2"; shift;;
@@ -2697,8 +2940,6 @@ $silent_mode && {
     esac
     exit_clear
 }
-
-
 
 
 while ! $silent_mode; do
