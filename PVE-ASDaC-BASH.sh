@@ -444,6 +444,7 @@ function show_help() {
         -c, --config [in-file]${t}Импорт конфигурации из файла или URL
         -z, --clear-vmconfig$t$_opt_zero_vms
         -api, --pve-api-url$t${config_base[_pve_api_url]}
+        --slow-api$t$_opt_slow_api
 EOL
 }
 
@@ -1518,6 +1519,10 @@ function check_config() {
             1|2) data_is_alt_os=true;;&
             2) data_is_alt_v=true;;
         esac
+        ! $silent_mode && $data_is_alt_os && {
+            echo_tty 'В случае проблем с созданием/удалением ресурсов на Альт Виртуализации'
+            read_question '[Alt VIRT] Включить режим медленного взаимодействия с API?' && opt_slow_api=true
+        }
         return
     }
 
@@ -1617,6 +1622,7 @@ function run_cmd() {
             local return_cmd code
             return_cmd=$( eval "$@" 2>&1 )
             code=$?
+            $opt_slow_api && sleep 1
         fi
         if [[ "$code" == 0 ]]; then
             $opt_verbose && {
@@ -2866,6 +2872,9 @@ opt_not_tmpfs=true
 _opt_dry_run='Запустить установку в тестовом режиме, без реальных изменений'
 opt_dry_run=false
 
+_opt_slow_api=$'[Alt Virt] Запускать команды API в медленном режиме.\n\tВ случае возникновения проблем с созданием ресурсов PVE.'
+opt_slow_api=false
+
 _opt_sel_var='Выбор варианта установки стендов'
 opt_sel_var=0
 
@@ -2900,6 +2909,7 @@ while [ $# != 0 ]; do
                 -dir|--mk-tmpfs-dir)    check_arg "$2"; config_base[mk_tmpfs_imgdir]="$2"; shift;;
                 -norm|--no-clear-tmpfs) opt_rm_tmpfs=false;;
                 --force-re-download)    opt_force_download=true;;
+                --slow-api)             opt_slow_api=true;;
                 -idc|--ignore-deployment-conditions) config_base[ignore_deployment_conditions]=true;;
                 -st|--storage)          check_arg "$2"; config_base[storage]="$2"; shift;;
                 -iso|--iso-storage)     check_arg "$2"; config_base[iso_storage]="$2"; shift;;
