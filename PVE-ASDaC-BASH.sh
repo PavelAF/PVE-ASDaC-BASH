@@ -2126,7 +2126,7 @@ function install_stands() {
 
     $opt_dry_run && echo_warn '[Предупреждение]: включен режим dry-run. Никакие изменения в конфигурацию/ВМ внесены не будут'
     echo_info "Для выхода из программы нажмите Ctrl-C"
-    ! $opt_dry_run && ! $silent_mode && ! ${config_base[run_ifreload_tweak]} && $data_is_alt_v && read_question '[Alt VIRT] Применить фикс сетевых интерфейсов запущенных ВМ после установки стендов?' && config_base[run_ifreload_tweak]=true
+    ! $silent_mode && ! ${config_base[run_ifreload_tweak]} && $data_is_alt_v && read_question '[Alt VIRT] Применить фикс сетевых интерфейсов запущенных ВМ после установки стендов?' && config_base[run_ifreload_tweak]=true
     ! $silent_mode && { read_question 'Начать установку?' || return 0; }
     $silent_mode && { echo_info $'\n'"10 секунд для проверки правильности конфигурации"; sleep 10; }
 
