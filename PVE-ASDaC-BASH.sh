@@ -1512,11 +1512,11 @@ function check_config() {
         check_min_version 8.3 "$data_pve_version" && var_pve_passwd_min=8 || var_pve_passwd_min=5
         check_min_version 8.3.7 "$data_pve_version" && var_pve_import=true || var_pve_import=false
 
-        data_is_alt_os=false data_is_alt_virt=false
-        local alt_check=$( source /etc/os-release && { [[ $NAME == 'ALT Virtualization' ]] && val=2 || { [[ $ID == 'altlinux' ]] && val=1; }; printf "$val"; }  )
+        data_is_alt_os=false data_is_alt_v=false
+        local alt_check=$( source /etc/os-release && { [[ $NAME == 'ALT Server-V' ]] && val=2 || { [[ $ID == 'altlinux' ]] && val=1; }; printf "$val"; }  )
         case $alt_check in
             1|2) data_is_alt_os=true;;&
-            2) data_is_alt_virt=true;;
+            2) data_is_alt_v=true;;
         esac
         return
     }
@@ -2126,7 +2126,7 @@ function install_stands() {
 
     $opt_dry_run && echo_warn '[Предупреждение]: включен режим dry-run. Никакие изменения в конфигурацию/ВМ внесены не будут'
     echo_info "Для выхода из программы нажмите Ctrl-C"
-    ! $opt_dry_run && ! $silent_mode && ! ${config_base[run_ifreload_tweak]} && $data_is_alt_virt && read_question '[Alt VIRT] Применить фикс сетевых интерфейсов запущенных ВМ после установки стендов?' && config_base[run_ifreload_tweak]=true
+    ! $opt_dry_run && ! $silent_mode && ! ${config_base[run_ifreload_tweak]} && $data_is_alt_v && read_question '[Alt VIRT] Применить фикс сетевых интерфейсов запущенных ВМ после установки стендов?' && config_base[run_ifreload_tweak]=true
     ! $silent_mode && { read_question 'Начать установку?' || return 0; }
     $silent_mode && { echo_info $'\n'"10 секунд для проверки правильности конфигурации"; sleep 10; }
 
@@ -2565,7 +2565,7 @@ function manage_stands() {
         }
 
         $restart_network && {
-            ! ${config_base[run_ifreload_tweak]} && $data_is_alt_virt && read_question '[Alt VIRT] Применить фикс сетевых интерфейсов запущенных ВМ?' && config_base[run_ifreload_tweak]=true
+            ! ${config_base[run_ifreload_tweak]} && $data_is_alt_v && read_question '[Alt VIRT] Применить фикс сетевых интерфейсов запущенных ВМ?' && config_base[run_ifreload_tweak]=true
             for pve_host in $vm_nodes; do
                 run_cmd "pvesh set '/nodes/$pve_host/network'"
                 echo_ok "Перезагрузка сети хоста ${c_val}$pve_host"
