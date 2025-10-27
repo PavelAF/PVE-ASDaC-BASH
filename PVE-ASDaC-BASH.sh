@@ -548,9 +548,9 @@ function configure_api_ticket() {
 		[[ "${#var_pve_ticket_pass}" -lt 32 ]] && { echo_err "Ошибка: не удалось сгенерировать пароль для служебного пользователя"; exit_clear; }
 		
 		pve_api_request '' POST /access/users "userid=$var_pve_ticket_user" "comment=Служебный: PVE-ASDaC-BASH. Создан: $( date '+%H:%M:%S %d.%m.%Y' )" "password=$var_pve_ticket_pass" || { echo_err "Ошибка: не удалось создать служебного пользователя ${c_val}${var_pve_ticket_user}"; exit_clear; }
-		opt_slow_api && sleep 1
+		$opt_slow_api && sleep 1
         pve_api_request '' PUT /access/acl "users=$var_pve_ticket_user" path=/ roles=Administrator || { echo_err "Ошибка: не удалось задать права для служебного пользователя ${c_val}${var_pve_ticket_user}"; exit_clear; }
-        opt_slow_api && sleep 1
+        $opt_slow_api && sleep 1
     }
 
     pve_api_request '' PUT "/access/users/$var_pve_ticket_user" "expire=$(( $( date +%s ) + 14400 ))" enable=1 || exit_clear
