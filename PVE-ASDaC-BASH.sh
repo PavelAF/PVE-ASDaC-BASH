@@ -633,7 +633,7 @@ function show_config() {
     [[ "$1" != opt_verbose ]] && echo
     [[ "$1" == install-change ]] && {
             echo $'Список параметров конфигурации:\n   0. Выйти из режима изменения настроек'
-            for var in inet_bridge storage iso_storage pool_name pool_desc take_snapshots run_vm_after_installation access_create $( ${config_base[access_create]} && echo access_{user_{name,desc,enable},pass_{length,chars},auth_{pve,pam}_desc} ); do
+            for var in inet_bridge storage iso_storage pool_name pool_desc take_snapshots run_vm_after_installation access_create $( ${config_base[access_create]} && echo access_{user_{name,desc,enable},pass_{length,chars}} ); do
                 printf '%4s' $((++i)); echo ". ${config_base[_$var]:-$var}: $( get_val_print "${config_base[$var]}" "$var" )"
             done
             printf '%4s' $((++i)); echo ". $_opt_dry_run: $( get_val_print $opt_dry_run )"
@@ -2076,12 +2076,12 @@ function install_stands() {
     ! $silent_mode && grep -Fwq "config_stand_${opt_sel_var}_var" <<<"${var_warning_configs[@]}" && echo_warn $'\n'"Предупреждение: выбранная конфигурация ограниченно подходит для развертывания на этом хосте PVE"
 
     ! $silent_mode && read_question 'Хотите изменить параметры?' && {
-    local _exit=false opt_names=( inet_bridge storage iso_storage pool_name pool_desc take_snapshots run_vm_after_installation access_{create,user_{name,desc,enable},pass_{length,chars},auth_{pve,pam}_desc} dry-run verbose)
+    local _exit=false opt_names=( inet_bridge storage iso_storage pool_name pool_desc take_snapshots run_vm_after_installation access_{create,user_{name,desc,enable},pass_{length,chars}} dry-run verbose)
         
     while true; do
             echo_tty "$( show_config install-change )"
             echo_tty
-            local switch=$( read_question_select 'Выберите номер настройки для изменения' '^[0-9]+$' 0 $( ${config_base[access_create]} && echo 17 || echo 10 ) '' 1 )
+            local switch=$( read_question_select 'Выберите номер настройки для изменения' '^[0-9]+$' 0 $( ${config_base[access_create]} && echo 15 || echo 10 ) '' 1 )
             echo_tty
             [[ "$switch" == 0 ]] && break
             [[ "$switch" == '' ]] && { $_exit && break; _exit=true; continue; }
@@ -2102,7 +2102,7 @@ function install_stands() {
             [[ "${config_base[$opt]}" == "$val" ]] && continue
 
             case $opt in
-                pool_desc|access_user_desc|access_auth_pve_desc|access_auth_pam_desc)
+                pool_desc|access_user_desc)
                     (config_base[$opt]="$val"; [[ "${config_base[access_auth_pam_desc]}" != '' && "${config_base[access_auth_pam_desc]}" == "${config_base[access_auth_pve_desc]}" ]] && echo_err 'Ошибка: видимые имена типов аутентификации не должны быть одинаковыми' ) && continue
 
                     descr_string_check "$val" || { echo_err 'Ошибка: введенное значение является некорректным'; continue; };;
@@ -2158,11 +2158,6 @@ function install_stands() {
     done
 
     run_cmd "pvesh set '/nodes/$var_pve_node/network'"
-
-    ${config_base[access_create]} && {
-        [[ "${config_base[access_auth_pam_desc]}" != '' ]] && run_cmd pve_api_request return_cmd PUT /access/domains/pam "'comment=${config_base[access_auth_pam_desc]}'"
-        [[ "${config_base[access_auth_pve_desc]}" != '' ]] && run_cmd pve_api_request return_cmd PUT /access/domains/pve "default=1 'comment=${config_base[access_auth_pve_desc]}'"
-    }
 
     ${config_base[run_ifreload_tweak]} && remaster_vm_netif_tweak $var_pve_node
 
@@ -2595,6 +2590,7 @@ function utilities_menu() {
         #utilities_menu[3-manage_aptrepo]='Включение no-subscription репозиториев PVE'
     }
     utilities_menu[4-remaster_vm_netif_tweak]='Твик-фикс: фикс сетевой связности для запущенных ВМ после перезагрузки сети хоста PVE'
+    utilities_menu[5-set_realm_description_tweak]='Изменить отображаемые названия аутентификаций на странице логина PVE'
 
     while true; do
         i=0
@@ -2817,6 +2813,17 @@ function remaster_vm_netif_tweak() {
     echo_ok "Переприменены настройки активных сетевых интерфейсов ВМ и CT"
 }
 
+function set_realm_description_tweak() {
+
+    config_base[access_auth_pam_desc]=$( read_question_select 'Отображаемое название аутинтификации PVE' '' '' '' "${config_base[access_auth_pam_desc]}" 1 )
+    config_base[access_auth_pve_desc]=$( read_question_select 'Отображаемое название аутинтификации PAM' '' '' '' "${config_base[access_auth_pve_desc]}" 1 )
+
+    [[ "${config_base[access_auth_pam_desc]}" != '' ]] && run_cmd pve_api_request return_cmd PUT /access/domains/pam "comment=${config_base[access_auth_pam_desc]}"
+    [[ "${config_base[access_auth_pve_desc]}" != '' ]] && run_cmd pve_api_request return_cmd PUT /access/domains/pve default=1 "comment=${config_base[access_auth_pve_desc]}"
+
+    echo_ok "Готово"
+
+}
 
 function register_ideco_ngfw_tweak() {
     echo_tty
