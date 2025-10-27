@@ -31,6 +31,9 @@ declare -A config_base=(
     [_iso_storage]='Хранилище для образов ISO'
     [iso_storage]='{auto}'
 
+    [_import_storage]='Хранилище для образов Import'
+    [import_storage]='{auto}'
+
     [_pool_name]='Шаблон имени пула стенда'
     [_def_pool_name]='Шаблон имени пула стенда по умолчанию'
     [def_pool_name]='PROF39_stand_{0}'
@@ -125,6 +128,7 @@ declare -A config_templates=(
         kvm          = 1
         rng0         = source=/dev/urandom
         disk3        = 0.2
+        disk_opt     = aio = 1 , serial = 123123
         network_0    = {bridge=inet}
     '
 )
@@ -158,20 +162,23 @@ declare -A config_stand_2_var=(
         iso_1           =  https://mirror.yandex.ru/debian/dists/sid/main/installer-amd64/current/images/netboot/mini.iso
         boot_iso_1    =      https://mirror.yandex.ru/debian/dists/sid/main/installer-amd64/current/images/netboot/mini.iso
         boot_disk1      =   https://mirror.yandex.ru/altlinux/p10/images/cloud/x86_64/alt-p10-cloud-x86_64.qcow2
+        boot_disk_1_opt      =   {  disk_options  =  " ,, !, iothread = 1 , cache=  writeback,,  ,,"}
         disk2           =  https://mirror.yandex.ru/altlinux/p10/images/cloud/x86_64/alt-p10-cloud-x86_64.qcow2
+        disk_2_opt          =  { disk_options  =  " ,, , iothread = 1 , discard=  1,,  ,," }
     '
     [vm_2]='
         name            = test-vm2
         os_descr        = test-vm
         description     = rewritred описание test-vm2
         disk_3          = 0.1
+        disk_type    =   scsi
     	config_template =    test       
         startup         =   order=10,up=10,down=10    
         machine         =    pc-i440fx-99.99|pc-i440fx-9.2   
         network_4       =       🖧: тест      
-        network2        =      {     bridge     =   "         🖧: тест        "     ,       vtag      =      100     ,        master         =      inet       }        
+        network2        =     {     bridge     =   "         🖧: тест        "     ,       vtag      =      100     ,        master         =      inet       }        
         boot_disk1      = https://disk.yandex.ru/d/QlBoJK4gqvWK2w
-        boot_disk1_opt      = { iothread=1 }
+        boot_disk_1_opt      = { iothread=1 }
     '
 )
 
@@ -209,6 +216,50 @@ c_warn=${c_warning}
 c_info=${c_lcyan}
 c_ok=${c_lgreen}
 c_success=${c_green}
+
+declare -A var_vmdisk_opts=(
+	[base,aio]=1
+	[base,cache]=1
+	[base,detect_zeroes]=1
+	[base,discard]=1
+	[base,backup]=1
+	[base,replicate]=1
+	[base,rerror]=1
+	[base,werror]=1
+	[base,serial]=1
+	[base,shared]=1
+	[base,bps]=1
+	[base,bps_max_length]=1
+	[base,bps_rd]=1
+	[base,bps_rd_max_length]=1
+	[base,iops]=1
+	[base,iops_max]=1
+	[base,iops_max_length]=1
+	[base,iops_rd]=1
+	[base,iops_rd_max]=1
+	[base,iops_rd_max_length]=1
+	[base,mbps]=1
+	[base,mbps_max]=1
+	[base,mbps_rd]=1
+	[base,mbps_rd_max]=1
+	[base,mbps_wr]=1
+	[base,mbps_wr_max]=1
+	[ide,ssd]=1
+	[ide,wwn]=1
+	[ide,model]=1
+	[sata,ssd]=1
+	[sata,wwn]=1
+	[scsi,ssd]=
+	[scsi,wwn]=1
+	[scsi,iothread]=1
+	[scsi,ro]=1
+	[scsi,product]=1
+	[scsi,vendor]=1
+	[scsi,queues]=1
+	[scsi,scsiblock]=1
+	[virtio,iothread]=1
+	[virtio,ro]=1
+)
 
 function get_val_print() {
     [[ "$1" == true ]] && echo "${c_ok}Да${c_null}" && return 0
@@ -633,7 +684,7 @@ function show_config() {
     [[ "$1" != opt_verbose ]] && echo
     [[ "$1" == install-change ]] && {
             echo $'Список параметров конфигурации:\n   0. Выйти из режима изменения настроек'
-            for var in inet_bridge storage iso_storage pool_name pool_desc take_snapshots run_vm_after_installation access_create $( ${config_base[access_create]} && echo access_{user_{name,desc,enable},pass_{length,chars},auth_{pve,pam}_desc} ); do
+            for var in inet_bridge storage iso_storage pool_name pool_desc take_snapshots run_vm_after_installation access_create $( ${config_base[access_create]} && echo access_{user_{name,desc,enable},pass_{length,chars}} ); do
                 printf '%4s' $((++i)); echo ". ${config_base[_$var]:-$var}: $( get_val_print "${config_base[$var]}" "$var" )"
             done
             printf '%4s' $((++i)); echo ". $_opt_dry_run: $( get_val_print $opt_dry_run )"
@@ -880,7 +931,7 @@ function get_file() {
         if $opt_force_download || ! { [[ -r "$filename" ]] && [[ "$filesize" == '0' || "$( wc -c "$filename" | awk '{printf $1;exit}' )" == "$filesize" ]] \
         && [[ "$filesize" -gt 102400 || "${#file_sha256}" != 64 || "$( sha256sum "$filename" | awk '{printf $1}' )" == "$file_sha256" ]]; }; then
             [[ $3 != iso ]] && configure_imgdir add-size $max_filesize
-            echo_tty "[${c_info}Info${c_null}] Скачивание файла ${c_value}${filename##*/}${c_null} Размер: ${c_value}$( echo "$filesize" | awk 'BEGIN{split("Б|КБ|МБ|ГБ|ТБ",x,"|")}{for(i=1;$1>=1024&&i<length(x);i++)$1/=1024;printf("%3.1f %s", $1, x[i]) }' )${c_null} URL: ${c_value}${diff_base:-$base_url}${c_null}"
+            echo_tty "[${c_info}Info${c_null}] Скачивание файла ${c_value}${filename##*/}${c_null} Размер: ${c_value}$( echo "$filesize" | awk 'BEGIN{split("Б|КБ|МБ|ГБ|ТБ",x,"|")}{for(i=1;$1>=1024&&i<length(x);i++)$1/=1024;printf("%3.1f %s", $1, x[i]) }' )${c_null} URL: ${c_value}${4:-$base_url}${c_null}"
             curl --max-filesize $max_filesize -fGL "$url" -o "$filename" || { echo_err "Ошибка скачивания файла ${c_value}$filename${c_err} URL: ${c_value}$url${c_err} curl exit code: $?"; exit_clear; }
             
             [[ -r "$filename" ]] || { echo_err "Файл $filename недоступен"; exit_clear; }
@@ -912,7 +963,7 @@ function get_file() {
         diff_backing=${diff_backing::-2}
         diff_full=$( mktemp -up "${config_base[mk_tmpfs_imgdir]}" "diff_full-XXXX.${filename##*/}" )
         configure_imgdir add-size "$( wc -c "$diff_base" "$url" | awk 'END{print $1}' )"
-        echo_tty "[${c_info}Info${c_null}] Формирование full${convert_compress:+(compress)} образа для ${filename##*/}"
+        echo_tty "[${c_info}Info${c_null}] Формирование full${convert_compress:+(compress)} образа для ${c_value}${filename##*/}"
         qemu-img rebase -u -F qcow2 -b "$diff_base" "$url" || { echo_err "Ошибка: манипуляция с диском '$url' завершилась с ошибкой. qemu-img rebase exit code: $?"; exit_clear; }
         var_tmp_img+=( "$diff_full" )
         qemu-img convert -m $convert_threads $convert_compress -O qcow2 "$url" "$diff_full" || { echo_err "Ошибка: создание полного образа '$url' завершилось с ошибкой. qemu-img convert exit code: $?"; exit_clear; }
@@ -1341,7 +1392,7 @@ function configure_username() {
 }
 
 function descr_string_check() {
-    [[ "$( echo -n "$1" | wc -m )" -le 200 ]] && return 0 || return 1
+    [[ ${#1} -le 200 ]] && return 0 || return 1
 }
 
 
@@ -1605,31 +1656,34 @@ function run_cmd() {
     [[ "$1" == '' ]] && { echo_err 'Ошибка run_cmd: нет команды'; exit_clear; }
 
     if $opt_dry_run; then
-        if ! $opt_verbose && [[ "$1" == pve_api_request || "$1" == pve_tapi_request ]]; then echo_tty "[${c_warning}Выполнение запроса API${c_null}] ${*:3}"
+        if ! $opt_verbose && [[ "$1" == pve_api_request || "$1" == pve_tapi_request ]]; then shift 2; echo_tty "[${c_warning}Выполнение запроса API${c_null}] ${*@Q}"
         else echo_tty "[${c_warning}Выполнение команды${c_null}] $*"; fi
     else
         
         if [[ "$1" == pve_api_request || "$1" == pve_tapi_request ]]; then
             local code
-            eval "$@" >&2
+            # run api cmd:
+            "$@" >&2
             code=$?
         else
             local return_cmd code
-            return_cmd=$( eval "$@" 2>&1 )
+            # run cmd:
+            return_cmd=$( "$@" 2>&1 )
             code=$?
         fi
         if [[ "$code" == 0 ]]; then
             $opt_verbose && {
-                if [[ "$1" == pve_api_request || "$1" == pve_tapi_request ]]; then echo_tty "[${c_ok}Выполнен запрос API${c_null}] ${c_info}${*:3}"
-                else echo_tty "[${c_ok}Выполнена команда${c_null}] ${c_info}$*${c_null}"; fi
+                if [[ "$1" == pve_api_request || "$1" == pve_tapi_request ]]; then 
+                    shift 2; echo_tty "[${c_ok}Выполнен запрос API${c_null}] ${c_info}$( echo "${@@Q}" | sed -r "s/'([^[:space:]]+)'/\1/g" )"
+                else echo_tty "[${c_ok}Выполнена команда${c_null}] ${c_info}$( echo "${@@Q}" | sed -r -e "s/'\\\''/\\\'/g" -e "s/'([^[:space:]\]*[^\[:space:]])'( |$)/\1\2/g" )${c_null}"; fi
             }
         else
             ! $to_exit && {
-                echo_tty "[${c_warning}Выполнена команда${c_null}] ${c_info}$*${c_null}"
+                echo_tty "[${c_warning}Выполнена команда${c_null}] ${c_info}$( echo "${@@Q}" | sed -r -e "s/'\\\''/\\\'/g" -e "s/'([^[:space:]\]*[^\[:space:]])'( |$)/\1\2/g" )${c_null}"
                 return $code
             }
             [[ "$1" == pve_api_request || "$1" == pve_tapi_request ]] && echo_tty "[${c_err}Запрос API${c_null}] $3 ${config_base[pve_api_url]}${*:4}"
-            echo_err "Ошибка выполнения команды: $*"
+            echo_err "Ошибка выполнения команды: $( echo "${@@Q}" | sed -r -e "s/'\\\''/\\\'/g" -e "s/'([^[:space:]\]*[^\[:space:]])'( |$)/\1\2/g" )"
             echo_tty "${c_red}Error output: ${c_warning}$return_cmd${c_null}"
             exit_clear
         fi
@@ -1683,18 +1737,18 @@ function deploy_stand_config() {
             fi
 
             Networking[$iface]="$if_desc"
-            ! $special && cmd_line+=" --net$if_num '${netifs_type:-virtio}${if_mac:+"=$if_mac"},bridge=$iface$net_options'"
+            ! $special && cmd_line+=( --net$if_num "${netifs_type:-virtio}${if_mac:+"=$if_mac"},bridge=$iface$net_options" )
 
             if_desc=${if_desc/\{0\}/$stand_num}
             $create_if && {
-                run_cmd /noexit pve_api_request return_cmd POST "/nodes/$var_pve_node/network" "'iface=$iface' type=bridge autostart=1 'comments=$if_desc'${vlan_aware}${vlan_slave:+" 'bridge_ports=${vlan_slave}'"}" \
+                run_cmd /noexit pve_api_request return_cmd POST "/nodes/$var_pve_node/network" "iface=$iface" type=bridge autostart=1 "comments=$if_desc" ${vlan_aware:+"bridge_vlan_aware=1"} "${vlan_slave:+"bridge_ports=${vlan_slave}"}" \
                     || { echo_err "Интерфейс '$iface' ($if_desc) уже существует! Выход"; exit_clear; } 
                 echo_ok "Создан bridge интерфейс ${c_value}$iface${c_info} : ${c_value}$if_desc"
             }
 
             ! $special && $create_access_network && ${config_base[access_create]} && [[ "${vm_config[access_role]}" != NoAccess || "${config_base[access_role]}" == '' && "${config_base[pool_access_role]}" != '' && "${config_base[pool_access_role]}" != NoAccess ]] && [[ "$access_role" != NoAccess ]] && { 
-                $create_if && { run_cmd /noexit pve_api_request return_cmd PUT /access/acl "'path=/sdn/zones/localnetwork/$iface' 'users=$username' 'roles=${access_role:-PVEAuditor}'" || { echo_err "Не удалось создать ACL правило для сетевого интерфейса '$iface' и пользователя '$username'"; exit_clear; } } \
-                    || run_cmd /noexit pve_api_request return_cmd PUT /access/acl "'path=/sdn/zones/localnetwork/$iface' 'groups=$stands_group' 'roles=${access_role:-PVEAuditor}'" || { echo_err "Не удалось создать ACL правило для сетевого интерфейса '$iface' и пользователя '$username'"; exit_clear; }
+                $create_if && { run_cmd /noexit pve_api_request return_cmd PUT /access/acl "path=/sdn/zones/localnetwork/$iface" "users=$username" "roles=${access_role:-PVEAuditor}" || { echo_err "Не удалось создать ACL правило для сетевого интерфейса '$iface' и пользователя '$username'"; exit_clear; } } \
+                    || run_cmd /noexit pve_api_request return_cmd PUT /access/acl "path=/sdn/zones/localnetwork/$iface" "groups=$stands_group" "roles=${access_role:-PVEAuditor}" || { echo_err "Не удалось создать ACL правило для сетевого интерфейса '$iface' и пользователя '$username'"; exit_clear; }
             }
             
             $special && eval "$4=$iface"
@@ -1723,10 +1777,10 @@ function deploy_stand_config() {
             if_config="${BASH_REMATCH[4]}"
             [[ "$if_config" =~ ,\ *firewall\ *=\ *1\ *($|,.+$) ]] && net_options+=',firewall=1'
             [[ "$if_config" =~ ,\ *state\ *=\ *down\ *($|,.+$) ]] && net_options+=',link_down=1'
-            [[ "$if_config" =~ ,\ *vlan_aware\ *=\ *(1|true|yes)\ *($|,.+$) ]] && vlan_aware=' bridge_vlan_aware=1'
+            [[ "$if_config" =~ ,\ *vlan_aware\ *=\ *(1|true|yes)\ *($|,.+$) ]] && vlan_aware=1
             [[ "$if_config" =~ ,\ *access_role\ *=\ *([a-zA-Z0-9_\-]+)\ *($|,.+$) ]] && $create_access_network && { access_role=${BASH_REMATCH[1]}; set_role_config $access_role; }
-            [[ "$if_config" =~ ,\ *trunks\ *=\ *([0-9\;]*[0-9])\ *($|,.+$) ]] && net_options+=",trunks=${BASH_REMATCH[1]}" && vlan_aware=' bridge_vlan_aware=1'
-            [[ "$if_config" =~ ,\ *tag\ *=\ *([1-9][0-9]{0,2}|[1-3][0-9]{3}|40([0-8][0-9]|9[0-4]))\ *($|,.+$) ]] && net_options+=",tag=${BASH_REMATCH[1]}" && vlan_aware=" bridge_vlan_aware=1"
+            [[ "$if_config" =~ ,\ *trunks\ *=\ *([0-9\;]*[0-9])\ *($|,.+$) ]] && net_options+=",trunks=${BASH_REMATCH[1]}" && vlan_aware=1
+            [[ "$if_config" =~ ,\ *tag\ *=\ *([1-9][0-9]{0,2}|[1-3][0-9]{3}|40([0-8][0-9]|9[0-4]))\ *($|,.+$) ]] && net_options+=",tag=${BASH_REMATCH[1]}" && vlan_aware=1
             [[ "$if_config" =~ ,\ *mac\ *=\ *([^\ ]+)\ *($|,.+$) ]] && { if_mac=${BASH_REMATCH[1]}; }
             [[ "$if_config" =~ ,\ *vtag\ *=\ *([1-9][0-9]{0,2}|[1-3][0-9]{3}|40([0-8][0-9]|9[0-4]))\ *($|,.+$) ]] && {
                 local tag="${BASH_REMATCH[1]}"
@@ -1741,7 +1795,7 @@ function deploy_stand_config() {
                         echo_err "Ошибка конфигурации: повторная попытка создать VLAN интерфейс для связки с другим Bridge"; exit_clear
                     elif [[ ! -v "Networking[$master_if.$tag]" ]]; then
                         [[ "$if_desc" == "" ]] && if_desc="$if_bridge"
-                        run_cmd /noexit pve_api_request return_cmd POST "/nodes/$var_pve_node/network" "'iface=$master_if.$tag' type=vlan autostart=1 'comments=$master_desc => $if_desc'" \
+                        run_cmd /noexit pve_api_request return_cmd POST "/nodes/$var_pve_node/network" "iface=$master_if.$tag" type=vlan autostart=1 "comments=$master_desc => $if_desc" \
                             || { echo_err "Интерфейс '$iface' ($if_desc) уже существует! Выход"; exit_clear; }
                         echo_ok "Создан VLAN интерфейс $master_if.$tag : '$master_desc => $if_desc'${c_null}"
                         Networking["${master_if}.$tag"]="{vlan=$if_bridge}"
@@ -1764,12 +1818,12 @@ function deploy_stand_config() {
 
         for net in "${!Networking[@]}"; do
             [[ "${Networking["$net"]}" != "$if_desc" ]] && continue
-            cmd_line+=" --net$if_num '${netifs_type:-virtio}${if_mac:+"=$if_mac"},bridge=$net$net_options'"
+            cmd_line+=( --net$if_num "${netifs_type:-virtio}${if_mac:+"=$if_mac"},bridge=$net$net_options" )
             ! $opt_dry_run && [[ "$vlan_slave" != '' || "$vlan_aware" != '' ]] && ! [[ "$vlan_slave" != '' && "$vlan_aware" != '' ]] && {
                 local port_info if_update=false
                 pve_api_request port_info GET "/nodes/$var_pve_node/network/$net" || { echo_err "Ошибка: не удалось получить параметры сетевого интерфейса ${c_val}$net"; exit_clear; }
 
-                [[ "$port_info" =~ (,|\{)\"bridge_vlan_aware\":1(,|\}) ]] && vlan_aware=' bridge_vlan_aware=1' || { [[ "$vlan_aware" != '' ]] && if_update=true; }
+                [[ "$port_info" =~ (,|\{)\"bridge_vlan_aware\":1(,|\}) ]] && vlan_aware=1 || { [[ "$vlan_aware" != '' ]] && if_update=true; }
                 [[ "$port_info" =~ (,|\{)\"bridge_ports\":\"([^\"]+)\" ]] && {
                     { [[ "$vlan_slave" == '' ]] || printf '%s\n' ${BASH_REMATCH[2]} | grep -Fxq -- "$vlan_slave"; } && vlan_slave="${BASH_REMATCH[2]}" || {
                         vlan_slave="$vlan_slave ${BASH_REMATCH[2]}"
@@ -1777,7 +1831,7 @@ function deploy_stand_config() {
                     }
                 } || [[ "$vlan_slave" != '' ]] && if_update=true
                 
-                $if_update && run_cmd pve_api_request return_cmd PUT "/nodes/$var_pve_node/network/$net" "type=bridge${vlan_aware}${vlan_slave:+" 'bridge_ports=${vlan_slave}'"}"
+                $if_update && run_cmd pve_api_request return_cmd PUT "/nodes/$var_pve_node/network/$net" type=bridge ${vlan_aware:+"bridge_vlan_aware=1"} "${vlan_slave:+"bridge_ports=${vlan_slave}"}"
             }
             return 0
         done
@@ -1790,8 +1844,48 @@ function deploy_stand_config() {
     }
 
     function set_disk_conf() {
-        [[ "$1" == '' || "$2" == '' && "$1" != test ]] && { echo_err 'Ошибка: set_disk_conf нет аргумента'; exit_clear; }
-        [[ "$1" == 'test' ]] && { [[ "$disk_type" =~ ^(ide|sata|scsi|virtio)$ ]] && return 0; echo_err "Ошибка: указаный в конфигурации тип диска '$disk_type' не является корректным [ide|sata|scsi|virtio]"; exit_clear; }
+
+        function place_disk_options() {
+            ! [[ $config_disk_opts ]] && return
+            
+            local item cmd_disk_opts IFS=','
+            local -A dup_item
+            for item in $config_disk_opts; do
+                [[ ${#item} == 0 ]] && continue
+                [[ "$item" =~ ^\ *([^ ]+)\ *=\ *([^ ]+(|\ *[^ ]+)*)\ *$ ]] || { echo_err "Ошибка $FUNCNAME: некорректный синтаксис опции '$item'"; exit_clear; }
+
+                [[ -v "dup_item[${BASH_REMATCH[1]}]" ]] && continue
+
+                ! [[ -v "var_vmdisk_opts[base,${BASH_REMATCH[1]}]" || -v "var_vmdisk_opts[$disk_type,${BASH_REMATCH[1]}]" ]] && {
+                    [[ -v "var_vmdisk_opts[ide,${BASH_REMATCH[1]}]" || -v "var_vmdisk_opts[scsi,${BASH_REMATCH[1]}]" ]] && {
+                        echo_verbose "$FUNCNAME: Пропущена опция ${BASH_REMATCH[1]} как несовместимая для диска типа $disk_type"
+                        continue
+                    }
+                    echo_err "Ошибка $FUNCNAME: некорректный параметр диска: '${BASH_REMATCH[1]}'"
+                    exit_clear
+                }
+                
+                cmd_disk_opts+="${BASH_REMATCH[1]}=${BASH_REMATCH[2]},"
+                dup_item[${BASH_REMATCH[1]}]=1
+            done
+            cmd_disk_opts=','${cmd_disk_opts::-1}
+            # add options to the end: cmd_line[-1]
+            cmd_line[$(( ${#cmd_line[@]} - 1 ))]+=$cmd_disk_opts
+        }
+        [[ "$1" == 'test' ]] && { 
+            [[ "$disk_type" =~ ^(ide|sata|scsi|virtio)$ ]] && return 0
+            echo_err "Ошибка: указаный в конфигурации тип диска '$disk_type' не является корректным [ide|sata|scsi|virtio]"
+            exit_clear
+        }
+        [[ "$1" == 'resize-disk' ]] && {
+            [[ ${#resize_disks[@]} == 0 ]] && return
+            local e
+            for e in ${!resize_disks[@]}; do
+                run_cmd /noexit pvesh set "/nodes/$var_pve_node/qemu/$vmid/resize" --disk "$e" --size "${resize_disks[$e]}" || { echo_err "Ошибка: не удалось изменить размер '$e' диска ВМ '$vmid'. Выход"; exit_clear; }
+            done
+            return
+        }
+        [[ "$1" == '' || "$2" == '' ]] && { echo_err 'Ошибка: set_disk_conf нет аргумента'; exit_clear; }
         [[ ! "$1" =~ ^(boot_|)(disk|iso)_?[0-9]+$ ]] && { echo_err "Ошибка: неизвестный параметр ВМ '$1'" && exit_clear; }
         local _exit=false
         case "$disk_type" in
@@ -1803,33 +1897,67 @@ function deploy_stand_config() {
         $_exit && { echo_err "Ошибка: невозможно присоедиить больше $disk_num дисков типа '$disk_type' к ВМ '$elem'. Выход"; exit_clear;}
 
         if [[ ${BASH_REMATCH[2]} == disk ]]; then
-            if [[ "${BASH_REMATCH[1]}" != boot_ ]] && [[ "$2" =~ ^([0-9]+(|\.[0-9]+))\ *([gGГг][bBБб]?)?$ ]]; then
-                cmd_line+=" --${disk_type}${disk_num} '${config_base[storage]}:${BASH_REMATCH[1]},format=$config_disk_format'";
-            else
+            # For disk_X = 1GB:
+            if [[ "${BASH_REMATCH[1]}" != boot_ ]] && [[ "$2" =~ ^([0-9]+(|\.[0-9]+))\ *([GbГг][BbБб]?)?$ ]]; then
+                cmd_line+=( "--${disk_type}${disk_num}" "${config_base[storage]}:${BASH_REMATCH[1]},format=$config_disk_format" );
+            else # disk_X = FILEPATH
                 [[ ${BASH_REMATCH[1]} == boot_ ]] && {
                     [[ $boot_order ]] && boot_order+=';'
                     boot_order+="${disk_type}${disk_num}"
                 }
-                local file="$2" disk_opts cmd_disk_opts
+                local file="$2"
                 get_file file || exit_clear
-                if [[ -v vm_config[$1_opt] ]]; then
-                    [[ ${vm_config[$1_opt]} =~ ^\{\ *([^{}]*)\ *\}$ ]] || exit_clear
-                    disk_opts=${BASH_REMATCH[1]}
-                    [[ $disk_opts =~ (^|,\ *)overlay_img\ *=\ *([^, ]+(\ +[^, ]+|))* ]] && {
-                        get_file file '' diff "${BASH_REMATCH[2]}" || exit_clear
-                    }
-                    [[ $disk_opts =~ (^|,\ *)iothread\ *=\ *1($|\ *,) ]] && cmd_disk_opts+=',iothread=1'
-                fi
-                cmd_line+=" --${disk_type}${disk_num} '${config_base[storage]}:0,format=$config_disk_format$cmd_disk_opts,import-from=$file'"
+                cmd_line+=( "--${disk_type}${disk_num}" "${config_base[storage]}:0,format=$config_disk_format,import-from=$file" )
             fi
-        else
+            if [[ -v vm_config[disk_opt] ]]; then
+                local config_disk_opts
+                config_disk_opts="${vm_config[disk_opt]},"
+            fi
+            if [[ -v vm_config[${1}_opt] ]]; then
+                local disk_opts
+                ! [[ -v config_disk_opts ]] && local config_disk_opts
+                [[ ${vm_config[${1}_opt]} =~ ^\{\ *([^{}]*)\ *\}$ ]] || exit_clear
+                disk_opts=${BASH_REMATCH[1]}
+                [[ $disk_opts =~ (^|,\ *)overlay_img\ *=\ *([^, ]+(\ +[^, ]+)*) ]] && {
+                    if [[ ! $file ]]; then
+                        echo_warn "Предупреждение: недопустимая опция 'overlay_img' при создании нового диска"
+                    else
+                        get_file file '' diff "${BASH_REMATCH[2]}" || exit_clear
+                    fi
+                }
+
+                # legacy support
+                [[ $disk_opts =~ (^|,\ *)iothread\ *=\ *1\ *($|,) ]] && { [[ $disk_type == scsi || $disk_type == virtio ]] \
+                    && config_disk_opts='iothread=1,'$config_disk_opts; echo_warn "Предупреждение: устаревший способ указания параметра 'iothread=1' напрямую в '${1}_opt'. Используйте под опцию disk_options"; }
+                # adding overridden options
+                [[ $disk_opts =~ (^|,\ *)disk_options\ *=\ *\"[\ \,]*([^\" \,]*([\ \,]+[^\" \,]+)*)[\ \,]*\"($|\ *,) ]] && {
+                    if [[ ${BASH_REMATCH[2]::1} == '!' ]]; then
+                        config_disk_opts=${BASH_REMATCH[2]:1}
+                    else
+                        config_disk_opts=${BASH_REMATCH[2]}','$config_disk_opts
+                    fi
+                    config_disk_opts=${config_disk_opts// /}
+                }
+                # resize disk
+                [[ $disk_opts =~ (^|,\ *)size\ *=\ *(\+?\ *[0-9]+(\.\d+)?)\ *([kKmMGgtTкКмМГгтТ][BbБб]?)?($|\ *,) ]] && {
+                    case ${BASH_REMATCH[3]^^} in
+                        K | К )      resize_disks[${disk_type}${disk_num}]="${BASH_REMATCH[2]// /}K";;
+                        M | М )      resize_disks[${disk_type}${disk_num}]="${BASH_REMATCH[2]// /}M";;
+                        G | Г | '' ) resize_disks[${disk_type}${disk_num}]="${BASH_REMATCH[2]// /}G";;
+                        T | Т )      resize_disks[${disk_type}${disk_num}]="${BASH_REMATCH[2]// /}T";;
+                    esac
+                }
+            fi
+            # check && format && place disk_options to cmd_line
+            place_disk_options
+        else # ISO img
             [[ ${BASH_REMATCH[1]} == boot_ ]] && {
                 [[ $boot_order ]] && boot_order+=';'
                 boot_order+="${disk_type}${disk_num}"
             }
             local file="$2"
             get_file file '' iso || exit_clear
-            cmd_line+=" --${disk_type}${disk_num} '${config_base[iso_storage]}:iso/$file,media=cdrom'"
+            cmd_line+=( "--${disk_type}${disk_num}" "${config_base[iso_storage]}:iso/$file,media=cdrom" )
 
         fi
         ((disk_num++))
@@ -1837,14 +1965,14 @@ function deploy_stand_config() {
 
     function set_role_config() {
         [[ "$1" == '' ]] && { echo_err "Ошибка $FUNCNAME: нет аргумента"; exit_clear; }
-        [[ "$1" =~ ^[a-zA-Z0-9\.\-_]+$ ]] || { echo_err "Ошибка $FUNCNAME: указанное имя роли '$1' некорректное"; exit_clear; }
+        [[ "$1" =~ ^[a-zA-Z0-9._-]+$ ]] || { echo_err "Ошибка $FUNCNAME: указанное имя роли '$1' некорректное"; exit_clear; }
         local i role role_exists
         role_exists=false
         for ((i=1; i<=$( echo -n "${roles_list[roleid]}" | grep -c \^ ); i++)); do
             role=$( echo "${roles_list[roleid]}" | sed "${i}q;d" )
             [[ "$1" != "$role" ]] && continue
             [[ -v "config_access_roles[$1]" && "$( echo "${roles_list[privs]}" | sed "${i}q;d" )" != "${config_access_roles[$1]}" ]] && {
-                    run_cmd pve_api_request return_cmd PUT "/access/roles/$1" "'privs=${config_access_roles[$1]}'"
+                    run_cmd pve_api_request return_cmd PUT "/access/roles/$1" "privs=${config_access_roles[$1]}"
                     echo_ok "Обновлены права access роли ${c_val}$1"
                     roles_list[roleid]=$( echo "$1"; echo -n "${roles_list[roleid]}" )
                     roles_list[privs]=$( echo "${config_access_roles[$1]}"; echo -n "${roles_list[privs]}" )
@@ -1854,7 +1982,7 @@ function deploy_stand_config() {
         done
         ! $role_exists && {
             [[ ! -v "config_access_roles[$1]" ]] && { echo_err "Ошибка: в конфигурации для установки ВМ '$elem' установлена несуществующая access роль '$1'. Выход"; exit_clear; }
-            run_cmd pve_api_request return_cmd POST /access/roles "'roleid=$1' 'privs=${config_access_roles[$1]}'"
+            run_cmd pve_api_request return_cmd POST /access/roles "roleid=$1" "privs=${config_access_roles[$1]}"
             echo_ok "Создана access роль ${c_val}$1"
             roles_list[roleid]=$( echo "$1"; echo -n "${roles_list[roleid]}" )
             roles_list[privs]=$( echo "${config_access_roles[$1]}"; echo -n "${roles_list[privs]}" )
@@ -1883,16 +2011,16 @@ function deploy_stand_config() {
                 exit_clear
             fi
         }
-        cmd_line+=" --machine '$type'"
+        cmd_line+=( --machine "$type" )
     }
 
     function set_firewall_opt() {
         [[ "$1" == '' ]] && return 1
         local opt=''
         echo -n "$1" | grep -Pq '^{[^{}]*}$' || { echo_err "Ошибка set_firewall_opt: ВМ '$elem' некорректный синтаксис"; exit_clear; }
-        echo -n "$1" | grep -Pq '(^{|,) ?enable ?= ?1 ?(,? ?}$|,)' && opt+=" enable=1"
-        echo -n "$1" | grep -Pq '(^{|,) ?dhcp ?= ?1 ?(,? ?}$|,)' && opt+=" dhcp=1"
-        [[ "$opt" != '' ]] && run_cmd pve_api_request return_cmd PUT "/nodes/$var_pve_node/qemu/$vmid/firewall/options" "${opt}"
+        echo -n "$1" | grep -Pq '(^{|,) ?enable ?= ?1 ?(,? ?}$|,)' && opt+=' enable=1'
+        echo -n "$1" | grep -Pq '(^{|,) ?dhcp ?= ?1 ?(,? ?}$|,)' && opt+=' dhcp=1'
+        [[ "$opt" != '' ]] && run_cmd pve_api_request return_cmd PUT "/nodes/$var_pve_node/qemu/$vmid/firewall/options" ${opt}
     }
 
     [[ "$1" == '' ]] && { echo_err "Внутренняя ошибка скрипта установки стенда"; exit_clear; }
@@ -1909,25 +2037,26 @@ function deploy_stand_config() {
     pve_api_request pve_net_ifs GET /nodes/$var_pve_node/network || { echo_err "Ошибка: не удалось загрузить список сетевых интерфейсов"; exit_clear; }
     pve_net_ifs=$( echo -n "$pve_net_ifs" | grep -Po '({|,)"iface":"\K[^"]+' )
 
-    run_cmd /noexit pve_api_request return_cmd POST /pools "'poolid=$pool_name' 'comment=${config_base[pool_desc]/\{0\}/$stand_num}'" || { echo_err "Ошибка: не удалось создать пул '$pool_name'"; exit_clear; }
-    run_cmd pve_api_request return_cmd PUT /access/acl "'path=/pool/$pool_name' 'groups=$stands_group' roles=NoAccess  propagate=0"
+    run_cmd /noexit pve_api_request return_cmd POST /pools "poolid=$pool_name" "comment=${config_base[pool_desc]/\{0\}/$stand_num}" || { echo_err "Ошибка: не удалось создать пул '$pool_name'"; exit_clear; }
+    run_cmd pve_api_request return_cmd PUT /access/acl "path=/pool/$pool_name" "groups=$stands_group" roles=NoAccess  propagate=0
     echo_ok "Создан пул стенда ${c_val}$pool_name"
 
     ${config_base[access_create]} && {
         local username="${config_base[access_user_name]/\{0\}/$stand_num}@pve"
         
-        run_cmd /noexit pve_api_request return_cmd POST /access/users "'userid=$username' 'groups=$stands_group' 'enable=$( get_int_bool "${config_base[access_user_enable]}" )' 'comment=${config_base[access_user_desc]/\{0\}/$stand_num}'" \
+        run_cmd /noexit pve_api_request return_cmd POST /access/users "userid=$username" "groups=$stands_group" "enable=$( get_int_bool "${config_base[access_user_enable]}" )" "comment=${config_base[access_user_desc]/\{0\}/$stand_num}" \
             || { echo_err "Ошибка: не удалось создать пользователя '$username'"; exit_clear; }
         
         if [[ "${config_base[pool_access_role]}" != '' && "${config_base[pool_access_role]}" != NoAccess ]]; then
             set_role_config "${config_base[pool_access_role]}"
-            run_cmd pve_api_request return_cmd PUT /access/acl "'path=/pool/$pool_name' 'users=$username' 'roles=${config_base[pool_access_role]}'"
-        else run_cmd pve_api_request return_cmd PUT /access/acl "'path=/pool/$pool_name' 'users=$username' roles=PVEAuditor propagate=0"; fi
+            run_cmd pve_api_request return_cmd PUT /access/acl "path=/pool/$pool_name" "users=$username" "roles=${config_base[pool_access_role]}"
+        else run_cmd pve_api_request return_cmd PUT /access/acl "path=/pool/$pool_name" "users=$username" roles=PVEAuditor propagate=0; fi
         echo_ok "Создан пользователь стенда ${c_val}$username"
     }
 
-    local cmd_line netifs_type='virtio' netifs_mac disk_type='scsi' disk_num=0 boot_order vm_template vm_name
-    local -A vm_config=()
+    local netifs_type='virtio' netifs_mac disk_type='scsi' disk_num=0 boot_order vm_template vm_name
+    local -A vm_config=() resize_disks=()
+    local -a cmd_line
 
     for elem in $(printf '%s\n' "${!config_var[@]}" | grep -P 'vm_\d+' | sort -V ); do
 
@@ -1937,6 +2066,7 @@ function deploy_stand_config() {
         disk_num=0
         boot_order=''
         vm_config=()
+        resize_disks=()
         vm_template="$( get_dict_value config_stand_${opt_sel_var}_var[$elem] config_template )"
 
         [[ "$vm_template" != '' ]] && {
@@ -1949,7 +2079,7 @@ function deploy_stand_config() {
 
         [[ "$vm_name" == '' ]] && vm_name="$elem"
 
-        cmd_line="qm create '$vmid' --name '$vm_name' --pool '$pool_name'"
+        cmd_line=( qm create "$vmid" --name "$vm_name" --pool "$pool_name" )
 
         [[ "${vm_config[netifs_type]}" != '' ]] && netifs_type="${vm_config[netifs_type]}" && unset -v 'vm_config[netifs_type]'
         [[ "${vm_config[disk_type]}" != '' ]] && disk_type="${vm_config[disk_type]}" && unset -v 'vm_config[disk_type]'
@@ -1960,25 +2090,27 @@ function deploy_stand_config() {
         for opt in $( printf '%s\n' "${!vm_config[@]}" | sort -V ); do
             case "$opt" in
                 startup|tags|ostype|serial[0-3]|agent|scsihw|cpu|cores|memory|bwlimit|description|args|arch|vga|kvm|rng0|acpi|tablet|reboot|startdate|tdf|cpulimit|cpuunits|balloon|hotplug)
-                    cmd_line+=" --$opt '${vm_config[$opt]}'";;
+                    cmd_line+=( --$opt "${vm_config[$opt]}" );;
                 network*) set_netif_conf "$opt" "${vm_config[$opt]}";;
-                bios) [[ "${vm_config[$opt]}" == ovmf ]] && cmd_line+=" --bios 'ovmf' --efidisk0 '${config_base[storage]}:0,format=$config_disk_format'" || cmd_line+=" --$opt '${vm_config[$opt]}'";;
+                bios) [[ "${vm_config[$opt]}" == ovmf ]] && cmd_line+=( --bios ovmf --efidisk0 "${config_base[storage]}:0,format=$config_disk_format" ) || cmd_line+=( --$opt "${vm_config[$opt]}" );;
                 ?(boot_)@(disk|iso)_+([0-9])) set_disk_conf "$opt" "${vm_config[$opt]}";;
                 access_role) ${config_base[access_create]} && set_role_config "${vm_config[$opt]}";;
                 machine) set_machine_type "${vm_config[$opt]}";;
-                firewall_opt|?(boot_)@(disk|iso)_+([0-9])_opt|templ_*) continue;;
+                firewall_opt|disk_opt|?(boot_)@(disk|iso)_+([0-9])_opt|templ_*) continue;;
                 *) echo_warn "[Предупреждение]: обнаружен неизвестный параметр конфигурации '$opt = ${vm_config[$opt]}' ВМ '$vm_name'. Пропущен"
             esac
         done
-        [[ "$boot_order" != '' ]] && cmd_line+=" --boot 'order=$boot_order'"
+        [[ "$boot_order" != '' ]] && cmd_line+=( --boot "order=$boot_order" )
 
-        run_cmd /noexit "$cmd_line" || { echo_err "Ошибка: не удалось создать ВМ '$vm_name' стенда '$pool_name'. Выход"; exit_clear; }
+        run_cmd /noexit "${cmd_line[@]}" || { echo_err "Ошибка: не удалось создать ВМ '$vm_name' стенда '$pool_name'. Выход"; exit_clear; }
+
+        set_disk_conf resize-disk
 
         set_firewall_opt "${vm_config[firewall_opt]}"
 
-        ${config_base[access_create]} && [[ "${vm_config[access_role]}" != '' ]] && run_cmd pve_api_request return_cmd PUT /access/acl "'path=/vms/$vmid' 'roles=${vm_config[access_role]}' 'users=$username'"
+        ${config_base[access_create]} && [[ "${vm_config[access_role]}" ]] && run_cmd pve_api_request return_cmd PUT /access/acl "path=/vms/$vmid" "roles=${vm_config[access_role]}" "users=$username"
 
-        ${config_base[take_snapshots]} && run_cmd "pvesh create '/nodes/$var_pve_node/qemu/$vmid/snapshot' --snapname 'Start' --description 'Исходное состояние ВМ'"
+        ${config_base[take_snapshots]} && run_cmd pvesh create "/nodes/$var_pve_node/qemu/$vmid/snapshot" --snapname Start --description 'Исходное состояние ВМ'
 
         ${config_base[run_vm_after_installation]} && manage_bulk_vm_power --add "$var_pve_node" "$vmid"
 
@@ -1987,7 +2119,6 @@ function deploy_stand_config() {
     done
 
     echo_ok "Конфигурирование стенда ${c_value}$pool_name${c_null} завершено"
-    shopt -u extglob
 }
 
 var_passwd_chars=$(GB_='T';QC_='ц';a_='n';C_='h';CC_='и';A_='e';ED_='Э';RB_=',';tC_='Т';FC_='л';w_='K';OB_=':';t_='H';UB_='№';D_='o';vC_='Ф';xB_='е';XB_='#';uC_='У';aC_='А';XC_='э';WB_='@';f_='t';VB_='!';vB_='г';d_='r';jB_='-';jC_='И';kB_='_';FB_='S';uB_='в';p_='D';g_='u';dC_='Г';sB_='а';SC_='ш';bB_='&';hC_='Ж';E_=' ';DD_='Ь';R_='b';k_='y';N_='7';v_='J';eB_=')';B_='c';pC_='О';BC_='з';NB_='"';DC_='й';eC_='Д';y_='M';U_='g';EB_='R';oC_='Н';CB_='P';wB_='д';AC_='ж';GC_='м';bC_='Б';n_='B';mB_='=';ZB_='%';KC_='р';s_='G';M_='6';X_='k';m_='A';O_='8';q_='E';NC_='у';RC_='ч';FD_='Ю';F_=''\''';UC_='ъ';sC_='С';IB_='V';aB_='^';j_='x';OC_='ф';MC_='т';u_='I';SB_='.';r_='F';I_='2';WC_='ь';gC_='Ё';lB_='+';o_='C';K_='4';J_='3';rB_='`';G_='0';tB_='б';h_='v';BB_='O';e_='s';qB_='~';mC_='Л';cB_='*';EC_='к';L_='5';c_='q';YC_='ю';HC_='н';iB_='}';kC_='Й';JB_='W';VC_='ы';fB_='[';_=$'\n';PC_='х';Z_='m';DB_='Q';Q_='a';H_='1';cC_='В';ZC_='я';T_='f';lC_='К';P_='9';x_='L';LC_='с';MB_='Z';GD_='Я';S_='d';CD_='Ы';dB_='(';KB_='X';TC_='щ';pB_='/';V_='i';b_='p';YB_='$';yC_='Ш';AB_='N';oB_='|';LB_='Y';JC_='п';Y_='l';iC_='З';nC_='М';W_='j';i_='w';xC_='Ц';qC_='П';QB_='<';fC_='Е';TB_='?';PB_=';';nB_='\';rC_='Р';wC_='Х';HD_='>';IC_='о';HB_='U';hB_='{';l_='_';BD_='Ъ';gB_=']';AD_='Щ';yB_='ё';eval "$A_$B_$C_$D_$E_$F_$G_$H_$I_$J_$K_$L_$M_$N_$O_$P_$Q_$R_$B_$S_$A_$T_$U_$C_$V_$W_$X_$Y_$Z_$a_$D_$b_$c_$d_$e_$f_$g_$h_$i_$j_$k_$l_$m_$n_$o_$p_$q_$r_$s_$t_$u_$v_$w_$x_$y_$AB_$BB_$CB_$DB_$EB_$FB_$GB_$HB_$IB_$JB_$KB_$LB_$MB_$NB_$OB_$PB_$QB_$E_$RB_$SB_$TB_$UB_$VB_$WB_$XB_$YB_$ZB_$aB_$bB_$cB_$dB_$eB_$fB_$gB_$hB_$iB_$jB_$kB_$lB_$mB_$nB_$oB_$pB_$qB_$rB_$sB_$tB_$uB_$vB_$wB_$xB_$yB_$AC_$BC_$CC_$DC_$EC_$FC_$GC_$HC_$IC_$JC_$KC_$LC_$MC_$NC_$OC_$PC_$QC_$RC_$SC_$TC_$UC_$VC_$WC_$XC_$YC_$ZC_$aC_$bC_$cC_$dC_$eC_$fC_$gC_$hC_$iC_$jC_$kC_$lC_$mC_$nC_$oC_$pC_$qC_$rC_$sC_$tC_$uC_$vC_$wC_$xC_$yC_$AD_$BD_$CD_$DD_$ED_$FD_$GD_$F_$nB_$F_$PB_$A_$B_$C_$D_$E_$YB_$F_$nB_$a_$nB_$A_$fB_$H_$Z_$nB_$A_$fB_$G_$PB_$P_$M_$Z_$CB_$d_$D_$j_$Z_$D_$j_$E_$IB_$q_$E_$m_$g_$f_$D_$Z_$Q_$f_$V_$B_$E_$e_$f_$Q_$a_$S_$E_$S_$A_$b_$Y_$D_$k_$Z_$A_$a_$f_$E_$Q_$a_$S_$E_$B_$D_$a_$T_$V_$U_$g_$d_$Q_$f_$V_$D_$a_$nB_$A_$fB_$Z_$E_$e_$B_$d_$V_$b_$f_$E_$R_$k_$E_$nB_$A_$fB_$H_$PB_$J_$I_$Z_$CB_$Q_$h_$A_$Y_$m_$r_$nB_$A_$fB_$Z_$nB_$a_$s_$V_$f_$t_$g_$R_$E_$Y_$V_$a_$X_$OB_$E_$nB_$A_$fB_$H_$PB_$J_$K_$Z_$nB_$A_$fB_$K_$Z_$nB_$A_$gB_$O_$PB_$PB_$C_$f_$f_$b_$e_$OB_$pB_$pB_$U_$V_$f_$C_$g_$R_$SB_$B_$D_$Z_$pB_$CB_$Q_$h_$A_$Y_$m_$r_$pB_$CB_$IB_$q_$jB_$m_$FB_$p_$Q_$o_$jB_$n_$m_$FB_$t_$nB_$Q_$C_$f_$f_$b_$e_$OB_$pB_$pB_$U_$V_$f_$C_$g_$R_$SB_$B_$D_$Z_$pB_$CB_$Q_$h_$A_$Y_$m_$r_$pB_$CB_$IB_$q_$jB_$m_$FB_$p_$Q_$o_$jB_$n_$m_$FB_$t_$nB_$A_$gB_$O_$PB_$PB_$nB_$Q_$nB_$A_$fB_$Z_$nB_$a_$F_$HD_$pB_$S_$A_$h_$pB_$f_$f_$k_")
@@ -2042,7 +2173,7 @@ function deploy_access_passwd() {
             passwd+=${var_passwd_chars:RANDOM%${#var_passwd_chars}:1}
         done
 
-        run_cmd /noexit pve_tapi_request return_cmd PUT /access/password "'userid=$username' 'password=$passwd' $service_user_password" || { echo_err "Ошибка: не удалось установить пароль пользователю $username"; exit_clear; }
+        run_cmd /noexit pve_tapi_request return_cmd PUT /access/password "userid=$username" "password=$passwd" "$service_user_password" || { echo_err "Ошибка: не удалось установить пароль пользователю $username"; exit_clear; }
         username=${username::-4}
         case $format_opt in
             1) table+="$username | $passwd$nl";;
@@ -2077,12 +2208,12 @@ function install_stands() {
     ! $silent_mode && grep -Fwq "config_stand_${opt_sel_var}_var" <<<"${var_warning_configs[@]}" && echo_warn $'\n'"Предупреждение: выбранная конфигурация ограниченно подходит для развертывания на этом хосте PVE"
 
     ! $silent_mode && read_question 'Хотите изменить параметры?' && {
-    local _exit=false opt_names=( inet_bridge storage iso_storage pool_name pool_desc take_snapshots run_vm_after_installation access_{create,user_{name,desc,enable},pass_{length,chars},auth_{pve,pam}_desc} dry-run verbose)
+    local _exit=false opt_names=( inet_bridge storage iso_storage pool_name pool_desc take_snapshots run_vm_after_installation access_{create,user_{name,desc,enable},pass_{length,chars}} dry-run verbose)
         
     while true; do
             echo_tty "$( show_config install-change )"
             echo_tty
-            local switch=$( read_question_select 'Выберите номер настройки для изменения' '^[0-9]+$' 0 $( ${config_base[access_create]} && echo 17 || echo 10 ) '' 1 )
+            local switch=$( read_question_select 'Выберите номер настройки для изменения' '^[0-9]+$' 0 $( ${config_base[access_create]} && echo 15 || echo 10 ) '' 1 )
             echo_tty
             [[ "$switch" == 0 ]] && break
             [[ "$switch" == '' ]] && { $_exit && break; _exit=true; continue; }
@@ -2103,7 +2234,7 @@ function install_stands() {
             [[ "${config_base[$opt]}" == "$val" ]] && continue
 
             case $opt in
-                pool_desc|access_user_desc|access_auth_pve_desc|access_auth_pam_desc)
+                pool_desc|access_user_desc)
                     (config_base[$opt]="$val"; [[ "${config_base[access_auth_pam_desc]}" != '' && "${config_base[access_auth_pam_desc]}" == "${config_base[access_auth_pve_desc]}" ]] && echo_err 'Ошибка: видимые имена типов аутентификации не должны быть одинаковыми' ) && continue
 
                     descr_string_check "$val" || { echo_err 'Ошибка: введенное значение является некорректным'; continue; };;
@@ -2136,12 +2267,12 @@ function install_stands() {
     opt_not_tmpfs=false
 
     configure_vmid install
-    run_cmd pve_api_request return_cmd PUT /cluster/options "'next-id=lower=$(( ${config_base[start_vmid]} + ${#opt_stand_nums[@]} * 100 ))'"
+    run_cmd pve_api_request return_cmd PUT /cluster/options "next-id=lower=$(( ${config_base[start_vmid]} + ${#opt_stand_nums[@]} * 100 ))"
 
-    run_cmd /noexit pve_api_request "''" POST /access/groups "'groupid=$stands_group' 'comment=$val'"
+    run_cmd /noexit pve_api_request '' POST /access/groups "groupid=$stands_group" "comment=$val"
     [[ $? =~ ^0$|^244$ ]] || { echo_err "Ошибка: не удалось создать access группу для стендов '$stands_group'. Выход"; exit_clear; }
 
-    run_cmd pve_api_request return_cmd PUT /access/acl path=/sdn/zones/localnetwork "roles=PVEAuditor 'groups=$stands_group' propagate=0"
+    run_cmd pve_api_request return_cmd PUT /access/acl path=/sdn/zones/localnetwork roles=PVEAuditor "groups=$stands_group" propagate=0
     
     local -A roles_list roles_data 
     local max_index i
@@ -2158,12 +2289,7 @@ function install_stands() {
         deploy_stand_config ${opt_stand_nums[stand_num]} $stand_num
     done
 
-    run_cmd "pvesh set '/nodes/$var_pve_node/network'"
-
-    ${config_base[access_create]} && {
-        [[ "${config_base[access_auth_pam_desc]}" != '' ]] && run_cmd pve_api_request return_cmd PUT /access/domains/pam "'comment=${config_base[access_auth_pam_desc]}'"
-        [[ "${config_base[access_auth_pve_desc]}" != '' ]] && run_cmd pve_api_request return_cmd PUT /access/domains/pve "default=1 'comment=${config_base[access_auth_pve_desc]}'"
-    }
+    run_cmd pvesh set "/nodes/$var_pve_node/network"
 
     ${config_base[run_ifreload_tweak]} && remaster_vm_netif_tweak $var_pve_node
 
@@ -2200,11 +2326,11 @@ function manage_bulk_vm_power() {
     }
     
     local pve_node args act_desc=''
-    [[ "$action" == 'startall' ]] && args=" --force '1'" && act_desc="${c_ok}включение${c_null}" || { act_desc="${c_err}выключение${c_null}"; isdigit_check "$2" && args=" --timeout '$2'"; }
+    [[ "$action" == 'startall' ]] && args='--force 1' && act_desc="${c_ok}включение${c_null}" || { act_desc="${c_err}выключение${c_null}"; isdigit_check "$2" && args="--timeout $2"; }
     for pve_node in "${!bulk_vms_power_list[@]}"; do
         bulk_vms_power_list[$pve_node]=${bulk_vms_power_list[$pve_node]/# /}
         echo_tty "[${c_ok}Задание${c_null}] Запущено массовое $act_desc машин на узле ${c_val}$pve_node${c_null}. Список ВМ: ${c_val}${bulk_vms_power_list[$pve_node]// /"${c_null}, ${c_val}"}${c_null}"
-        run_cmd "pvesh create /nodes/$pve_node/$action --vms '${bulk_vms_power_list[$pve_node]}'$args"
+        run_cmd pvesh create "/nodes/$pve_node/$action" --vms "${bulk_vms_power_list[$pve_node]}" $args
         echo_ok "${act_desc} машин на узле ${c_val}$pve_node${c_null}"
     done
 }
@@ -2298,7 +2424,7 @@ function manage_stands() {
         for ((i=1; i<=$( echo "${user_list[$group_name]}" | wc -l ); i++)); do
             user_name=$( echo "${user_list[$group_name]}" | sed "${i}q;d" )
             [[ $switch != 3 ]] && {
-                run_cmd /noexit pve_api_request return_cmd PUT "/access/users/$user_name" enable=$enable || { echo_err "Ошибка: не удалось изменить enable для пользователя '$user_name'"; }
+                run_cmd /noexit pve_api_request return_cmd PUT "/access/users/$user_name" "enable=$enable" || { echo_err "Ошибка: не удалось изменить enable для пользователя '$user_name'"; }
                 echo_tty "$user_name : $state";
                 continue
             }
@@ -2387,12 +2513,8 @@ function manage_stands() {
 
     if [[ $switch -ge 4 && $switch -le 9 ]]; then
         read_question $'\nВы действительно хотите продолжить?' || return 0
-        local status name cmd_str vm_poweroff=false vm_snap_state=true vm_poweroff_answer=true
-        case $switch in
-                    7) cmd_str="create /nodes/{node}/{type}/{vmid}/snapshot --snapname '{snap_name}' --description '{snap_descr}'{vm_state}";;
-                    6|8) cmd_str="create /nodes/{node}/{type}/{vmid}/snapshot/{snap_name}/rollback";;
-                    9) cmd_str="delete /nodes/{node}/{type}/{vmid}/snapshot/{snap_name}";;
-        esac
+        local status name vm_poweroff=false vm_snap_state=true vm_poweroff_answer=true
+
         for ((i=1; i<=$( echo "${pool_list[$group_name]}" | wc -l ); i++)); do
             echo_tty
             pool_name=$( echo "${pool_list[$group_name]}" | sed "${i}q;d" )
@@ -2403,7 +2525,6 @@ function manage_stands() {
             vm_status_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/status}" )
             vm_type_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/type}" )
             vm_is_template_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/template}" )
-
 
             for ((j=1; j<=$( echo "$vmid_list" | wc -l ); j++)); do
                 vmid=$( echo "$vmid_list" | sed "${j}q;d" )
@@ -2425,11 +2546,17 @@ function manage_stands() {
                         echo_tty 
                         vm_poweroff_answer=false
                     }
-                    $vm_poweroff && run_cmd "pvesh create /nodes/$vm_node/stopall --vms '$vmid' --timeout '30' --force-stop '1'"
+                    $vm_poweroff && run_cmd pvesh create "/nodes/$vm_node/stopall" --vms "$vmid" --timeout 30 --force-stop 1
                 }
-                vm_cmd_arg=" --vmstate '$vm_snap_state'"
+                vm_cmd_arg="--vmstate $vm_snap_state"
                 [[ "$vm_type" != 'qemu' ]] && vm_cmd_arg=''
-                status=$( run_cmd /noexit "pvesh $(echo "$cmd_str" | sed "s/{node}/$vm_node/;s/{vmid}/$vmid/;s/{vm_state}/$vm_cmd_arg/;s/{type}/$vm_type/;s/{snap_name}/$vm_snap_name/;s/{snap_descr}/$vm_snap_description/" ) 2>&1" ) && {
+                status=$( 
+                    case $switch in
+                        7)   run_cmd /noexit pvesh create "/nodes/$vm_node/$vm_type/$vmid/snapshot" --snapname "$vm_snap_name" --description "$vm_snap_description" $vm_cmd_arg 2>&1 ;;
+                        6|8) run_cmd /noexit pvesh create "/nodes/$vm_node/$vm_type/$vmid/snapshot/$vm_snap_name/rollback" 2>&1 ;;
+                        9)   run_cmd /noexit pvesh delete "/nodes/$vm_node/$vm_type/$vmid/snapshot/$vm_snap_name" 2>&1 ;;
+                    esac
+                ) && {
                     echo_ok "Стенд ${c_value}$pool_name${c_null} машина ${c_ok}$name${c_null} (${c_info}$vmid${c_null})"
                     continue
                 }
@@ -2471,7 +2598,7 @@ function manage_stands() {
 
         function delete_if {
             [[ "$1" == '' || "$2" == '' ]] && exit_clear
-            run_cmd /noexit pve_api_request "''" DELETE "/nodes/$vm_node/network/$2";
+            run_cmd /noexit pve_api_request '' DELETE "/nodes/$vm_node/network/$2";
             [[ $? =~ ^0$|^244$ ]] || { echo_err "Ошибка: не удалось удалить сетевой интерфейс '$2'"; exit_clear; }
             echo_ok "Стенд ${c_value}$1${c_null}: удален сетевой интерфейс ${c_ok}$2${c_null}${3:+ ($3)}"        
             deny_ifaces+=" $2"
@@ -2525,20 +2652,20 @@ function manage_stands() {
                 done
                 [[ "$vm_protection" == '1' ]] && {
                     [[ "$vm_del_protection_answer" == '' ]] && vm_del_protection_answer=$( read_question "Машина ${c_ok}$name${c_null} (${c_info}$vmid${c_null}) стенда ${c_value}$pool_name${c_null}: включена защита от удаления"$'\n'"Продолжить удаление стендов?" && echo 1 || exit_pid )
-                    run_cmd pve_api_request return_cmd PUT "/nodes/$vm_node/$vm_type/$vmid/config" "protection=0"
+                    run_cmd pve_api_request return_cmd PUT "/nodes/$vm_node/$vm_type/$vmid/config" protection=0
                 }
 
-                [[ "$vm_status" == 'running' && "$vm_type" == 'qemu' ]] && run_cmd "pvesh create /nodes/$vm_node/$vm_type/$vmid/status/stop --skiplock '1' --timeout '0'"
-                vm_cmd_arg="--skiplock '1' --purge '1'"
-                [[ "$vm_type" != 'qemu' ]] && vm_cmd_arg="--force '1'"
-                run_cmd /noexit "pvesh delete '/nodes/$vm_node/$vm_type/$vmid' $vm_cmd_arg"
+                [[ "$vm_status" == 'running' && "$vm_type" == 'qemu' ]] && run_cmd pvesh create "/nodes/$vm_node/$vm_type/$vmid/status/stop" --skiplock 1 --timeout 0
+                vm_cmd_arg="--skiplock 1 --purge 1"
+                [[ "$vm_type" != 'qemu' ]] && vm_cmd_arg="--force 1"
+                run_cmd /noexit pvesh delete "/nodes/$vm_node/$vm_type/$vmid" $vm_cmd_arg
                 [[ $? =~ ^0$|^2$ ]] && echo_ok "Стенд ${c_value}$pool_name${c_null}: удалена машина ${c_ok}$name${c_null} (${c_info}$vmid${c_null})" \
                     || { echo_err "Ошибка: не удалось удалить ВМ '$vmid' стенда '$pool_name'"; exit_clear; }
             done
             local storages=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/storage}" | awk 'NR>1{printf " "}{printf $0}' )
-            [[ "$storages" != '' ]] && { run_cmd /noexit pve_api_request "''" PUT "/pools/$pool_name delete=1 'storage=$storages'"
+            [[ "$storages" != '' ]] && { run_cmd /noexit pve_api_request '' PUT "/pools/$pool_name" delete=1 "storage=$storages"
                 [[ $? =~ ^0$|^244$ ]] || { echo_err "Ошибка: не удалось удалить привязку хранилищ от пула стенда '$pool_name'"; exit_clear; } }
-            run_cmd /noexit pve_api_request "''" DELETE "/pools/$pool_name"; [[ $? =~ ^0$|^244$ ]] || { echo_err "Ошибка: не удалось удалить пул стенда '$pool_name'"; exit_clear; }
+            run_cmd /noexit pve_api_request '' DELETE "/pools/$pool_name"; [[ $? =~ ^0$|^244$ ]] || { echo_err "Ошибка: не удалось удалить пул стенда '$pool_name'"; exit_clear; }
             echo_ok "Стенд ${c_value}$pool_name${c_null}: пул удален"
         done
 
@@ -2559,21 +2686,21 @@ function manage_stands() {
         for role in $( printf '%s\n' "${!acl_list[@]}" | grep -Pox '\d+,roleid' ); do
             echo -n "$roles_list_after" | grep -Fxq -- "${acl_list[$role]}" || {
                 [[ "$( get_numtable_val list_roles "roleid=${acl_list[$role]}" special )" == 0 ]] || continue
-                run_cmd /noexit pve_api_request "''" DELETE "/access/roles/${acl_list[$role]}"; [[ $? =~ ^0$|^244$ ]] || { echo_err "Ошибка: не удалось удалить access роль '${acl_list[$role]}'. Выход"; exit_clear; }
+                run_cmd /noexit pve_api_request '' DELETE "/access/roles/${acl_list[$role]}"; [[ $? =~ ^0$|^244$ ]] || { echo_err "Ошибка: не удалось удалить access роль '${acl_list[$role]}'. Выход"; exit_clear; }
                 echo_ok "Роль ${c_value}${acl_list[$role]}${c_null} удалена"
                 roles_list_after+=$'\n'${acl_list[$role]}
             }
         done
 
         [[ "$del_all" == true ]] && { 
-            run_cmd /noexit pve_api_request "''" DELETE "/access/groups/$group_name"; [[ $? =~ ^0$|^244$ ]] || { echo_err "Ошибка: не удалось удалить access группу стендов '$group_name'. Выход"; exit_clear; }
+            run_cmd /noexit pve_api_request '' DELETE "/access/groups/$group_name"; [[ $? =~ ^0$|^244$ ]] || { echo_err "Ошибка: не удалось удалить access группу стендов '$group_name'. Выход"; exit_clear; }
             echo_ok "Служебная группа ${c_value}$group_name${c_null} удалена"
         }
 
         $restart_network && {
             ! ${config_base[run_ifreload_tweak]} && $data_is_alt_virt && read_question '[Alt VIRT] Применить фикс сетевых интерфейсов запущенных ВМ?' && config_base[run_ifreload_tweak]=true
             for pve_host in $vm_nodes; do
-                run_cmd "pvesh set '/nodes/$pve_host/network'"
+                run_cmd pvesh set "/nodes/$pve_host/network"
                 echo_ok "Перезагрузка сети хоста ${c_val}$pve_host"
                 ${config_base[run_ifreload_tweak]} && remaster_vm_netif_tweak $pve_host
             done
@@ -2596,6 +2723,7 @@ function utilities_menu() {
         #utilities_menu[3-manage_aptrepo]='Включение no-subscription репозиториев PVE'
     }
     utilities_menu[4-remaster_vm_netif_tweak]='Твик-фикс: фикс сетевой связности для запущенных ВМ после перезагрузки сети хоста PVE'
+    utilities_menu[5-set_realm_description_tweak]='Изменить отображаемые названия аутентификаций на странице логина PVE'
 
     while true; do
         i=0
@@ -2672,21 +2800,37 @@ function create_vmnetwork() {
 
 	pve_api_request '' GET "/cluster/sdn/vnets/${sdn_settings[vnet]}" && { echo_warn $'\n'"SDN vnet '${sdn_settings[vnet]}' уже существует"; return; }
 
-	run_cmd /noexit pve_api_request return_cmd POST /cluster/sdn/zones "zone=${sdn_settings[zone]} type=simple ipam=pve dhcp=dnsmasq" || { echo_err $'\n'"Не удалось создать SDN зону 'VMNet': $return_cmd"; return; }
+	run_cmd /noexit pve_api_request return_cmd POST /cluster/sdn/zones "zone=${sdn_settings[zone]}" type=simple ipam=pve dhcp=dnsmasq \
+        || { echo_err $'\n'"Не удалось создать SDN зону 'VMNet': $return_cmd"; return; }
 
-	run_cmd /noexit pve_api_request return_cmd POST /cluster/sdn/vnets "'zone=${sdn_settings[zone]}' 'vnet=${sdn_settings[vnet]}' isolate-ports=${sdn_settings[isolate]} 'alias=${sdn_settings[alias]}'" || { echo_err $'\n'"Не удалось создать SDN vnet '${sdn_settings[vnet]}': $return_cmd"; run_cmd pve_api_request "''" DELETE "/cluster/sdn/zones/${sdn_settings[zone]}"; return; }
+	run_cmd /noexit pve_api_request return_cmd POST /cluster/sdn/vnets "zone=${sdn_settings[zone]}" "vnet=${sdn_settings[vnet]}" "isolate-ports=${sdn_settings[isolate]}" "alias=${sdn_settings[alias]}" \
+        || { echo_err $'\n'"Не удалось создать SDN vnet '${sdn_settings[vnet]}': $return_cmd"; run_cmd pve_api_request '' DELETE "/cluster/sdn/zones/${sdn_settings[zone]}"; return; }
 
-	run_cmd /noexit pve_api_request return_cmd POST "/cluster/sdn/vnets/${sdn_settings[vnet]}/subnets" "type=subnet snat=1 'subnet=${sdn_settings[subnet]}' 'gateway=${sdn_settings[gateway]}' 'dhcp-dns-server=${sdn_settings[dns]}' 'dhcp-range=start-address=${sdn_settings[start-ip]},end-address=${sdn_settings[end-ip]}'" || { echo_err $'\n'"Не удалось создать SDN subnet для vnet '${sdn_settings[zone]}': $return_cmd"; run_cmd pve_api_request "''" DELETE "/cluster/sdn/vnets/${sdn_settings[vnet]}"; run_cmd pve_api_request "''" DELETE "/cluster/sdn/zones/${sdn_settings[zone]}"; return; }
+	run_cmd /noexit pve_api_request return_cmd POST "/cluster/sdn/vnets/${sdn_settings[vnet]}/subnets" \
+        type=subnet snat=1 "subnet=${sdn_settings[subnet]}" "gateway=${sdn_settings[gateway]}" \
+        "dhcp-dns-server=${sdn_settings[dns]}" "dhcp-range=start-address=${sdn_settings[start-ip]},end-address=${sdn_settings[end-ip]}" \
+        || { 
+                echo_err $'\n'"Не удалось создать SDN subnet для vnet '${sdn_settings[zone]}': $return_cmd"
+                run_cmd pve_api_request '' DELETE "/cluster/sdn/vnets/${sdn_settings[vnet]}"
+                run_cmd pve_api_request '' DELETE "/cluster/sdn/zones/${sdn_settings[zone]}"
+                return; 
+            }
 
 	echo_ok "SDN bridge интерфейс для виртуальных машин ${c_val}${sdn_settings[vnet]}${c_null} успешно создан"
 
-    run_cmd /noexit pve_api_request return_cmd POST /cluster/firewall/rules "type=in action=ACCEPT enable=1 'iface=${sdn_settings[vnet]}' macro=DHCPfwd 'comment=PVE-ASDAC-BASH: allow DHCP for ${sdn_settings[vnet]}'" \
+    run_cmd /noexit pve_api_request return_cmd POST /cluster/firewall/rules type=in action=ACCEPT enable=1 "iface=${sdn_settings[vnet]}" macro=DHCPfwd "comment=PVE-ASDAC-BASH: allow DHCP for ${sdn_settings[vnet]}" \
         && { echo_ok "Создано фаервольное правило для разрешения DHCP трафика для интерфейса ${c_val}${sdn_settings[vnet]}";:; } \
         || { echo_err $'\n'"Не удалось создать фаервольное правило для интерфейса ${c_val}${sdn_settings[vnet]}${c_null} для разрешения DHCP трафика"; }
 
-	run_cmd '! pvesh set /cluster/sdn |& grep dnsmasq'
+	run_cmd /noexit pvesh set /cluster/sdn
 
 	echo_ok "Сети хостов PVE перезагружены и изменения успешно применены"
+}
+
+function write_var_to_file()
+{
+    [[ ${#1} == 0 || ${#2} == 0 ]] && return 1
+    printf '%s' "${!1}" > "$2" || return
 }
 
 function tweek_no_subscrib_window() {
@@ -2721,14 +2865,14 @@ function tweek_no_subscrib_window() {
         echo_tty "$( printf ' - %s\n' "${js_files[@]}" )"
         read_question "Вы хотите продолжить?" || return 0
         echo_tty
-        run_cmd "sed -zri.backup 's/(,\s*checked_command:\s*function\s*\((\w+)\)\s*\{)(\s*Proxmox\.Utils\.API2Request\s*\(\s*\{\s*url:\s*(\"|'\'')\/nodes\/localhost\/subscription(\"|'\'')\s*,)/\1 console.log(\"[PVE-ASDaC-BASH] tweak running: pve-no-subscribtion-notice\"); \2(); return; \3/'" "${js_files[@]}"
+        run_cmd sed -zri.backup 's/(,\s*checked_command:\s*function\s*\((\w+)\)\s*\{)(\s*Proxmox\.Utils\.API2Request\s*\(\s*\{\s*url:\s*(\"|'\'')\/nodes\/localhost\/subscription(\"|'\'')\s*,)/\1 console.log(\"[PVE-ASDaC-BASH] tweak running: pve-no-subscribtion-notice\"); \2(); return; \3/' "${js_files[@]}"
         echo_ok "Готово"
         echo_tty
         ! [[ "$pname" =~ ^task\ UPID: ]] && {
-            read_question "Перезапустить pveproxy для применения изменений?" && { run_cmd /noexit 'systemctl restart pveproxy.service' || {
+            read_question "Перезапустить pveproxy для применения изменений?" && { run_cmd /noexit systemctl restart pveproxy.service || {
                 echo_err "Сервис pveproxy перезапущен с ошибками. Откат изменений"
                 for i in "${js_files[@]}"; do
-                    run_cmd "mv -f '$i.backup' '$i'"
+                    run_cmd mv -f "$i.backup" "$i"
                 done
                 return 1;
                 } }
@@ -2736,9 +2880,9 @@ function tweek_no_subscrib_window() {
             echo_warn "Если произошла ошибка, выполните откат изменений"
             read_question "Выполнить откат изменений?" && {
                 for i in "${js_files[@]}"; do
-                    run_cmd "mv -f '$i.backup' '$i'"
+                    run_cmd mv -f "$i.backup" "$i"
                 done
-                run_cmd 'systemctl restart pveproxy.service'
+                run_cmd systemctl restart pveproxy.service
                 return 1;
             };:;
         } || {
@@ -2753,9 +2897,9 @@ function tweek_no_subscrib_window() {
     read -r -d '' invoke_cmd <<-'EOF'
         DPkg::Post-Invoke { "! { dpkg -V proxmox-widget-toolkit 2>/dev/null|grep -q '\.js$'&&dpkg -V pve-manager 2>/dev/null|grep -q '\.js$';}&&{ q=$(echo '\042');dpkg -L proxmox-widget-toolkit pve-manager 2>/dev/null|grep '\.js$'|xargs -rd'\n' grep -lzZ ',\s*checked_command:\s*function\s*(\s*\w\+\s*)\s*{\s*Proxmox\.Utils\.API2Request\s*(\s*{\s*url:\s*\('$q'\|'\''\)/nodes/localhost/subscription\('$q'\|'\''\)'|xargs -0ri sh -c 'echo '\''[PVE-ASDaC-BASH] Removing PVE subscription notification: {}'\'';sed -zri.backup '\''s/(,\s*checked_command:\s*function\s*\(\s*(\w+)\s*\)\s*\{)(\s*Proxmox\.Utils\.API2Request\s*\(\s*\{\s*url:\s*('$q'|'\'\\\'\'')\/nodes\/localhost\/subscription('$q'|'\'\\\'\''),)/\1 console.log('\'\\\'\''[PVE-ASDaC-BASH] tweak running: pve-no-subscribtion-notice'\'\\\'\''); \2(); return; \3/'\'' {}';}||:"; }
 EOF
-    run_cmd "printf '%s' \"\$invoke_cmd\" > \"$apt_conf\"" || { echo_err "Не удалось создать файл apt конфигурации"; return; }
+    run_cmd write_var_to_file invoke_cmd "$apt_conf" || { echo_err "Не удалось создать файл apt конфигурации"; return; }
 
-    run_cmd "chmod +x '$apt_conf'" || { echo_err "Не удалось изменить права на запуск для $apt_conf"; return; }
+    run_cmd chmod +x "$apt_conf" || { echo_err "Не удалось изменить права на запуск для $apt_conf"; return; }
     echo_tty
     echo_ok 'Твик успешно применен'
 }
@@ -2769,7 +2913,8 @@ function manage_aptrepo() {
 function remaster_vm_netif_tweak() {
     
 	local -A vm_list
-	local i max_count=0 vm_config line cmd_line_clear cmd_line pve_node vm_type firewall
+	local i max_count=0 vm_config line pve_node vm_type firewall
+    local -a cmd_line_clear cmd_line
 	
     jq_data_to_array /cluster/resources?type=vm vm_list
 	
@@ -2802,22 +2947,33 @@ function remaster_vm_netif_tweak() {
     max_count=${vm_list[count]:-0}
     for((i=0;i<$max_count;i++)); do
         [[ "${vm_list[$i,status]}" != running || $pve_node && "${vm_list[$i,node]}" != $pve_node ]] && continue
-        cmd_line_clear='' cmd_line=''
-        pve_api_request vm_config GET /nodes/${vm_list[$i,node]}/${vm_list[$i,type]}/${vm_list[$i,vmid]}/config?current=1
+        cmd_line_clear=() cmd_line=()
+        pve_api_request vm_config GET "/nodes/${vm_list[$i,node]}/${vm_list[$i,type]}/${vm_list[$i,vmid]}/config?current=1"
 		while read -r line || [[ -n $line ]]; do
 			[[ "$line" =~ ^([0-9]+)\":\"(([^,]+)(,bridge=[^,]+)?(,firewall=[01])?(.*)) ]] || continue
             [[ "${BASH_REMATCH[4]}" == '' ]] && continue
             [[ "${BASH_REMATCH[5]}" == ',firewall=1' ]] && firewall=0 || firewall=1
-			cmd_line_clear+="'net${BASH_REMATCH[1]}=${BASH_REMATCH[3]}${BASH_REMATCH[4]},firewall=$firewall${BASH_REMATCH[6]}' "
-			cmd_line+="'net${BASH_REMATCH[1]}=${BASH_REMATCH[2]}' "
+			cmd_line_clear+=( "net${BASH_REMATCH[1]}=${BASH_REMATCH[3]}${BASH_REMATCH[4]},firewall=$firewall${BASH_REMATCH[6]}" )
+			cmd_line+=( "net${BASH_REMATCH[1]}=${BASH_REMATCH[2]}" )
 		done < <( echo -n "$vm_config" | grep -Po '({|,)"net\K[0-9]+":"[^"]+' )
-        run_cmd /noexit pve_api_request return_cmd PUT /nodes/${vm_list[$i,node]}/${vm_list[$i,type]}/${vm_list[$i,vmid]}/config "$cmd_line_clear"
-        run_cmd pve_api_request return_cmd PUT /nodes/${vm_list[$i,node]}/${vm_list[$i,type]}/${vm_list[$i,vmid]}/config "$cmd_line"
+        run_cmd /noexit pve_api_request return_cmd PUT "/nodes/${vm_list[$i,node]}/${vm_list[$i,type]}/${vm_list[$i,vmid]}/config" "${cmd_line_clear[@]}"
+        run_cmd pve_api_request return_cmd PUT "/nodes/${vm_list[$i,node]}/${vm_list[$i,type]}/${vm_list[$i,vmid]}/config" "${cmd_line[@]}"
         echo_ok "[Твик] Машина ${c_val}${vm_list[$i,name]}${c_null} (${vm_list[$i,vmid]})"
     done
     echo_ok "Переприменены настройки активных сетевых интерфейсов ВМ и CT"
 }
 
+function set_realm_description_tweak() {
+
+    config_base[access_auth_pam_desc]=$( read_question_select 'Отображаемое название аутинтификации PVE' '' '' '' "${config_base[access_auth_pam_desc]}" 2 )
+    config_base[access_auth_pve_desc]=$( read_question_select 'Отображаемое название аутинтификации PAM' '' '' '' "${config_base[access_auth_pve_desc]}" 2 )
+
+    [[ "${config_base[access_auth_pam_desc]}" != '' ]] && run_cmd pve_api_request return_cmd PUT /access/domains/pam "comment=${config_base[access_auth_pam_desc]}"
+    [[ "${config_base[access_auth_pve_desc]}" != '' ]] && run_cmd pve_api_request return_cmd PUT /access/domains/pve default=1 "comment=${config_base[access_auth_pve_desc]}"
+
+    echo_ok "Готово"
+
+}
 
 function register_ideco_ngfw_tweak() {
     echo_tty
@@ -2832,7 +2988,6 @@ function register_ideco_ngfw_tweak() {
     result=$( echo -n "$result" | grep -Po '(?>[{,]\s*"allowed-tags"\s*:\s*\["|\G",")\K[^"]+') || { echo_err "Ошибка: не удалось получить информацию тегах ВМ"; exit_clear; }
     readarray -td $'\n' vm_tags <<<$result
 
-    
 }
 
 conf_files=()
