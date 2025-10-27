@@ -1618,11 +1618,11 @@ function run_cmd() {
             local code
             eval "$@" >&2
             code=$?
+            $opt_slow_api && sleep 1
         else
             local return_cmd code
             return_cmd=$( eval "$@" 2>&1 )
             code=$?
-            $opt_slow_api && sleep 1
         fi
         if [[ "$code" == 0 ]]; then
             $opt_verbose && {
