@@ -1520,7 +1520,8 @@ function check_config() {
             2) data_is_alt_v=true;;
         esac
         ! $silent_mode && $data_is_alt_os && {
-            echo_tty 'В случае проблем с созданием/удалением ресурсов на Альт Виртуализации'
+            echo_tty
+            echo_warn 'В случае проблем с созданием/удалением ресурсов на Альт Виртуализации'
             read_question '[Alt VIRT] Включить режим медленного взаимодействия с API?' && opt_slow_api=true
         }
         return
