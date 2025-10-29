@@ -22,7 +22,7 @@
   
   - **[v6] Стенды демекзамена 09.02.06-2026, все ВМ - ОС Альт**
   ```bash
-  (b=testing_api opts=( PVE-ASDaC-BASH.sh -c 'https://disk.yandex.ru/d/zJPHFPCgv2Cdfw' -z ) ;curl -sfOL "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/$b/${opts[0]}"&&{ chmod +x ${opts[0]}&&./"${opts[@]}";rm -f ${opts[0]};:;}||echo -e "\e[1;33m\nОшибка скачивания: проверьте подключение к Интернету, настройки DNS, прокси и URL адрес\ncurl exit code: $?\n\e[m">&2)
+  (b=testing_api cmd=( PVE-ASDaC-BASH.sh -c 'https://disk.yandex.ru/d/zJPHFPCgv2Cdfw' -z ) ;curl -sfOL "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/$b/${cmd[0]}"&&{ chmod +x ${cmd[0]}&&./"${cmd[@]}";rm -f ${cmd[0]};:;}||echo -e "\e[1;33m\nОшибка скачивания: проверьте подключение к Интернету, настройки DNS, прокси и URL адрес\ncurl exit code: $?\n\e[m">&2)
   ```
   </details>
 </details>
@@ -32,7 +32,7 @@
   
   - **[Ред., Архив] Стенды для регионального чемпионата ССА Юниоры 2025 (модуль Б и Г)**
   ```bash
-  (b=testing_api opts=( PVE-ASDaC-BASH.sh -c 'https://disk.yandex.ru/d/YR3eelCZR_JVXQ/Script-Images/ASDaC_RCJ-2025_multi.conf_v2.txt' -z ) ;curl -sfOL "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/$b/${opts[0]}"&&{ chmod +x ${opts[0]}&&./"${opts[@]}";rm -f ${opts[0]};:;}||echo -e "\e[1;33m\nОшибка скачивания: проверьте подключение к Интернету, настройки DNS, прокси и URL адрес\ncurl exit code: $?\n\e[m">&2)
+  (b=testing_api cmd=( PVE-ASDaC-BASH.sh -c 'https://disk.yandex.ru/d/YR3eelCZR_JVXQ/Script-Images/ASDaC_RCJ-2025_multi.conf_v2.txt' -z ) ;curl -sfOL "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/$b/${cmd[0]}"&&{ chmod +x ${cmd[0]}&&./"${cmd[@]}";rm -f ${cmd[0]};:;}||echo -e "\e[1;33m\nОшибка скачивания: проверьте подключение к Интернету, настройки DNS, прокси и URL адрес\ncurl exit code: $?\n\e[m">&2)
   ```
   <details>
     <summary>👉 <b>Информация</b>: автор конфигурации, инструкция по развертыванию</summary>
@@ -72,7 +72,7 @@
 2. Для того, чтобы развернуть готовую конфигурацию, скопируйте строку для скачивания и вставьте в консоль (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd> или ПКМ -> Вставить). Пример:
 
 ```
-(b=testing_api opts=( PVE-ASDaC-BASH.sh -c 'https://disk.yandex.ru/d/zJPHFPCgv2Cdfw' -z ) ;curl -sfOL "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/$b/${opts[0]}"&&{ chmod +x ${opts[0]}&&./"${opts[@]}";rm -f ${opts[0]};:;}||echo -e "\e[1;33m\nОшибка скачивания: проверьте подключение к Интернету, настройки DNS, прокси и URL адрес\ncurl exit code: $?\n\e[m">&2)
+(b=testing_api cmd=( PVE-ASDaC-BASH.sh -c 'https://disk.yandex.ru/d/zJPHFPCgv2Cdfw' -z ) ;curl -sfOL "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/$b/${cmd[0]}"&&{ chmod +x ${cmd[0]}&&./"${cmd[@]}";rm -f ${cmd[0]};:;}||echo -e "\e[1;33m\nОшибка скачивания: проверьте подключение к Интернету, настройки DNS, прокси и URL адрес\ncurl exit code: $?\n\e[m">&2)
 ```
 
 После нажатия <kbd>Enter</kbd> скрипт скачается и запустится
