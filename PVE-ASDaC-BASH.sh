@@ -1606,9 +1606,10 @@ function get_dict_value() {
 }
 
 function run_cmd() {
-    local to_exit=true
+    local no_exit
 
-    [[ "$1" == '/noexit' ]] && to_exit=false && shift
+    [[ "$1" == '/noexit' ]] && no_exit=1 && shift
+    [[ "$1" == '/noexitnomsg' ]] && no_exit=2 && shift
     [[ "$1" == '/pipefail' ]] && { set -o pipefail; shift; }
     [[ "$1" == '' ]] && { echo_err 'Ошибка run_cmd: нет команды'; exit_clear; }
 
@@ -1633,18 +1634,22 @@ function run_cmd() {
                 else echo_tty "[${c_ok}Выполнена команда${c_null}] ${c_info}$*${c_null}"; fi
             }
         else
-            ! $to_exit && {
+            [[ $no_exit ]] && {
                 echo_tty "[${c_warning}Выполнена команда${c_null}] ${c_info}$*${c_null}"
-                return $code
+                [[ $no_exit == 2 ]] && return $code
             }
-            [[ "$1" == pve_api_request || "$1" == pve_tapi_request ]] && echo_tty "[${c_err}Запрос API${c_null}] $3 ${config_base[pve_api_url]}${*:4}"
-            echo_err "Ошибка выполнения команды: $*"
+            if [[ "$1" == pve_api_request || "$1" == pve_tapi_request ]]; then
+                echo_tty "[${c_err}Запрос API${c_null}] $3 ${config_base[pve_api_url]}${*:4}"
+                $opt_verbose && echo_err "Ошибка выполнения команды: $*"
+            else
+                echo_err "Ошибка выполнения команды: $*"
+            fi
             echo_tty "${c_red}Error output: ${c_warning}$return_cmd${c_null}"
-            exit_clear
+            [[ ! $no_exit ]] && exit_clear
         fi
     fi
     set +o pipefail
-    return 0
+    return $code
 }
 
 function deploy_stand_config() {
@@ -2146,7 +2151,7 @@ function install_stands() {
     configure_vmid install
     run_cmd pve_api_request return_cmd PUT /cluster/options "'next-id=lower=$(( ${config_base[start_vmid]} + ${#opt_stand_nums[@]} * 100 ))'"
 
-    run_cmd /noexit pve_api_request "''" POST /access/groups "'groupid=$stands_group' 'comment=$val'"
+    run_cmd /noexitnomsg pve_api_request "''" POST /access/groups "'groupid=$stands_group' 'comment=$val'"
     [[ $? =~ ^0$|^244$ ]] || { echo_err "Ошибка: не удалось создать access группу для стендов '$stands_group'. Выход"; exit_clear; }
 
     run_cmd pve_api_request return_cmd PUT /access/acl path=/sdn/zones/localnetwork "roles=PVEAuditor 'groups=$stands_group' propagate=0"
