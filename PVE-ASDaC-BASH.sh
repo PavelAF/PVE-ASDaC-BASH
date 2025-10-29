@@ -1610,7 +1610,6 @@ function run_cmd() {
 
     [[ "$1" == '/noexit' ]] && no_exit=1 && shift
     [[ "$1" == '/noexitnomsg' ]] && no_exit=2 && shift
-    [[ "$1" == '/pipefail' ]] && { set -o pipefail; shift; }
     [[ "$1" == '' ]] && { echo_err 'Ошибка run_cmd: нет команды'; exit_clear; }
 
     if $opt_dry_run; then
@@ -1648,7 +1647,6 @@ function run_cmd() {
             [[ ! $no_exit ]] && exit_clear
         fi
     fi
-    set +o pipefail
     return $code
 }
 
