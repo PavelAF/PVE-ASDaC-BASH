@@ -1480,7 +1480,7 @@ function check_deployment_conditions() {
         [[ $deployment_condition ]] && {
             check_condition_expr "$deployment_condition" "$conf"
             case $? in
-                1) echo_tty "[${c_info}Info${c_null}]: конфигурация ${c_val}$conf${c_null}($( get_dict_value "$conf[stand_config]" pool_name )) пропущена из-за неподходящих условий для развертывания"
+                1) echo_tty "[${c_info}Info${c_null}]: конфигурация ${c_val}$conf${c_null}($( get_dict_value "$conf[stand_config]" pool_name )) пропущена по условию фильтра"
                    unset $conf;;
                 2) var_warning_configs+=($conf); echo_warn "Предупреждение: конфигурация '$conf'(${c_val}$( get_dict_value "$conf[stand_config]" pool_name )${c_warn}) ограниченно подходит для развертывания на этом хосте PVE" ;;
                 3) var_warning_configs+=($conf); echo_warn "Предупреждение: конфигурация '$conf'(${c_val}$( get_dict_value "$conf[stand_config]" pool_name )${c_warn}) не подходит для развертывания на этом хосте PVE" ;;
