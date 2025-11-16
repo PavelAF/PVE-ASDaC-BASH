@@ -1696,11 +1696,11 @@ function deploy_stand_config() {
             fi
 
             Networking[$iface]="$if_desc"
-            ! $special && cmd_line+=" --net$if_num '${netifs_type:-virtio}${if_mac:+"=$if_mac"},bridge=$iface$net_options'"
+            ! $special && cmd_line+=" --net${if_num} '${netifs_type:-virtio}${if_mac:+"=$if_mac"},bridge=${iface}${net_options}'"
 
             if_desc=${if_desc/\{0\}/$stand_num}
             $create_if && {
-                run_cmd /noexit pve_api_request return_cmd POST "/nodes/$var_pve_node/network" "'iface=$iface' type=bridge autostart=1 'comments=$if_desc'${vlan_aware}${vlan_slave:+" 'bridge_ports=${vlan_slave}'"}" \
+                run_cmd /noexit pve_api_request return_cmd POST "/nodes/$var_pve_node/network" "'iface=$iface' type=$if_type autostart=1 'comments=$if_desc'${vlan_aware}${ovs_options:+" 'ovs_options=${ovs_options}'"}${vlan_slave:+" 'bridge_ports=${vlan_slave}'"}" \
                     || { echo_err "Интерфейс '$iface' ($if_desc) уже существует! Выход"; exit_clear; } 
                 echo_ok "Создан bridge интерфейс ${c_value}$iface${c_info} : ${c_value}$if_desc"
             }
@@ -1728,7 +1728,7 @@ function deploy_stand_config() {
             fi
         }
 
-        local if_num=${BASH_REMATCH[1]} if_config="$2" if_desc="$2" create_if=false net_options='' master='' iface='' vlan_aware='' vlan_slave='' access_role='' if_mac=''
+        local if_num=${BASH_REMATCH[1]} if_type=bridge if_config="$2" if_desc="$2" create_if=false net_options='' master='' iface='' vlan_aware='' vlan_slave='' access_role='' if_mac='' ovs_options=''
 
         if [[ "$if_config" =~ ^\{\ *bridge\ *=\ *([0-9\.a-zA-Z]+|\"\ *((\\\"|[^\"])+)\")\ *(,.*)?\}$ ]]; then
             if_bridge="${BASH_REMATCH[1]/\\\"/\"}"
@@ -1741,6 +1741,15 @@ function deploy_stand_config() {
             [[ "$if_config" =~ ,\ *trunks\ *=\ *([0-9\;]*[0-9])\ *($|,.+$) ]] && net_options+=",trunks=${BASH_REMATCH[1]}" && vlan_aware=' bridge_vlan_aware=1'
             [[ "$if_config" =~ ,\ *tag\ *=\ *([1-9][0-9]{0,2}|[1-3][0-9]{3}|40([0-8][0-9]|9[0-4]))\ *($|,.+$) ]] && net_options+=",tag=${BASH_REMATCH[1]}" && vlan_aware=" bridge_vlan_aware=1"
             [[ "$if_config" =~ ,\ *mac\ *=\ *([^\ ]+)\ *($|,.+$) ]] && { if_mac=${BASH_REMATCH[1]}; }
+            [[ "$if_config" =~ ,\ *type\ *=\ *(bridge|OVSBridge)\ *($|,.+$) ]] && {
+                if_type=${BASH_REMATCH[1]}
+                [[ "$if_config"  =~ ,\ *ovs_options\ *=\ *\"\ *([^\"]+[^\" ])?\ *\"\ *($|,.+$) ]] && ovs_options=${BASH_REMATCH[1]}
+                
+                [[ $if_type == OVSBridge ]] && ! $var_ovs_checked && {
+                        set_ovs_and_fix_script_tweak || { echo_err "Ошибка set_ovs_and_fix_script_tweak: не удалось установить openvswitch и/или применить твик"; exit_clear; }
+                        var_ovs_checked=true
+                }
+            }
             [[ "$if_config" =~ ,\ *vtag\ *=\ *([1-9][0-9]{0,2}|[1-3][0-9]{3}|40([0-8][0-9]|9[0-4]))\ *($|,.+$) ]] && {
                 local tag="${BASH_REMATCH[1]}"
                 if [[ "$if_config" =~ ,\ *master\ *=\ *([0-9\.a-z]+|\"\ *((\\\"|[^\"])+)\")\ *($|,.+$) ]]; then
@@ -1761,7 +1770,7 @@ function deploy_stand_config() {
                     fi
                     vlan_slave="$master_if.$tag"
                 else
-                    echo_err "Ошибка конфигурации: интерфейс '$2': объявлен master интерфейс, но не объявлен vlan tag"; exit_clear
+                    echo_err "Ошибка конфигурации: интерфейс '$2': объявлен vlan tag, но не объявлен master интерфейс"; exit_clear
                 fi
             }
             [[ "$if_desc" == "" ]] && if_config="$if_bridge" && if_desc="{bridge=$if_bridge}" || if_config=""
@@ -1790,7 +1799,7 @@ function deploy_stand_config() {
                     }
                 } || [[ "$vlan_slave" != '' ]] && if_update=true
                 
-                $if_update && run_cmd pve_api_request return_cmd PUT "/nodes/$var_pve_node/network/$net" "type=bridge${vlan_aware}${vlan_slave:+" 'bridge_ports=${vlan_slave}'"}"
+                $if_update && run_cmd pve_api_request return_cmd PUT "/nodes/$var_pve_node/network/$net" "type=$if_type${vlan_aware}${vlan_slave:+" 'bridge_ports=${vlan_slave}'"}"
             }
             return 0
         done
@@ -2604,7 +2613,8 @@ function utilities_menu() {
     }
     utilities_menu[4-remaster_vm_netif_tweak]='Твик-фикс: фикс сетевой связности для запущенных ВМ после перезагрузки сети хоста PVE'
     utilities_menu[5-set_realm_description_tweak]='Изменить отображаемые названия аутентификаций на странице логина PVE'
-
+    ! $data_is_alt_v && utilities_menu[6-set_ovs_and_fix_script_tweak]='Установить OpenvSwitch и фикс пропадания настроек ovs_options для интерфейсов OVSBridge при релоаде сети'
+    
     while true; do
         i=0
         echo_tty $'\nРаздел меню с твиками/утилитами для PVE:'
@@ -2838,6 +2848,39 @@ function set_realm_description_tweak() {
 
 }
 
+function set_ovs_and_fix_script_tweak() {
+    local file_fix='/etc/network/if-pre-up.d/99-asdac-ovs-options-fix'
+    [[ -x $file_fix ]] || {
+        cat <<'EOF' > $file_fix
+#!/bin/sh
+
+# This script was generated automatically by PVE-ASDaC-BASH
+# https://github.com/PavelAF/PVE-ASDaC-BASH
+# Author: PavelAF
+# Temporary fix for loss of ovs_options parameters during network reload (ifreload) for OVSBridge interfaces
+if [ "${IF_OVS_TYPE}" != OVSBridge ] || [ "$MODE" != start ] || [ -z "${IF_OVS_OPTIONS}" ] || ! ovs_vsctl --version > /dev/null 2>&1
+then
+    exit 0
+fi
+
+ovs-vsctl --timeout=5 set set bridge "${IFACE}" ${IF_OVS_OPTIONS}
+EOF
+        chmod +x $file_fix
+        echo_ok "Твик ovs_options reload fix успешно установлен на ноду ${c_val}$var_pve_node"
+    }
+
+    ! ovs_vsctl --version && {
+        echo_info "Пакет openvswitch не установлен. Установка ${c_val}openvswitch${c_info}..."
+        if data_is_alt_os; then
+            apt-get install -y openvswitch || return
+        else
+            apt install -y openvswitch-switch || return
+        fi
+        ! ovs_vsctl --version || return
+        echo_ok "Пакет openvswitch успешно установлен на ноду ${c_val}$var_pve_node"
+    }
+}
+
 function register_ideco_ngfw_tweak() {
     echo_tty
     echo_warn 'Функционал в процессе разработки и пока недоступен'; return
@@ -2886,6 +2929,7 @@ _opt_sel_var='Выбор варианта установки стендов'
 opt_sel_var=0
 
 var_pve_node=$( hostname -s )
+var_ovs_checked=false
 
 # список скачанных файлов
 declare -A list_url_files
