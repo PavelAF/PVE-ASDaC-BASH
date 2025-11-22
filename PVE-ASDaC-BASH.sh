@@ -144,8 +144,6 @@ declare -A config_stand_2_var=(
     [vm_1]='
         name            = test-vm1
         description     = rewritred описание test-vm1
-        disk_3          = 0.1  
-        disk4           = 0.1 
         machine         =    pc-q35-8.2|pc-i440fx-9.2   
     	config_template = test
         startup         = order=1,up=5,down=5
@@ -154,11 +152,11 @@ declare -A config_stand_2_var=(
         network2        =         {      bridge     =      "      🖧: тест  "     , state       =      down     , trunks       =        10;20;30       }          
         network_3       =       {            bridge      =    "         🖧: тест      "        , tags=      10    ,      state             =      down       }      
         network_4       =   🖧: тест  
-        disk_type    =   sata
+        disk_type    =   scsi
         iso_1           =  https://mirror.yandex.ru/debian/dists/sid/main/installer-amd64/current/images/netboot/mini.iso
-        boot_iso_1    =      https://mirror.yandex.ru/debian/dists/sid/main/installer-amd64/current/images/netboot/mini.iso
-        boot_disk1      =   https://mirror.yandex.ru/altlinux/p10/images/cloud/x86_64/alt-p10-cloud-x86_64.qcow2
-        disk2           =  https://mirror.yandex.ru/altlinux/p10/images/cloud/x86_64/alt-p10-cloud-x86_64.qcow2
+        boot_iso1    =      https://mirror.yandex.ru/debian/dists/sid/main/installer-amd64/current/images/netboot/mini.iso
+        boot_disk1      =   https://disk.yandex.ru/d/WHdIBzZls5HZtQ/Alt-JeOS-p10.qcow2
+        disk2           =  https://disk.yandex.ru/d/WHdIBzZls5HZtQ/Alt-JeOS-p10.qcow2
     '
     [vm_2]='
         name            = test-vm2
@@ -169,8 +167,7 @@ declare -A config_stand_2_var=(
         startup         =   order=10,up=10,down=10    
         machine         =    pc-i440fx-99.99|pc-i440fx-9.2   
         network_4       =       🖧: тест      
-        network2        =      {     bridge     =   "         🖧: тест        "     ,       vtag      =      100     ,        master         =      inet       }        
-        boot_disk1      = https://disk.yandex.ru/d/QlBoJK4gqvWK2w
+        network2        =      {     bridge     =   "         🖧: тест        "     ,       vtag      =      100     ,        master         =      inet       }
         boot_disk1_opt      = { iothread=1 }
     '
 )
@@ -825,7 +822,7 @@ function get_file() {
 
     [[ -v list_url_files[${4:-$url}] ]] && url="${list_url_files[${4:-$url}]}" && return 0
 
-    local base_url=$url is_url=false max_filesize=${2:-5368709120} filesize='' filename='' file_sha256='' file_md5='' force=$( [[ "$3" == force ]] && echo true || echo false )
+    local base_url=$url is_url=false max_filesize=${2:-5368709120} filesize='' filename='' file_sha256='' force=$( [[ "$3" == force ]] && echo true || echo false )
     isdigit_check "$max_filesize" || { echo_err "Ошибка $FUNCNAME: max_filesize=$max_filesize не число"; exit_clear; }
 
     if [[ $3 == diff ]]; then
@@ -839,6 +836,21 @@ function get_file() {
         echo_verbose "[YADISK API REQUEST] FILE: ${c_value}$filename${c_null} SIZE: ${c_value}$filesize${c_null} SHA-256: ${c_value}$file_sha256${c_null}"
     elif $is_url; then
         get_url_fileinfo $url filesize=size filename=name
+    else
+        if [[ -r $url ]]; then
+            url=$( realpath "$url" )
+        else
+            [[ $url =~ ^([A-Za-z][A-Za-z0-9_.-]*[A-Za-z0-9]):([^/]+).*\.([^.]+)$ ]] || { echo_err "Ошибка $FUNCNAME: нераспознанный источник файла: '$url'"; exit_clear; }
+
+            pve_api_request filename GET "/nodes/$var_pve_node/storage/${BASH_REMATCH[1]}/content/$url" \
+                    || { echo_err "Ошибка $FUNCNAME: не удалось получить информацию о файле из хранилища PVE: '$url'"$'\n'"Проверьте существование указанного файла на ноде '$var_pve_node'"; exit_clear; }
+            if [[ $3 != iso ]]; then
+                [[ $filename =~ (\{|,)\"path\":\"([^\"]+) ]] || { echo_err "Ошибка $FUNCNAME: не удалось получить путь для файла из хранилища PVE: '$url'"; exit_clear; }
+                url=${BASH_REMATCH[2]}
+            fi
+        fi
+        list_url_files[${4:-$base_url}]=$url
+        return
     fi
     if [[ $3 == iso ]]; then
         [[ ! $sel_iso_storage_path ]] && {
@@ -904,7 +916,7 @@ function get_file() {
         filename=$url
     fi
     [[ -r "$filename" ]] || { echo_err "Ошибка: файл '$filename' должен существовать и быть доступен для чтения"; exit_clear; }
-    [[ $3 == iso ]] && url=$( grep -Po '.*/\K.*' <<<$filename )
+    [[ $3 == iso ]] && url="${config_base[iso_storage]}:iso/$( grep -Po '.*/\K.*' <<<$filename )"
     [[ $3 == diff ]] && {
         local diff_full diff_backing convert_threads convert_compress
         convert_threads=$( lscpu | awk '/^Core\(s\) per socket:/ {cores=$4} /^Socket\(s\):/ {sockets=$2} END{n=cores*sockets;if(n>16) print 16; else print n}' )
@@ -986,14 +998,15 @@ function terraform_config_vars() {
                     read_question 'Продолжить выполнение?' && conf_nowarnings=true || exit 1
                 }
             }
-            vars_count="$( echo -n "${conf_var[$var]}" | grep -c \^ )"
-            conf_var[$var]="$( echo -n "${conf_var[$var]}" | awk '{$1=tolower($1)} !a[$1] {b[++i]=$1} {a[$1]=$0} END {for (i in b) print a[b[i]]}' )"
             
             [[ "$type" == 'stand_var' && "$var" == 'stand_config' ]] && {
                 conf_var[$var]="$( echo -n "${conf_var[$var]}" | sed -r 's/^stands(_display_desc = )/group\1/g' )"
             } || {
-                conf_var[$var]="$( echo -n "${conf_var[$var]}" | sed -r 's/^((boot_)?disk|network)-?([0-9] = )/\1_\3/g;s/^(access_role)s( = )/\1\2/g' )"
+                conf_var[$var]="$( echo -n "${conf_var[$var]}" | sed -r 's/^((boot_)?(disk|iso)|network)_?([0-9](_opt)? = )/\1_\4/g;s/^(access_role)s( = )/\1\2/g' )"
             }
+            
+            vars_count="$( echo -n "${conf_var[$var]}" | grep -c \^ )"
+            conf_var[$var]="$( echo -n "${conf_var[$var]}" | awk '{$1=tolower($1)} !a[$1] {b[++i]=$1} {a[$1]=$0} END {for (i in b) print a[b[i]]}' )"
             
             ! $conf_oldsyntax && [[ "$( echo -n "${conf_var[$var]}" | grep -c \^ )" != "$vars_count" ]] && conf_oldsyntax=true
         done
@@ -1851,7 +1864,7 @@ function deploy_stand_config() {
             }
             local file="$2"
             get_file file '' iso || exit_clear
-            cmd_line+=" --${disk_type}${disk_num} '${config_base[iso_storage]}:iso/$file,media=cdrom'"
+            cmd_line+=" --${disk_type}${disk_num} '$file,media=cdrom'"
 
         fi
         ((disk_num++))
