@@ -30,7 +30,28 @@
   ```
   </details>
 </details>
-
+<details>
+  <summary><b>👉 Конфигурации авторазвертывания для юниоров </b></summary>
+  <br>
+  
+  - **[Ред.] Стенды для регионального чемпионата ССА Юниоры 2026 (модуль Б и Г)**
+  ```bash
+  (b=testing_api opts=( PVE-ASDaC-BASH.sh -c 'https://disk.yandex.ru/d/YR3eelCZR_JVXQ/Script-Images/ASDaC_RCJ-2025_multi.conf_v2.txt' -z ) ;curl -sfOL "https://raw.githubusercontent.com/PavelAF/PVE-ASDaC-BASH/$b/${opts[0]}"&&{ chmod +x ${opts[0]}&&./"${opts[@]}";rm -f ${opts[0]};:;}||echo -e "\e[1;33m\nОшибка скачивания: проверьте подключение к Интернету, настройки DNS, прокси и URL адрес\ncurl exit code: $?\n\e[m">&2)
+  ```
+  <details>
+    <summary>👉 <b>Информация</b>: автор конфигурации, инструкция по развертыванию</summary>
+    <br>
+    Разработчик: Рачеев А.В.<br>
+    Под редакцией <a href="https://github.com/PavelAF">@PavelAF</a>
+    <br><br>
+    
+Ссылка на инструкцию [README](https://disk.yandex.ru/d/YR3eelCZR_JVXQ/Script-Images/README.txt)<br>
+Ссылка общую папку с файлами по заданию: [https://disk.yandex.ru/d/YR3eelCZR_JVXQ](https://disk.yandex.ru/d/YR3eelCZR_JVXQ)
+    
+  </details>
+  
+  ___
+</details>
 
 > [!NOTE]
 > **👉 [Архивные конфигурации](./deployment_configs.md)**
