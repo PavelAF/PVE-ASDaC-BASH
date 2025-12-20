@@ -668,14 +668,14 @@ function show_config() {
                 [[ "$var" =~ ^_ ]] && continue
                 description="$( echo -n "${ref_conf[_$var]}" )"
                 [[ "$description" != "" && "$1" == detailed ]] && [[ ! "$conf" =~ ^config_(stand_[1-9][0-9]{0,3}_var|templates)$ ]] \
-                    && echo -e "\n${c_lcyan}# $description${c_null}"
+                    && printf "\n${c_lcyan}# %s${c_null}\n" "${description/$'\n'/$'\n# '}"
 
                 value=$( echo -n "${ref_conf[$var]}" )
                 if [[ "$( echo "$value" | wc -l )" -le 1 ]]; then
-                    echo -e "$conf["$var"]='\e[1;34m${value}\e[m'"
+                    printf "%s[%s]='${c_lblue}%s${c_null}'\n" "$conf" "$var" "$value"
                 else
                     value="$( echo -n "$value" | sed 's/ = /\r/' | column -t -s $'\r' -o ' = ' | awk '{print "\t" $0}' )"
-                    echo -e "$conf["$var"]='\n\e[1;34m${value}\e[m\n'"
+                    printf "%s[%s]='\n${c_lblue}%s${c_null}\n'\n" "$conf" "$var" "$value"
                 fi
             done
         done
@@ -732,8 +732,8 @@ function show_config() {
 
                 [[ "$vm_name" == '' ]] && vm_name="$var"
                 
-                echo -en "${c_val}$vm_name${c_null}"
-                [[ "$description" != "" ]] && echo -en "(${description}) " || echo -n ' '
+                echo -n "${c_val}$vm_name${c_null}"
+                [[ "$description" != "" ]] && echo -n "(${description}) " || echo -n ' '
             done
             ! $first_elem && echo || echo '--- пустая конфигурация ---'
             first_elem=true
@@ -942,6 +942,8 @@ function terraform_config_vars() {
     local var='' vars='' type='' descr_var='' conf nl=$'\n' vars_count=0 var_value='' \
         conf_nowarnings=false conf_oldsyntax=false free_vmid=0 conf_vars_list=''
     
+    echo_tty $'\n'"${c_ok}Подождите, идет проверка конфигурации...${c_null}"$'\n'
+
     isdict_var_check config_base || { echo_err "Ошибка: не объявлены базовые конфигурационные переменные ${c_value}config_base${c_error}!"; exit 1; }
 
     for var in "${!config_base[@]}"; do
@@ -1013,8 +1015,15 @@ function terraform_config_vars() {
         for i in $( printf '%s\n' "${!conf_var[@]}" | grep -P '^_' ); do unset conf_var[$i]; done
     done
     $conf_oldsyntax && {
-        echo_warn $'[Предупреждение] В конфигурации обнаружены устаревшие/дублирующие/некорректные конструкции.\n'"Рекомендуется перегенерировать конфигурацию командой ${c_value}$0 -c {config_file} -sh {out_file}${c_null}"
-        $opt_silent_install || read_question 'Продолжить выполнение?' || exit 1
+        echo_warn '[Предупреждение] В конфигурации обнаружены устаревшие/дублирующие/некорректные конструкции.'
+        echo_warn '[Предупреждение] Выполнено восстановление/обновление конфигурации'
+        if ! $opt_show_config; then
+            echo_warn "Рекомендуется перегенерировать конфигурацию командой ${c_value}$0 -c {config_file} -sh {out_file}${c_null}"
+            $opt_silent_install || read_question 'Продолжить выполнение?' || exit 1
+        else
+            [[ ! $out_conf_file && -t 1 ]] && { $opt_silent_install || read_question 'Продолжить выполнение?' || exit 1; }
+        fi
+        echo_tty
     }
 }
 
@@ -1522,11 +1531,6 @@ function check_config() {
         }
 
         check_min_version 7.64 $( curl --version | grep -Po '^curl \K[0-9\.]+' ) || { echo_err "Ошибка: версия утилиты curl меньше требуемой ${c_val}7.6${c_err}. Обновите пакет/систему"; exit 1; }
-        configure_api_token init
-        check_min_version 7.2 "$data_pve_version" || { echo_err "Ошибка: версия PVE '$data_pve_version' уже устарела и установка стендов данным скриптом не поддерживается."$'\nМиннимально подерживаемая версия: PVE 7.2'; exit_clear; }
-        check_min_version 8 "$data_pve_version" && create_access_network=true || create_access_network=false
-        check_min_version 8.3 "$data_pve_version" && var_pve_passwd_min=8 || var_pve_passwd_min=5
-        check_min_version 8.3.7 "$data_pve_version" && var_pve_import=true || var_pve_import=false
 
         data_is_alt_os=false data_is_alt_v=false
         local alt_check=$( source /etc/os-release && { [[ $NAME == 'ALT Server-V' ]] && val=2 || { [[ $ID == 'altlinux' ]] && val=1; }; printf "$val"; }  )
@@ -1534,13 +1538,20 @@ function check_config() {
             1|2) data_is_alt_os=true;;&
             2) data_is_alt_v=true;;
         esac
-        #false && {
+        return
+    }
+    [[ "$1" == 'check-only' ]] && {
+        configure_api_token init
+        check_min_version 7.2 "$data_pve_version" || { echo_err "Ошибка: версия PVE '$data_pve_version' уже устарела и установка стендов данным скриптом не поддерживается."$'\nМиннимально подерживаемая версия: PVE 7.2'; exit_clear; }
+        check_min_version 8 "$data_pve_version" && create_access_network=true || create_access_network=false
+        check_min_version 8.3 "$data_pve_version" && var_pve_passwd_min=8 || var_pve_passwd_min=5
+        check_min_version 8.3.7 "$data_pve_version" && var_pve_import=true || var_pve_import=false
+
         ! $silent_mode && $data_is_alt_os && {
             echo_tty
             echo_warn 'В случае проблем с созданием/удалением ресурсов на Альт Виртуализации'
             read_question '[Alt VIRT] Включить режим медленного взаимодействия с API?' && opt_slow_api=true
         }
-        return
     }
 
     [[ "$1" == 'install' ]] && {
@@ -2910,7 +2921,7 @@ function register_ideco_ngfw_tweak() {
     
 }
 
-conf_files=()
+out_conf_file=''
 _opt_show_help='Вывод в терминал справки по команде, а так же примененных значений конфигурации и выход'
 opt_show_help=false
 _opt_show_config='Вывод в терминал (или файл) примененных значений конфигурации и выход'
@@ -2963,7 +2974,7 @@ while [ $# != 0 ]; do
         *)  case "$1" in
                 \?|-\?|/\?|-h|/h|--help) opt_show_help=true;;
                 -sh|--show-config) opt_show_config=true
-                    [[ "$2" =~ ^[^-].* ]] && conf_files+=("$2") && shift;;
+                    [[ "$2" =~ ^[^-].* ]] && out_conf_file=$2 && shift;;
                 -n|--stand-num)         check_arg "$2"; set_standnum "$2"; shift;;
                 -var|--set-var-num)     check_arg "$2"; set_varnum "$2"; shift;;
                 -si|--silent-install)   opt_silent_install=true; switch_action=1;;
@@ -2999,18 +3010,21 @@ silent_mode=$opt_silent_install || $opt_silent_control
 if $opt_show_help; then show_help; exit; fi
 
 check_config base-check
+terraform_config_vars
 
 if $opt_show_config; then
-    terraform_config_vars
-    [ -t 1 ] && show_config detailed || show_config detailed | sed -r 's/\x1B\[([0-9]{1,3}(;[0-9]{1,2};?)?)?[mGK]//g;s/\r//g'
-    for file in "${conf_files[@]}"; do
-        show_config detailed | sed -r 's/\x1B\[([0-9]{1,3}(;[0-9]{1,2};?)?)?[mGK]//g;s/\r//g' > $file
-    done
+    [[ ! -t 1 ]] && show_config detailed | sed -r 's/\x1B\[([0-9]{1,3}(;[0-9]{1,2};?)?)?[mGK]//g;s/\r//g'
+    if [[ $out_conf_file ]]; then
+        show_config detailed | sed -r 's/\x1B\[([0-9]{1,3}(;[0-9]{1,2};?)?)?[mGK]//g;s/\r//g' > $out_conf_file
+    else
+        [[ -t 1 ]] && show_config detailed
+    fi
+    echo_ok 'Конфигурация выгружена'
     exit_clear 0
 fi
 
-echo_tty $'\n'"${c_ok}Подождите, идет проверка конфигурации...${c_null}"$'\n'
-terraform_config_vars; check_config check-only;
+
+check_config check-only;
 
 $silent_mode && {
     case $switch_action in
