@@ -896,7 +896,7 @@ function get_file() {
         && [[ "$filesize" -gt 102400 || "${#file_sha256}" != 64 || "$( sha256sum "$filename" | awk '{printf $1}' )" == "$file_sha256" ]]; }; then
             [[ $3 != iso ]] && configure_imgdir add-size $max_filesize
             echo_tty "[${c_info}Info${c_null}] Скачивание файла ${c_value}${filename##*/}${c_null} Размер: ${c_value}$( echo "$filesize" | awk 'BEGIN{split("Б|КБ|МБ|ГБ|ТБ",x,"|")}{for(i=1;$1>=1024&&i<length(x);i++)$1/=1024;printf("%3.1f %s", $1, x[i]) }' )${c_null} URL: ${c_value}${4:-$base_url}${c_null}"
-            curl --max-filesize $max_filesize -fGL "$url" -o "$filename" || { echo_err "Ошибка скачивания файла ${c_value}$filename${c_err} URL: ${c_value}$url${c_err} curl exit code: $?"; exit_clear; }
+            curl --max-filesize $max_filesize -fGL --retry 3 --retry-delay 5 --retry-connrefused "$url" -o "$filename" || { echo_err "Ошибка скачивания файла ${c_value}$filename${c_err} URL: ${c_value}$url${c_err} curl exit code: $?"; exit_clear; }
             
             [[ -r "$filename" ]] || { echo_err "Файл $filename недоступен"; exit_clear; }
             [[ "$filesize" == '0' || "$( wc -c "$filename" | awk '{printf $1;exit}' )" == "$filesize" ]] || { echo_warn "Ошибка скачивания файла ${c_value}$filename${c_err}: размер файла не совпадает со значением, которое отправил сервер. URL: ${c_value}$url${c_err}"$'\n'"Размер скачанного файла: ${c_value}$( wc -c "$filename" | awk '{printf $1;exit}' )${c_err} Ожидалось: ${c_value}$filesize${c_err}"; filesize=0; }
@@ -919,7 +919,7 @@ function get_file() {
     [[ $3 == iso ]] && url="${config_base[iso_storage]}:iso/$( grep -Po '.*/\K.*' <<<$filename )"
     [[ $3 == diff ]] && {
         local diff_full diff_backing convert_threads convert_compress
-        convert_threads=$( lscpu | awk '/^Core\(s\) per socket:/ {cores=$4} /^Socket\(s\):/ {sockets=$2} END{n=cores*sockets;if(n>16) print 16; else print n}' )
+        convert_threads=$( nproc | awk '{if($1>16) print 16; else print $1}' )
         convert_compress=$( awk '/MemAvailable/ {if($2<16000000) {exit 1} }' /proc/meminfo || printf -- '-c' )
         ${config_base[convert_full_compress]} && convert_compress='-c'
         [[ ! -v var_tmp_img ]] && var_tmp_img=()
