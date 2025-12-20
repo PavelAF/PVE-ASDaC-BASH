@@ -1008,7 +1008,7 @@ function terraform_config_vars() {
             }
             
             vars_count="$( echo -n "${conf_var[$var]}" | grep -c \^ )"
-            conf_var[$var]="$( echo -n "${conf_var[$var]}" | awk '{$1=tolower($1)} !a[$1] {b[++i]=$1} {a[$1]=$0} END {for (i in b) print a[b[i]]}' )"
+            conf_var[$var]="$( echo -n "${conf_var[$var]}" | awk -v "conf=$conf" -v "var=$var" '{$1=tolower($1); if (!a[$1]) b[++i]=$1; else printf "ДУБЛИКАТ: %s[%s] строка %d: %s\n", conf, var, NR, $0 > "/dev/stderr"; a[$1]=$0 } END {for (i in b) print a[b[i]]}' )"
             
             ! $conf_oldsyntax && [[ "$( echo -n "${conf_var[$var]}" | grep -c \^ )" != "$vars_count" ]] && conf_oldsyntax=true
         done
