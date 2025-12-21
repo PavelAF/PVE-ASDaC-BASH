@@ -445,6 +445,46 @@ function show_help() {
 EOL
 }
 
+configure_locale() {
+
+    export LC_ALL=C
+    
+    local lc_base lc_lang line lc_1 lc_2
+
+    while IFS= read -r line; do
+        [[ $line != *.* ]] && continue
+
+        case ${line#*.} in
+            utf8|UTF-8)
+                case ${line%%.*} in
+                    C) lc_base=$line;;
+                    en_US) lc_lang=$line;;
+                    ru_RU) lc_1=$line;;
+                    *) lc_2=$line;;
+                esac;;
+        esac
+        [[ $lc_base && $lc_lang ]] && break;
+    done < <( locale -a 2>/dev/null )
+
+    [[ $? != 0 ]] && {
+        # Base Priority: C.UTF-8 -> en_US.UTF-8 -> ru_RU.UTF-8 -> other UTF-8
+        [[ ! $lc_base ]] && {
+            lc_base=${lc_lang:-${lc_1:-$lc_2}}
+            [[ ! $lc_base ]] && { echo_err $'FATAL_ERR: No UTF-8 locales are available on this system.\nScript execution cannot continue. Please install the C.UTF-8 locale.'; exit_clear; }
+            echo_warn "WARN: using non-standard UTF-8 locale: '$lc_base'"
+        }
+        # Sort Priority: en_US.UTF-8 -> ru_RU.UTF-8 -> other UTF-8 -> C.UTF-8
+        [[ ! $lc_lang ]] && {
+            lc_lang=${lc_lang:-${lc_1:-${lc_2:-$lc_base}}}
+            echo_warn "WARN: using non-standard UTF-8 locale for sorting: '$lc_lang'"
+        }
+    }
+
+    unset LC_ALL LANGUAGE LC_CTYPE LC_NUMERIC LC_TIME LC_MESSAGES
+    export LANG="$lc_base"
+    export LC_COLLATE="$lc_lang"
+}
+
 function pve_api_request() {
     [[ "$2" == '' || "$3" == '' ]] && { echo_err 'Ошибка: нет подходящих аргументов или токена для pve_api_request'; configure_api_token clear force; exit_clear; }
     [[ "$var_pve_api_curl" == '' ]] && {
@@ -2954,6 +2994,9 @@ opt_sel_var=0
 
 var_pve_node=$( hostname -s )
 var_ovs_checked=false
+
+# Устанавливаем корректную локаль. Заранее, перед всеми действиями
+configure_locale
 
 # список скачанных файлов
 declare -A list_url_files
