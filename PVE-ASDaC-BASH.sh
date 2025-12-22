@@ -2240,7 +2240,7 @@ function install_stands() {
     ${config_base[run_vm_after_installation]} && manage_bulk_vm_power --init
 
     for stand_num in "${!opt_stand_nums[@]}"; do
-        deploy_stand_config ${opt_stand_nums[stand_num]} $stand_num
+        deploy_stand_config ${opt_stand_nums[$stand_num]} $stand_num
     done
 
     run_cmd "pvesh set '/nodes/$var_pve_node/network'"
@@ -2913,35 +2913,48 @@ function set_realm_description_tweak() {
 }
 
 function set_ovs_and_fix_script_tweak() {
+    ! ovs-vsctl --version && {
+        echo_info "Пакет openvswitch не установлен. Установка ${c_val}openvswitch${c_info}..."
+        if $data_is_alt_os; then
+            apt-get install -y openvswitch || return
+        else
+            apt install -y openvswitch-switch || return
+        fi
+        ! ovs-vsctl --version || return
+        echo_ok "Пакет openvswitch успешно установлен на ноду ${c_val}$var_pve_node"
+    }
+
     local file_fix='/etc/network/if-pre-up.d/99-asdac-ovs-options-fix'
-    [[ -x $file_fix ]] || {
-        cat <<'EOF' > $file_fix
+    [[ ! -x "$file_fix" ]] && {
+        if command -v rpm >/dev/null 2>&1 && rpm -q ifupdown2 >/dev/null 2>&1 \
+            || command -v dpkg >/dev/null 2>&1 && dpkg -s ifupdown2 >/dev/null 2>&1 \
+            || [[ -d /etc/network ]]; then
+            mkdir -p /etc/network/if-pre-up.d
+        else
+            echo_warn "Пакет ifupdown2 не обнаружен на ноде ${c_val}$var_pve_node"
+            return 1
+        fi
+        cat <<'EOF' > "$file_fix"
 #!/bin/sh
 
 # This script was generated automatically by PVE-ASDaC-BASH
 # https://github.com/PavelAF/PVE-ASDaC-BASH
 # Author: PavelAF
 # Temporary fix for loss of ovs_options parameters during network reload (ifreload) for OVSBridge interfaces
-if [ "${IF_OVS_TYPE}" != OVSBridge ] || [ "$MODE" != start ] || [ -z "${IF_OVS_OPTIONS}" ] || ! ovs_vsctl --version > /dev/null 2>&1
+if [ "${IF_OVS_TYPE}" != OVSBridge ] || [ "$MODE" != start ] || [ -z "${IF_OVS_OPTIONS}" ] || ! ovs-vsctl --version > /dev/null 2>&1
 then
     exit 0
 fi
 
-ovs-vsctl --timeout=5 set set bridge "${IFACE}" ${IF_OVS_OPTIONS}
-EOF
-        chmod +x $file_fix
-        echo_ok "Твик ovs_options reload fix успешно установлен на ноду ${c_val}$var_pve_node"
-    }
+ovs-vsctl --timeout=5 set bridge "${IFACE}" ${IF_OVS_OPTIONS}
 
-    ! ovs_vsctl --version && {
-        echo_info "Пакет openvswitch не установлен. Установка ${c_val}openvswitch${c_info}..."
-        if data_is_alt_os; then
-            apt-get install -y openvswitch || return
+EOF
+        if chmod +x "$file_fix"; then
+            echo_ok "Твик ovs_options reload fix успешно установлен на ноду ${c_val}$var_pve_node"
         else
-            apt install -y openvswitch-switch || return
+            echo_warn "Не удалось применить твик ovs_options reload fix на ноде ${c_val}$var_pve_node"
+            return 1
         fi
-        ! ovs_vsctl --version || return
-        echo_ok "Пакет openvswitch успешно установлен на ноду ${c_val}$var_pve_node"
     }
 }
 
