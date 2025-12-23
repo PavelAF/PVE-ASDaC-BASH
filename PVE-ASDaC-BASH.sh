@@ -352,14 +352,32 @@ function check_min_version {
 	[[ "$(echo $1$'\n'$2 | sort -V )" == "$1"$'\n'"$2" ]] && return 0 || return 1
 }
 
-function get_main_pname() {
-    [[ "$(</proc/${1:-$$}/stat)" =~ ^[0-9]+\ \([^\)]+\)\ [RSDZTW]\ ([0-9]+) ]] || return 1
+check_is_pname() {
+    local pid=${1:-$$} i=0
+	[[ $2 ]] || return
 
-    if [[ ${BASH_REMATCH[1]} -eq 1 ]]; then
-        cat /proc/${1:-$$}/comm
-    else
-        get_main_pname ${BASH_REMATCH[1]}
-    fi
+    while (( i++ < 32 )) && [[ -r /proc/$pid/stat ]]; do
+
+        [[ $(</proc/$pid/stat) =~ ^[0-9]+\ \(([^\)]+)\)\ [A-Z]\ ([0-9]+) ]] || return 1
+        [[ ${BASH_REMATCH[1]} == $2 ]] && return
+
+		pid=${BASH_REMATCH[2]}
+		(( pid <= 1 )) && return 1
+    done
+    return 1
+}
+
+get_main_pname() {
+    local pid=${1:-$$} i=0
+
+    while (( i++ < 32 )) && [[ -r /proc/$pid/stat ]]; do
+
+        [[ $(</proc/$pid/stat) =~ ^[0-9]+\ \(([^\)]+)\)\ [A-Z]\ ([0-9]+) ]] || return 1
+
+        (( ${BASH_REMATCH[2]} <= 1 )) && { echo "${BASH_REMATCH[1]}"; return 0; }
+		pid=${BASH_REMATCH[2]}
+    done
+    return 1
 }
 
 # Объявление основных функций
@@ -1810,7 +1828,7 @@ function deploy_stand_config() {
                 [[ "$if_config"  =~ ,\ *ovs_options\ *=\ *\"\ *([^\"]+[^\" ])?\ *\"\ *($|,.+$) ]] && ovs_options=${BASH_REMATCH[1]}
                 
                 [[ $if_type == OVSBridge ]] && ! $var_ovs_checked && {
-                        set_ovs_and_fix_script_tweak || { echo_err "Ошибка set_ovs_and_fix_script_tweak: не удалось установить openvswitch и/или применить твик"; exit_clear; }
+                        tweak_set_ovs_and_fix_script || { echo_err "Ошибка tweak_set_ovs_and_fix_script: не удалось установить openvswitch и/или применить твик"; exit_clear; }
                         var_ovs_checked=true
                 }
             }
@@ -2245,7 +2263,7 @@ function install_stands() {
 
     run_cmd "pvesh set '/nodes/$var_pve_node/network'"
 
-    ${config_base[run_ifreload_tweak]} && remaster_vm_netif_tweak $var_pve_node
+    ${config_base[run_ifreload_tweak]} && tweak_remaster_vm_netif $var_pve_node
 
     ${config_base[run_vm_after_installation]} && manage_bulk_vm_power --start-vms
 
@@ -2655,7 +2673,7 @@ function manage_stands() {
             for pve_host in $vm_nodes; do
                 run_cmd "pvesh set '/nodes/$pve_host/network'"
                 echo_ok "Перезагрузка сети хоста ${c_val}$pve_host"
-                ${config_base[run_ifreload_tweak]} && remaster_vm_netif_tweak $pve_host
+                ${config_base[run_ifreload_tweak]} && tweak_remaster_vm_netif $pve_host
             done
         }
     fi
@@ -2673,11 +2691,11 @@ function utilities_menu() {
     ! $data_is_alt_os && {
         :
         utilities_menu[2-tweek_no_subscrib_window]='Отключение уведомления об отсутствии Enterprise подписки'
-        #utilities_menu[3-manage_aptrepo]='Включение no-subscription репозиториев PVE'
+        #utilities_menu[3-tweak_apt_pve_nosubscribe]='Переключение репозиториев PVE на no-subscribe'
     }
-    utilities_menu[4-remaster_vm_netif_tweak]='Твик-фикс: фикс сетевой связности для запущенных ВМ после перезагрузки сети хоста PVE'
-    utilities_menu[5-set_realm_description_tweak]='Изменить отображаемые названия аутентификаций на странице логина PVE'
-    ! $data_is_alt_v && utilities_menu[6-set_ovs_and_fix_script_tweak]='Установить OpenvSwitch и фикс пропадания настроек ovs_options для интерфейсов OVSBridge при релоаде сети'
+    utilities_menu[4-tweak_remaster_vm_netif]='Твик-фикс: фикс сетевой связности для запущенных ВМ после перезагрузки сети хоста PVE'
+    utilities_menu[5-tweak_set_realm_description]='Изменить отображаемые названия аутентификаций на странице логина PVE'
+    ! $data_is_alt_v && utilities_menu[6-tweak_set_ovs_and_fix_script]='Установить OpenvSwitch и фикс пропадания настроек ovs_options для интерфейсов OVSBridge при релоаде сети'
     
     while true; do
         i=0
@@ -2775,8 +2793,6 @@ function tweek_no_subscrib_window() {
     echo_tty
 
     local pname apt_conf='/etc/apt/apt.conf.d/99PVE-ASDaC-BASH_pve-no-subscribe-notice' invoke_cmd
-    pname=$( get_main_pname ) || return 0
-    
 
     echo_err "В случае возникновения критической ошибки удалите файл с хуком apt.conf и переустановите пакеты следующей командой: ${c_val}apt reinstall proxmox-widget-toolkit pve-manager"
     echo_tty
@@ -2785,19 +2801,20 @@ function tweek_no_subscrib_window() {
     echo_info "Твик выполнится сейчас и далее будет автоматически запускаться после каждой установки обновлений"
     echo_info "Будет создан хук ${c_val}DPkg::Post-Invoke${c_info} и сохранен в файл apt conf: ${c_val}$apt_conf"
     echo_tty
-    [[ "$pname" =~ ^task\ UPID: ]] && echo_err $'Предупреждение: обнаружен запуск скрипта через web Shell!\nЭту операцию рекомендуется выполнять из-под SSH сессии для возможности отката изменений!\n'
+    check_is_pname $$ 'task UPID:*' && echo_err $'Предупреждение: обнаружен запуск скрипта через web Shell!\nЭту операцию рекомендуется выполнять из-под SSH сессии для возможности отката изменений!\n'
 
     read_question "Вы хотите продолжить?" || return 0
 
     local -a js_files
-    [[ -f $apt_conf ]] && { echo_err "Файл '$apt_conf' уже существует. Твик уже был применен?"; return; }
-    
+    [[ -f $apt_conf && $( wc -c "$apt_conf" | awk '{printf $1;exit}' ) == 824 ]] && { echo_err "Файл '$apt_conf' уже существует. Твик уже был применен?"; read_question "Вы хотите продолжить?" || return 0; }
     
     readarray -t js_files < <( dpkg -L proxmox-widget-toolkit pve-manager 2>/dev/null | grep '\.js$' \
         | xargs -rd'\n' grep -lzZ ',\s*checked_command:\s*function\s*(\s*\w\+\s*)\s*{\s*Proxmox\.Utils\.API2Request\s*(\s*{\s*url:\s*\("\|'\''\)/nodes/localhost/subscription\("\|'\''\)' \
         | xargs -0ri echo '{}' )
-    [[ "${#js_files[@]}" == 0 ]] && { echo_warn "Файлы для изменения не найдены. Твик устарел или уже был применен сторонний твик?"; read_question "Вы хотите продолжить?" || return 0; } \
-    || {
+    if [[ "${#js_files[@]}" == 0 ]]; then
+        echo_warn "Файлы для изменения не найдены. Твик устарел или уже был применен сторонний твик?"
+        read_question "Вы хотите продолжить?" || return 0
+    else
         echo_tty
         echo_tty "Будут изменены следующие файлы:"
         echo_tty "$( printf ' - %s\n' "${js_files[@]}" )"
@@ -2827,7 +2844,7 @@ function tweek_no_subscrib_window() {
             echo_warn "Сервис pveproxy не был перезапущен и изменения не были внесены"
             echo_warn "Выполните команду ${c_val}systemctl restart pveproxy.service${c_warn} после завершения работы скрипта для внесения изменений"
         }
-    }
+    fi
 
     echo_info "Создание конфигурации apt.conf Post-Invoke.. в ${c_val}$apt_conf"
     [[ -w /etc/apt/apt.conf.d ]] || { echo_err "Каталог конфигураций APT не найден или недостцпен для записи"; return; }
@@ -2842,13 +2859,13 @@ EOF
     echo_ok 'Твик успешно применен'
 }
 
-function manage_aptrepo() {
+function tweak_apt_pve_nosubscribe() {
     echo_tty
     echo_warn 'Функционал в процессе разработки и пока недоступен'; return
     read_question "Вы хотите продолжить?" || return 0
 }
 
-function remaster_vm_netif_tweak() {
+function tweak_remaster_vm_netif() {
     
 	local -A vm_list
 	local i max_count=0 vm_config line cmd_line_clear cmd_line pve_node vm_type firewall
@@ -2900,7 +2917,7 @@ function remaster_vm_netif_tweak() {
     echo_ok "Переприменены настройки активных сетевых интерфейсов ВМ и CT"
 }
 
-function set_realm_description_tweak() {
+function tweak_set_realm_description() {
 
     config_base[access_auth_pam_desc]=$( read_question_select 'Отображаемое название аутинтификации PVE' '' '' '' "${config_base[access_auth_pam_desc]}" 1 )
     config_base[access_auth_pve_desc]=$( read_question_select 'Отображаемое название аутинтификации PAM' '' '' '' "${config_base[access_auth_pve_desc]}" 1 )
@@ -2912,8 +2929,8 @@ function set_realm_description_tweak() {
 
 }
 
-function set_ovs_and_fix_script_tweak() {
-    ! ovs-vsctl --version && {
+function tweak_set_ovs_and_fix_script() {
+    ! ovs-vsctl --version &> /dev/null && {
         echo_info "Пакет openvswitch не установлен. Установка ${c_val}openvswitch${c_info}..."
         if $data_is_alt_os; then
             apt-get install -y openvswitch || return
@@ -2925,7 +2942,7 @@ function set_ovs_and_fix_script_tweak() {
     }
 
     local file_fix='/etc/network/if-pre-up.d/99-asdac-ovs-options-fix'
-    [[ ! -x "$file_fix" ]] && {
+    if [[ ! -x "$file_fix" || $( wc -c "$file_fix" | awk '{printf $1;exit}' ) != 458 ]]; then
         if command -v rpm >/dev/null 2>&1 && rpm -q ifupdown2 >/dev/null 2>&1 \
             || command -v dpkg >/dev/null 2>&1 && dpkg -s ifupdown2 >/dev/null 2>&1 \
             || [[ -d /etc/network ]]; then
@@ -2934,7 +2951,8 @@ function set_ovs_and_fix_script_tweak() {
             echo_warn "Пакет ifupdown2 не обнаружен на ноде ${c_val}$var_pve_node"
             return 1
         fi
-        cat <<'EOF' > "$file_fix"
+        
+	cat <<'EOF' > "$file_fix"
 #!/bin/sh
 
 # This script was generated automatically by PVE-ASDaC-BASH
@@ -2950,15 +2968,17 @@ ovs-vsctl --timeout=5 set bridge "${IFACE}" ${IF_OVS_OPTIONS}
 
 EOF
         if chmod +x "$file_fix"; then
-            echo_ok "Твик ovs_options reload fix успешно установлен на ноду ${c_val}$var_pve_node"
+            echo_ok "Твик $FUNCNAME успешно применен на ноду ${c_val}$var_pve_node"
         else
-            echo_warn "Не удалось применить твик ovs_options reload fix на ноде ${c_val}$var_pve_node"
+            echo_warn "Не удалось применить твик $FUNCNAME на ноде ${c_val}$var_pve_node"
             return 1
         fi
-    }
+    else
+	    echo_ok "Твик $FUNCNAME выполнен"
+    fi
 }
 
-function register_ideco_ngfw_tweak() {
+function tweak_register_ideco_ngfw() {
     echo_tty
     echo_warn 'Функционал в процессе разработки и пока недоступен'; return
     return
