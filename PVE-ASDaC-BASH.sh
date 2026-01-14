@@ -2937,7 +2937,7 @@ function tweak_set_ovs_and_fix_script() {
         else
             apt install -y openvswitch-switch || return
         fi
-        ! ovs-vsctl --version || return
+        ovs-vsctl --version || return
         echo_ok "Пакет openvswitch успешно установлен на ноду ${c_val}$var_pve_node"
     }
 
