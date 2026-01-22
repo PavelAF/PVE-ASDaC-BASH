@@ -2933,9 +2933,9 @@ function tweak_set_ovs_and_fix_script() {
     ! ovs-vsctl --version &> /dev/null && {
         echo_info "Пакет openvswitch не установлен. Установка ${c_val}openvswitch${c_info}..."
         if $data_is_alt_os; then
-            apt-get install -y openvswitch || return
+            apt-get update && apt-get install -y openvswitch || return
         else
-            apt install -y openvswitch-switch || return
+            apt update && apt install -y openvswitch-switch || return
         fi
         ovs-vsctl --version || return
         echo_ok "Пакет openvswitch успешно установлен на ноду ${c_val}$var_pve_node"
@@ -2943,8 +2943,8 @@ function tweak_set_ovs_and_fix_script() {
 
     local file_fix='/etc/network/if-pre-up.d/99-asdac-ovs-options-fix'
     if [[ ! -x "$file_fix" || $( wc -c "$file_fix" | awk '{printf $1;exit}' ) != 458 ]]; then
-        if command -v rpm >/dev/null 2>&1 && rpm -q ifupdown2 >/dev/null 2>&1 \
-            || command -v dpkg >/dev/null 2>&1 && dpkg -s ifupdown2 >/dev/null 2>&1 \
+        if command -v rpm &>/dev/null && rpm -q ifupdown2 &>/dev/null \
+            || command -v dpkg &>/dev/null && dpkg -s ifupdown2 &>/dev/null \
             || [[ -d /etc/network ]]; then
             mkdir -p /etc/network/if-pre-up.d
         else
