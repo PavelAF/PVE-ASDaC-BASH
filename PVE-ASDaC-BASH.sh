@@ -2933,9 +2933,11 @@ function tweak_set_ovs_and_fix_script() {
     ! ovs-vsctl --version &> /dev/null && {
         echo_info "Пакет openvswitch не установлен. Установка ${c_val}openvswitch${c_info}..."
         if $data_is_alt_os; then
-            apt-get update && apt-get install -y openvswitch || return
+            echo_tty 'Running apt-get update...'
+            apt-get update |& grep -P '^([EW]:|Err)|failure ' && apt-get install -y openvswitch || return
         else
-            apt update && apt install -y openvswitch-switch || return
+            echo_tty 'Running apt update...'
+            apt update |& grep -P '^([EW]|Err|Ign):' && apt install -y openvswitch-switch || return
         fi
         ovs-vsctl --version || return
         echo_ok "Пакет openvswitch успешно установлен на ноду ${c_val}$var_pve_node"
