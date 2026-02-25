@@ -460,6 +460,7 @@ function show_help() {
         -z, --clear-vmconfig$t$_opt_zero_vms
         -api, --pve-api-url$t${config_base[_pve_api_url]}
         --slow-api$t$_opt_slow_api
+        -ac, --autocheck [file]$t$_opt_autocheck
 EOL
 }
 
@@ -2362,7 +2363,8 @@ function manage_stands() {
     echo_tty "   8. Откатить снапшоты виртуальных машин"
     echo_tty "   9. Удалить снапшоты виртуальных машин"
     echo_tty "  10. Удаление стендов"
-    local switch=$( read_question_select $'\nВыберите действие' '^[0-9]{1,2}$' 1 10 '' 2 )
+    echo_tty "  11. Автопроверка стенда"
+    local switch=$( read_question_select $'\nВыберите действие' '^[0-9]{1,2}$' 1 11 '' 2 )
 
     [[ "$switch" == '' ]] && return 0
     if [[ $switch =~ ^[1-3]$ ]]; then
@@ -2424,6 +2426,11 @@ function manage_stands() {
         fi
         opt_stand_nums=()
         echo_tty $'\n'"${c_success}Настройка завершена.${c_null} Выход"; return 0
+    fi
+
+    if [[ $switch == 11 ]]; then
+        autocheck_stand "" "$group_name"
+        return 0
     fi
 
     local stand_range='' stand_count=$( echo "${pool_list[$group_name]}" | wc -l ) stand_list='' usr_list=''
@@ -3166,6 +3173,289 @@ function export_vm_disks() {
     ! $opt_dry_run && ls -lh "$output_dir"/*.qcow2 2>/dev/null | awk '{printf "  %-40s %s\n", $NF, $5}' >/dev/tty
 }
 
+function exec_agent_cmd() {
+    local -n _ea_ref=$1
+    local _ea_node=$2 _ea_vmid=$3 _ea_cmd=$4
+    local _ea_timeout=${5:-30}
+    local _ea_response _ea_pid _ea_i _ea_out _ea_err
+
+    _ea_response=$( pvesh create "/nodes/$_ea_node/qemu/$_ea_vmid/agent/exec" \
+        --command bash --command -c --command "$_ea_cmd" \
+        --output-format json 2>&1 ) || {
+        _ea_ref="[Ошибка] Guest Agent недоступен"
+        return 1
+    }
+
+    _ea_pid=$( echo "$_ea_response" | grep -Po '"pid"\s*:\s*\K[0-9]+' )
+    [[ "$_ea_pid" == '' ]] && { _ea_ref="[Ошибка] Не удалось получить PID процесса"; return 1; }
+
+    for ((_ea_i=0; _ea_i<_ea_timeout; _ea_i++)); do
+        sleep 1
+        _ea_response=$( pvesh get "/nodes/$_ea_node/qemu/$_ea_vmid/agent/exec-status" \
+            --pid "$_ea_pid" --output-format json 2>&1 ) || continue
+
+        echo "$_ea_response" | grep -Pq '"exited"\s*:\s*(1|true)' || continue
+
+        _ea_out=$( echo "$_ea_response" | grep -Po '"out-data"\s*:\s*"\K(?(?=\\").{2}|[^"])+' )
+        _ea_err=$( echo "$_ea_response" | grep -Po '"err-data"\s*:\s*"\K(?(?=\\").{2}|[^"])+' )
+        _ea_ref=$( printf '%b' "$_ea_out" )
+        [[ "$_ea_err" != '' ]] && _ea_ref+=$'\n'"$( printf '%b' "$_ea_err" )"
+        return 0
+    done
+
+    _ea_ref="[Ошибка] Таймаут выполнения команды (${_ea_timeout}с)"
+    return 1
+}
+
+function exec_serial_cmd() {
+    local -n _es_ref=$1
+    local _es_vmid=$2 _es_cmd=$3
+    local _es_prompt=${4:-'[A-Za-z0-9._-]+[#>]'}
+    local _es_timeout=${5:-3}
+    local _es_login=$6 _es_password=$7
+    local _es_socket="/var/run/qemu-server/${_es_vmid}.serial0"
+
+    [[ ! -S "$_es_socket" ]] && { _es_ref="[Ошибка] Серийный порт не настроен (${_es_socket})"; return 1; }
+    command -v socat &>/dev/null || { _es_ref="[Ошибка] socat не установлен"; return 1; }
+
+    local _es_raw
+    _es_raw=$( {
+        printf '\r\n'
+        sleep 0.5
+        if [[ "$_es_login" != '' ]]; then
+            printf '%s\r\n' "$_es_login"
+            sleep 0.5
+            printf '%s\r\n' "$_es_password"
+            sleep 1
+        fi
+        printf '%s\r\n' "$_es_cmd"
+        sleep "$_es_timeout"
+    } | timeout $(( _es_timeout + 5 )) socat - "UNIX-CONNECT:$_es_socket" 2>/dev/null ) || true
+
+    _es_ref=$( echo "$_es_raw" | tr -d '\r' | \
+        grep -Pv "$_es_prompt" | \
+        grep -Fxv "$_es_cmd" | \
+        sed '/^\s*$/d; /^[Ll]ogin:/d; /^[Uu]sername:/d; /^[Pp]assword:/d' )
+
+    return 0
+}
+
+function autocheck_stand() {
+    local config_file="${1:-}"
+    local _preselected_group="${2:-}"
+    local autocheck_dir="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )/autocheck"
+
+    # ====== Выбор файла конфигурации автопроверки ======
+    if [[ "$config_file" == '' ]]; then
+        [[ ! -d "$autocheck_dir" ]] && { echo_err "Папка autocheck/ не найдена ($autocheck_dir)"; return 1; }
+        local -a _ac_conf_files _ac_conf_names
+        local _ac_f _ac_n
+        for _ac_f in "$autocheck_dir"/*.conf; do
+            [[ -f "$_ac_f" ]] || continue
+            _ac_n=$( grep -Po "^autocheck_name=['\"]\\K[^'\"]+" "$_ac_f" 2>/dev/null ) || _ac_n="$(basename "$_ac_f")"
+            _ac_conf_files+=( "$_ac_f" )
+            _ac_conf_names+=( "$_ac_n" )
+        done
+        [[ ${#_ac_conf_files[@]} == 0 ]] && { echo_info "Файлы автопроверки не найдены в $autocheck_dir"; return 0; }
+
+        echo_tty $'\nДоступные конфигурации автопроверки:'
+        local i
+        for ((i=0; i<${#_ac_conf_files[@]}; i++)); do
+            echo_tty "  $((i+1)). ${_ac_conf_names[$i]}"
+        done
+        local _ac_sel=$( read_question_select 'Выберите конфигурацию' '^[0-9]+$' 1 ${#_ac_conf_files[@]} '' 2 )
+        [[ "$_ac_sel" == '' ]] && return 0
+        config_file="${_ac_conf_files[$((_ac_sel-1))]}"
+    fi
+
+    [[ ! -f "$config_file" ]] && { echo_err "Файл конфигурации автопроверки не найден: $config_file"; return 1; }
+
+    # ====== Загрузка конфига ======
+    local autocheck_name='' autocheck_vms=''
+    local exec_serial_prompt='[A-Za-z0-9._-]+[#>]' exec_serial_timeout=3
+    local exec_serial_login='' exec_serial_password=''
+    source "$config_file"
+    [[ "$autocheck_name" == '' ]] && autocheck_name="$(basename "$config_file")"
+
+    local -A _ac_vm_exec
+    local _vm_n _vm_t
+    while IFS='=' read -r _vm_n _vm_t; do
+        _vm_n=$( echo "$_vm_n" | xargs )
+        _vm_t=$( echo "$_vm_t" | xargs )
+        [[ "$_vm_n" != '' && "$_vm_t" != '' ]] && _ac_vm_exec[$_vm_n]=$_vm_t
+    done <<< "$autocheck_vms"
+
+    [[ ${#_ac_vm_exec[@]} == 0 ]] && { echo_err "Не найдено ВМ в autocheck_vms конфигурации"; return 1; }
+
+    local _ac_max_check=0
+    while true; do
+        local _chk_var="check_$((_ac_max_check+1))_name"
+        [[ -v "$_chk_var" ]] || break
+        ((_ac_max_check++))
+    done
+    [[ $_ac_max_check == 0 ]] && { echo_warn "В конфигурации не найдено проверок (check_N_name)"; return 0; }
+
+    # ====== Обнаружение стендов ======
+    local -A _ac_acl _ac_grp _ac_print _ac_pools
+    jq_data_to_array /access/acl _ac_acl
+    jq_data_to_array /access/groups _ac_grp
+
+    local group_name pool_name max_count nl=$'\n' i j
+
+    max_count=${_ac_acl[count]}
+    for ((i=0; i<$max_count; i++)); do
+        [[ "${_ac_acl[$i,type]}" != group ]] && continue
+        if [[ "${_ac_acl[$i,path]}" =~ ^\/pool\/(.+) ]] && [[ "${_ac_acl[$i,roleid]}" == NoAccess && "${_ac_acl[$i,propagate]}" == 0 ]]; then
+            _ac_pools[${_ac_acl[$i,ugid]}]+=${BASH_REMATCH[1]}$nl
+        fi
+    done
+    max_count=${_ac_grp[count]}
+    for ((i=0; i<=$max_count; i++)); do
+        [[ -v "_ac_pools[${_ac_grp[$i,groupid]}]" ]] && {
+            group_name=${_ac_grp[$i,groupid]}
+            _ac_print[$group_name]="${c_ok}$group_name${c_null} : ${_ac_grp[$i,comment]}"
+            _ac_pools[$group_name]=$( echo "${_ac_pools[$group_name]}" | sed '/^$/d' | sort -uV )
+        }
+    done
+
+    [[ ${#_ac_print[@]} != 0 ]] || { echo_info $'\nНе найдено ни одной развернутой конфигурации'; return 0; }
+
+    # ====== Выбор группы (пропуск если предвыбрана из manage_stands) ======
+    if [[ "$_preselected_group" != '' && -v "_ac_pools[$_preselected_group]" ]]; then
+        group_name="$_preselected_group"
+    else
+        echo_tty $'\nСписок развернутых конфигураций:'
+        i=0
+        for item in "${!_ac_print[@]}"; do
+            echo_tty "  $((++i)). ${_ac_print[$item]//\\\"/\"}"
+        done
+        [[ $i -gt 1 ]] && i=$( read_question_select 'Выберите номер конфигурации' '^[0-9]+$' 1 $i '' 2 )
+        [[ "$i" == '' ]] && return 0
+        j=0; group_name=''
+        for item in "${!_ac_print[@]}"; do
+            ((j++)); [[ $i != $j ]] && continue
+            group_name=$item; break
+        done
+    fi
+
+    # ====== Выбор стендов ======
+    local _ac_stand_count=$( echo "${_ac_pools[$group_name]}" | wc -l )
+    [[ "$_ac_stand_count" == 0 ]] && { echo_info "Пулы стендов '$group_name' не найдены"; return 0; }
+
+    local -a _ac_sel_stands
+    if [[ "$_ac_stand_count" -gt 1 ]]; then
+        echo_tty $'\nВыберите стенды для проверки:'
+        for ((i=1; i<=$_ac_stand_count; i++)); do
+            echo_tty "  $i. $( echo "${_ac_pools[$group_name]}" | sed "${i}q;d" )"
+        done
+        echo_tty $'\nДля выбора всех стендов нажмите Enter'
+        local _ac_range=$( read_question_select 'Введите номера стендов (прим 1,2-6)' '\A^(([0-9]{1,3}((\-|\.\.)[0-9]{1,3})?([\,](?!$\Z)|(?![0-9])))+)$\Z' '' '' '' 2 )
+        if [[ "$_ac_range" == '' ]]; then
+            for ((i=1; i<=$_ac_stand_count; i++)); do _ac_sel_stands+=( $i ); done
+        else
+            _ac_sel_stands=( $( get_numrange_array "$_ac_range" ) )
+        fi
+    else
+        _ac_sel_stands=( 1 )
+    fi
+    [[ ${#_ac_sel_stands[@]} == 0 ]] && return 0
+
+    local regex='(,|{)\s*\"{opt_name}\"\s*:\s*(\K[0-9]+|\"\K(?(?=\\").{2}|[^"])+)'
+
+    # ====== Запуск проверок для каждого стенда ======
+    for _ac_sidx in "${_ac_sel_stands[@]}"; do
+        pool_name=$( echo "${_ac_pools[$group_name]}" | sed "${_ac_sidx}q;d" )
+        [[ "$pool_name" == '' ]] && continue
+
+        local pool_info vmid_list vmname_list vm_node_list vm_status_list vm_type_list
+        pve_api_request pool_info GET "/pools/$pool_name" || { echo_err "Не удалось получить информацию о стенде '$pool_name'"; continue; }
+        vmid_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/vmid}" )
+        vmname_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/name}" )
+        vm_node_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/node}" )
+        vm_status_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/status}" )
+        vm_type_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/type}" )
+
+        local _ac_vm_count=$( echo "$vmid_list" | wc -l )
+
+        local -A _ac_map_id _ac_map_node _ac_map_status
+        for ((i=1; i<=$_ac_vm_count; i++)); do
+            local _t=$( echo -n "$vm_type_list" | sed "${i}q;d" )
+            [[ "$_t" != 'qemu' ]] && continue
+            local _n=$( echo -n "$vmname_list" | sed "${i}q;d" )
+            _ac_map_id[$_n]=$( echo -n "$vmid_list" | sed "${i}q;d" )
+            _ac_map_node[$_n]=$( echo -n "$vm_node_list" | sed "${i}q;d" )
+            _ac_map_status[$_n]=$( echo -n "$vm_status_list" | sed "${i}q;d" )
+        done
+
+        echo_tty
+        echo_tty "${c_value}══════════════════════════════════════${c_null}"
+        echo_tty " Автопроверка: ${c_ok}$autocheck_name${c_null}"
+        echo_tty " Стенд: ${c_value}$pool_name${c_null}"
+        echo_tty "${c_value}══════════════════════════════════════${c_null}"
+
+        for ((_ac_cn=1; _ac_cn<=_ac_max_check; _ac_cn++)); do
+            local _chk_name_var="check_${_ac_cn}_name"
+            local _chk_vms_var="check_${_ac_cn}_vms"
+            local _chk_name="${!_chk_name_var:-Проверка $_ac_cn}"
+            local _chk_vms="${!_chk_vms_var:-}"
+
+            echo_tty
+            echo_tty "${c_info}── Проверка $_ac_cn: ${_chk_name} ──${c_null}"
+
+            [[ "$_chk_vms" == '' ]] && { echo_warn "  Список ВМ пуст для проверки $_ac_cn"; continue; }
+
+            for _ac_vm in $_chk_vms; do
+                local _ac_etype="${_ac_vm_exec[$_ac_vm]:-}"
+                [[ "$_ac_etype" == '' ]] && { echo_warn "  [${c_ok}$_ac_vm${c_warn}] Тип подключения не указан в autocheck_vms"; continue; }
+
+                local _ac_vid="${_ac_map_id[$_ac_vm]:-}"
+                [[ "$_ac_vid" == '' ]] && { echo_warn "  [${c_ok}$_ac_vm${c_warn}] ВМ не найдена в стенде $pool_name"; continue; }
+
+                local _ac_vnode="${_ac_map_node[$_ac_vm]}"
+                local _ac_vstat="${_ac_map_status[$_ac_vm]}"
+
+                [[ "$_ac_vstat" != 'running' ]] && { echo_warn "  [${c_ok}$_ac_vm${c_warn}] ВМ не запущена ($_ac_vstat)"; continue; }
+
+                local _chk_cmd_var="check_${_ac_cn}_cmd_${_ac_etype}"
+                local _ac_cmd="${!_chk_cmd_var:-}"
+                [[ "$_ac_cmd" == '' ]] && { echo_warn "  [$_ac_vm] Команда для $_ac_etype не задана"; continue; }
+
+                local _ac_out=''
+                case "$_ac_etype" in
+                    exec_agent)
+                        exec_agent_cmd _ac_out "$_ac_vnode" "$_ac_vid" "$_ac_cmd"
+                        ;;
+                    exec_serial)
+                        local _san="${_ac_vm//-/_}"
+                        local _sl_var="${_san}_serial_login"
+                        local _sp_var="${_san}_serial_password"
+                        local _sl="${!_sl_var:-$exec_serial_login}"
+                        local _sp="${!_sp_var:-$exec_serial_password}"
+                        exec_serial_cmd _ac_out "$_ac_vid" "$_ac_cmd" "$exec_serial_prompt" "$exec_serial_timeout" "$_sl" "$_sp"
+                        ;;
+                    *)
+                        echo_warn "  [$_ac_vm] Неизвестный тип подключения: $_ac_etype"
+                        continue
+                        ;;
+                esac
+
+                echo_tty
+                echo_tty "  [${c_ok}$_ac_vm${c_null}] (${_ac_etype}):"
+                if [[ "$_ac_out" != '' ]]; then
+                    echo "$_ac_out" | while IFS= read -r _line; do
+                        echo_tty "  $_line"
+                    done
+                else
+                    echo_tty "  ${c_info}(пустой вывод)${c_null}"
+                fi
+            done
+        done
+    done
+
+    echo_tty
+    echo_ok "Автопроверка завершена."
+}
+
 out_conf_file=''
 _opt_show_help='Вывод в терминал справки по команде, а так же примененных значений конфигурации и выход'
 opt_show_help=false
@@ -3196,6 +3486,9 @@ opt_slow_api=false
 
 _opt_sel_var='Выбор варианта установки стендов'
 opt_sel_var=0
+
+_opt_autocheck='Запустить автопроверку стенда по указанному файлу конфигурации'
+opt_autocheck_file=''
 
 var_pve_node=$( hostname -s )
 var_ovs_checked=false
@@ -3246,6 +3539,7 @@ while [ $# != 0 ]; do
                 -sctl|--silent-control) opt_silent_control=true;;
                 -api|--pve-api-url) check_arg "$2"; config_base[pve_api_url]="$2"; shift;;
                 --run-ifreload-tweak) check_arg "$2"; config_base[run_ifreload_tweak]="$2"; shift;;
+                -ac|--autocheck) check_arg "$2"; opt_autocheck_file="$2"; shift;;
                 *) echo_err "Ошибка: некорректный аргумент: '$1'"; opt_show_help=true;;
             esac
             shift;;
@@ -3283,6 +3577,10 @@ $silent_mode && {
     exit_clear
 }
 
+[[ "$opt_autocheck_file" != '' ]] && {
+    autocheck_stand "$opt_autocheck_file"
+    exit_clear 0
+}
 
 while ! $silent_mode; do
     echo_tty $'\nДействие: 1 - Развертывание стендов, 2 - Управление стендами, 3 - Утилиты\n'
