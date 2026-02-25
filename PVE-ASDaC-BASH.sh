@@ -2698,7 +2698,8 @@ function utilities_menu() {
     utilities_menu[4-tweak_remaster_vm_netif]='Твик-фикс: фикс сетевой связности для запущенных ВМ после перезагрузки сети хоста PVE'
     utilities_menu[5-tweak_set_realm_description]='Изменить отображаемые названия аутентификаций на странице логина PVE'
     ! $data_is_alt_v && utilities_menu[6-tweak_set_ovs_and_fix_script]='Установить OpenvSwitch и фикс пропадания настроек ovs_options для интерфейсов OVSBridge при релоаде сети'
-    
+    utilities_menu[7-export_vm_disks]='Экспорт дисков виртуальных машин стенда в qcow2'
+
     while true; do
         i=0
         echo_tty $'\nРаздел меню с твиками/утилитами для PVE:'
@@ -2996,6 +2997,173 @@ function tweak_register_ideco_ngfw() {
     readarray -td $'\n' vm_tags <<<$result
 
     
+}
+
+function export_vm_disks() {
+    echo_tty
+
+    local -A acl_list group_list print_list pool_list
+    jq_data_to_array /access/acl acl_list
+    jq_data_to_array /access/groups group_list
+
+    local group_name pool_name max_count nl=$'\n' i j
+
+    max_count=${acl_list[count]}
+    for ((i=0; i<$max_count; i++)); do
+        [[ "${acl_list[$i,type]}" != group ]] && continue
+        if [[ "${acl_list[$i,path]}" =~ ^\/pool\/(.+) ]] && [[ "${acl_list[$i,roleid]}" == NoAccess && "${acl_list[$i,propagate]}" == 0 ]]; then
+            pool_list[${acl_list[$i,ugid]}]+=${BASH_REMATCH[1]}$nl
+        fi
+    done
+    max_count=${group_list[count]}
+    for ((i=0; i<=$max_count; i++)); do
+        [[ -v "pool_list[${group_list[$i,groupid]}]" ]] && {
+            group_name=${group_list[$i,groupid]}
+            print_list[$group_name]="${c_ok}$group_name${c_null} : ${group_list[$i,comment]}"
+            pool_list[$group_name]=$( echo "${pool_list[$group_name]}" | sed '/^$/d' | sort -uV )
+        }
+    done
+
+    [[ ${#print_list[@]} != 0 ]] && echo_tty $'\nСписок развернутых конфигураций:' || { echo_info $'\nНе найдено ни одной развернутой конфигурации'; return 0; }
+    i=0
+    for item in "${!print_list[@]}"; do
+        echo_tty "  $((++i)). ${print_list[$item]//\\\"/\"}"
+    done
+    [[ $i -gt 1 ]] && i=$( read_question_select 'Выберите номер конфигурации' '^[0-9]+$' 1 $i '' 2 )
+    [[ "$i" == '' ]] && return 0
+    j=0; group_name=''
+    for item in "${!print_list[@]}"; do
+        ((j++)); [[ $i != $j ]] && continue
+        group_name=$item; break
+    done
+
+    local stand_count=$( echo "${pool_list[$group_name]}" | wc -l )
+    [[ "$stand_count" == 0 ]] && { echo_err "Ошибка: пулы стендов '$group_name' не найдены"; return 0; }
+
+    echo_tty $'\nВыберите стенд для экспорта:'
+    for ((i=1; i<=$stand_count; i++)); do
+        echo_tty "  $i. $(echo "${pool_list[$group_name]}" | sed "${i}q;d" )"
+    done
+    local stand_idx=$( read_question_select 'Номер стенда' '^[0-9]+$' 1 $stand_count '' 2 )
+    [[ "$stand_idx" == '' ]] && return 0
+    pool_name=$( echo "${pool_list[$group_name]}" | sed "${stand_idx}q;d" )
+
+    local regex='(,|{)\s*\"{opt_name}\"\s*:\s*(\K[0-9]+|\"\K(?(?=\\").{2}|[^"])+)'
+    local pool_info vmid_list vmname_list vm_node_list vm_status_list vm_type_list vm_is_template_list
+    pve_api_request pool_info GET "/pools/$pool_name" || { echo_err "Ошибка: не удалось получить информацию о стенде '$pool_name'"; return 0; }
+    vmid_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/vmid}" )
+    vmname_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/name}" )
+    vm_node_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/node}" )
+    vm_status_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/status}" )
+    vm_type_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/type}" )
+    vm_is_template_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/template}" )
+
+    local vm_count=$( echo "$vmid_list" | wc -l )
+    [[ "$vm_count" == 0 || "$vmid_list" == '' ]] && { echo_info "В стенде '$pool_name' нет виртуальных машин"; return 0; }
+
+    local qemu_indices=() display_idx=0
+    echo_tty $'\nВиртуальные машины стенда '"${c_value}$pool_name${c_null}:"
+    for ((i=1; i<=$vm_count; i++)); do
+        local _type=$( echo -n "$vm_type_list" | sed "${i}q;d" )
+        local _is_tpl=$( echo -n "$vm_is_template_list" | sed "${i}q;d" )
+        [[ "$_type" != 'qemu' ]] && continue
+        [[ "$_is_tpl" == '1' ]] && continue
+        ((display_idx++))
+        qemu_indices+=( $i )
+        local _vmid=$( echo -n "$vmid_list" | sed "${i}q;d" )
+        local _name=$( echo -n "$vmname_list" | sed "${i}q;d" )
+        local _status=$( echo -n "$vm_status_list" | sed "${i}q;d" )
+        local status_color=$c_ok; [[ "$_status" == 'running' ]] && status_color=$c_warning
+        echo_tty "  $display_idx. ${c_ok}$_name${c_null} (${c_info}$_vmid${c_null}) [${status_color}$_status${c_null}]"
+    done
+    [[ $display_idx == 0 ]] && { echo_info "Нет QEMU виртуальных машин для экспорта"; return 0; }
+
+    local sel_range='' sel_vms=()
+    echo_tty $'\nДля выбора всех ВМ нажмите Enter'
+    sel_range=$( read_question_select 'Введите номера ВМ для экспорта (прим 1,2-6)' '\A^(([0-9]{1,3}((\-|\.\.)[0-9]{1,3})?([\,](?!$\Z)|(?![0-9])))+)$\Z' '' '' '' 2 )
+    if [[ "$sel_range" == '' ]]; then
+        sel_vms=( "${qemu_indices[@]}" )
+    else
+        local numarr=( $( get_numrange_array "$sel_range" ) )
+        for ((i=0; i<${#qemu_indices[@]}; i++)); do
+            printf '%s\n' "${numarr[@]}" | grep -Fxq "$((i+1))" && sel_vms+=( "${qemu_indices[$i]}" )
+        done
+    fi
+    [[ ${#sel_vms[@]} == 0 ]] && { echo_warn "Не выбрана ни одна ВМ"; return 0; }
+
+    local output_dir=$( read_question_select 'Директория для экспорта' '' '' '' '/root/ASDaC_export' 2 )
+    [[ "$output_dir" == '' ]] && output_dir='/root/ASDaC_export'
+    mkdir -p "$output_dir" || { echo_err "Ошибка: не удалось создать директорию '$output_dir'"; return 0; }
+
+    local convert_threads=$( nproc | awk '{if($1>16) print 16; else print $1}' )
+    local running_stopped=false
+
+    echo_tty
+
+    for idx in "${sel_vms[@]}"; do
+        local vmid=$( echo -n "$vmid_list" | sed "${idx}q;d" )
+        local vm_name=$( echo -n "$vmname_list" | sed "${idx}q;d" )
+        local vm_node=$( echo -n "$vm_node_list" | sed "${idx}q;d" )
+        local vm_status=$( echo -n "$vm_status_list" | sed "${idx}q;d" )
+
+        if [[ "$vm_status" == 'running' ]]; then
+            echo_warn "ВМ ${c_ok}$vm_name${c_warn} (${c_info}$vmid${c_warn}) запущена. Для консистентности данных рекомендуется выключить"
+            if read_question 'Выключить ВМ перед экспортом?'; then
+                run_cmd /noexit "pvesh create /nodes/$vm_node/qemu/$vmid/status/stop --timeout '60'"
+                echo_tty "[${c_info}Info${c_null}] Ожидание остановки ВМ ${c_ok}$vm_name${c_null}..."
+                for ((j=0; j<60; j++)); do
+                    local st=''
+                    pve_api_request st GET "/nodes/$vm_node/qemu/$vmid/status/current" 2>/dev/null
+                    st=$( echo -n "$st" | grep -Po '(,|{)\s*"status"\s*:\s*"\K[^"]+' )
+                    [[ "$st" == 'stopped' ]] && break
+                    sleep 2
+                done
+                running_stopped=true
+                echo_ok "ВМ ${c_ok}$vm_name${c_null} остановлена"
+            fi
+        fi
+
+        local vm_config=''
+        pve_api_request vm_config GET "/nodes/$vm_node/qemu/$vmid/config" || { echo_err "Ошибка: не удалось получить конфигурацию ВМ '$vm_name' ($vmid)"; continue; }
+
+        local disk_n=0
+        local disk_keys=$( echo -n "$vm_config" | grep -Po '(,|{)\s*"\K(scsi|virtio|ide|sata|efidisk)\d+(?="\s*:\s*")' | sort -V )
+
+        for dk in $disk_keys; do
+            local vol=$( echo -n "$vm_config" | grep -Po '(,|{)\s*"'"$dk"'"\s*:\s*"\K[^"]+' )
+            [[ "$vol" =~ media=cdrom ]] && continue
+            [[ "$vol" =~ ,?cloudinit ]] && continue
+            [[ "$vol" == 'none' || "$vol" == '' ]] && continue
+
+            local volume_id=$( echo -n "$vol" | grep -Po '^[^,]+' )
+            [[ "$volume_id" == '' ]] && continue
+
+            local storage_name=$( echo -n "$volume_id" | grep -Po '^[^:]+' )
+            local disk_path=''
+            pve_api_request disk_path GET "/nodes/$vm_node/storage/$storage_name/content/$volume_id" || { echo_err "Ошибка: не удалось получить путь к диску '$volume_id'"; continue; }
+            disk_path=$( echo -n "$disk_path" | grep -Po '(,|{)\s*"path"\s*:\s*"\K[^"]+' )
+            [[ "$disk_path" == '' ]] && { echo_err "Ошибка: пустой путь к диску '$volume_id'"; continue; }
+
+            local out_file="${output_dir}/${vm_name}_${dk}.qcow2"
+            local disk_size=$( du -sh "$disk_path" 2>/dev/null | awk '{print $1}' )
+            echo_tty "[${c_info}Info${c_null}] Экспорт ${c_ok}$vm_name${c_null} ${c_value}$dk${c_null} -> ${c_value}${out_file}${c_null}${disk_size:+ (${c_value}${disk_size}${c_null})}"
+
+            if $opt_dry_run; then
+                echo_tty "[${c_warning}dry-run${c_null}] qemu-img convert -m $convert_threads -c -O qcow2 '$disk_path' '$out_file'"
+            else
+                qemu-img convert -p -m "$convert_threads" -c -O qcow2 "$disk_path" "$out_file" \
+                    || { echo_err "Ошибка экспорта диска '$dk' ВМ '$vm_name'. qemu-img exit code: $?"; continue; }
+            fi
+            echo_ok "${vm_name}_${dk}.qcow2"
+            ((disk_n++))
+        done
+
+        [[ $disk_n == 0 ]] && echo_warn "ВМ ${c_ok}$vm_name${c_null}: дисков для экспорта не найдено"
+    done
+
+    echo_tty
+    echo_ok "Экспорт завершен. Файлы сохранены в ${c_value}$output_dir${c_null}"
+    ! $opt_dry_run && ls -lh "$output_dir"/*.qcow2 2>/dev/null | awk '{printf "  %-40s %s\n", $NF, $5}' >/dev/tty
 }
 
 out_conf_file=''
