@@ -9,7 +9,7 @@ shopt -s extglob
 # Необходимые команды для работы скрипта
 script_requirements_cmd=( grep sed awk curl sha256sum qm pvesh qemu-img )
 
-# Приоритет параметров: значения в этом файле -> значения из импортированного файла конфигурации -> переопределенные значения из аргуметов командной строки
+# Приоритет параметров: значения в этом файле -> значения из импортированного файла конфигурации -> переопределенные значения из аргументов командной строки
 
 # Переменные со значениями по-умолчанию:
 # _name - описание, name - значение
@@ -532,7 +532,7 @@ function pve_api_request() {
                     echo_err "Ошибка: запрос к API был обработан с ошибкой: ${c_val}${*:2}"
                     echo_err "API токен: ${c_val}${var_pve_token_id}"
                     echo_err "HTTP код ответа: ${c_val}$http_code"
-                    echo_err "Ответ сервера: ${c_val}$( echo -n "$res" | awk 'NF>0{if (n!=1) {printf $0;n=1;next}; printf "\n"$0 }' )"
+                    echo_err "Ответ сервера: ${c_val}$( echo -n "$ref_result" | awk 'NF>0{if (n!=1) {printf $0;n=1;next}; printf "\n"$0 }' )"
                     exit_clear
               }
               return $http_code;;
@@ -555,7 +555,7 @@ function configure_api_token() {
 		else
 			{ pve_api_request '' DELETE "/access/users/root@pam/token/$var_pve_token_id"; [[ $? =~ ^0$|^244$ ]]; } \
 				|| { pvesh delete "/access/users/root@pam/token/$var_pve_token_id" 2>/dev/null; [[ $? =~ ^0$|^255$ ]]; }  \
-				|| echo_err "Ошибка: Не удалось удалить удалить токен API: ${c_val}${var_pve_token_id}${c_err}"
+				|| echo_err "Ошибка: Не удалось удалить токен API: ${c_val}${var_pve_token_id}${c_err}"
 		fi
         unset var_pve_token_id var_pve_api_curl
         return 0
@@ -591,7 +591,7 @@ function configure_api_ticket() {
             local pve_api_request_exit=1
 			{ pve_api_request '' DELETE "/access/users/$var_pve_ticket_user"; [[ $? =~ ^0$|^244$ ]]; } \
 				|| { configure_api_token clear force; pvesh delete "/access/users/$var_pve_ticket_user" 2>/dev/null; [[ $? =~ ^0$|^255$ ]]; } \
-				|| echo_err "Ошибка: Не удалось удалить удалить пользователя ${c_val}${var_pve_ticket_user}${c_err}"
+				|| echo_err "Ошибка: Не удалось удалить пользователя ${c_val}${var_pve_ticket_user}${c_err}"
 		fi
         unset var_pve_ticket_user var_pve_ticket_pass var_pve_tapi_curl
         return 0
@@ -1600,7 +1600,7 @@ function check_config() {
     }
     [[ "$1" == 'check-only' ]] && {
         configure_api_token init
-        check_min_version 7.2 "$data_pve_version" || { echo_err "Ошибка: версия PVE '$data_pve_version' уже устарела и установка стендов данным скриптом не поддерживается."$'\nМиннимально подерживаемая версия: PVE 7.2'; exit_clear; }
+        check_min_version 7.2 "$data_pve_version" || { echo_err "Ошибка: версия PVE '$data_pve_version' уже устарела и установка стендов данным скриптом не поддерживается."$'\nМинимально поддерживаемая версия: PVE 7.2'; exit_clear; }
         check_min_version 8 "$data_pve_version" && create_access_network=true || create_access_network=false
         check_min_version 8.3 "$data_pve_version" && var_pve_passwd_min=8 || var_pve_passwd_min=5
         check_min_version 8.3.7 "$data_pve_version" && var_pve_import=true || var_pve_import=false
@@ -1904,7 +1904,7 @@ function deploy_stand_config() {
             scsi)   [[ "$disk_num" -lt 31 ]] || _exit=true;;
             virtio) [[ "$disk_num" -lt 16 ]] || _exit=true;;
         esac
-        $_exit && { echo_err "Ошибка: невозможно присоедиить больше $disk_num дисков типа '$disk_type' к ВМ '$elem'. Выход"; exit_clear;}
+        $_exit && { echo_err "Ошибка: невозможно присоединить больше $disk_num дисков типа '$disk_type' к ВМ '$elem'. Выход"; exit_clear;}
 
         if [[ ${BASH_REMATCH[2]} == disk ]]; then
             if [[ "${BASH_REMATCH[1]}" != boot_ ]] && [[ "$2" =~ ^([0-9]+(|\.[0-9]+))\ *([gGГг][bBБб]?)?$ ]]; then
@@ -1969,7 +1969,7 @@ function deploy_stand_config() {
         [[ "$1" == '' ]] && { echo_err "Ошибка: $FUNCNAME нет аргумента"; exit_clear; }
         [[ ! $data_kvm_machine_list ]] && {
             if ! pve_api_request data_kvm_machine_list GET /nodes/$var_pve_node/capabilities/qemu/machines; then
-                wcho_warn "Предупреждение: не удалось получить список совместимых machines через API"
+                echo_warn "Предупреждение: не удалось получить список совместимых machines через API"
                 data_kvm_machine_list=$( set -o pipefail; kvm -machine help | awk 'NR>1&&/q35|i440fx/{print $1}' | sort -Vr ) \
                     || { echo_err "Ошибка: $FUNCNAME: не удалось получить список поддерживаемых machine"; exit_clear; }
             else
@@ -2212,7 +2212,7 @@ function install_stands() {
                     descr_string_check "$val" || { echo_err 'Ошибка: введенное значение является некорректным'; continue; };;
                 access_pass_length) isdigit_check "$val" $var_pve_passwd_min 20 || { echo_err "Ошибка: допустимая длина паролей от $var_pve_passwd_min до 20"; continue; } ;;
                 access_pass_chars) isregex_check "[$val]" && ( config_base[access_pass_chars]="$val"; deploy_access_passwd test ) || { echo_err 'Ошибка: введенное значение не является регулярным выражением или не захватывает достаточно символов для составления пароля'; continue; } ;;
-                *) echo_err 'Внутреняя ошибка скрипта. Выход'; exit_clear;;
+                *) echo_err 'Внутренняя ошибка скрипта. Выход'; exit_clear;;
             esac
             [[ $opt == access_create ]] && ! ${config_base[access_create]} && $val && \
                 { configure_username set-install exit false || configure_username set set-install exit false || continue; }
@@ -2277,7 +2277,7 @@ function install_stands() {
 
 
 function check_arg() {
-    [[ "$1" == '' || "${1:0:1}" == '-' ]] && { echo_err "Ошибка обработки аргуметов: ожидалось значение. Выход"; exit 1; }
+    [[ "$1" == '' || "${1:0:1}" == '-' ]] && { echo_err "Ошибка обработки аргументов: ожидалось значение. Выход"; exit 1; }
 }
 
 function manage_bulk_vm_power() {
@@ -2335,7 +2335,7 @@ function manage_stands() {
         }
     done
 
-    [[ ${#print_list[@]} != 0 ]] && echo_tty $'\n\nСписок развернутых конфигураций:' || { echo_info $'\nНе найденно ни одной развернутой конфигурации'; return 0; }
+    [[ ${#print_list[@]} != 0 ]] && echo_tty $'\n\nСписок развернутых конфигураций:' || { echo_info $'\nНе найдено ни одной развернутой конфигурации'; return 0; }
     local i=0
     for item in "${!print_list[@]}"; do
         echo_tty "  $((++i)). ${print_list[$item]//\\\"/\"}"
@@ -2430,7 +2430,7 @@ function manage_stands() {
 
     [[ "$stand_count" == 0 ]] && { echo_err "Ошибка: пулы стендов '$group_name' не найдены. Выход"; exit_clear; }
     if [[ "$stand_count" -gt 1 ]]; then
-        echo_tty $'\nВыберите стеды для управления:'
+        echo_tty $'\nВыберите стенды для управления:'
         for ((i=1; i<=$stand_count; i++)); do
             echo_tty "  $i. $(echo "${pool_list[$group_name]}" | sed "${i}q;d" )"
         done
@@ -2449,6 +2449,7 @@ function manage_stands() {
                     stand_list=$( echo "$stand_list"; echo "$stand_name" )
                     local j=1 path user
                     max_count=$( printf '%s\n' "${!acl_list[@]}" | sort -Vr | head -n 1 | grep -Po '^\d+' )
+                    [[ "$max_count" == '' ]] && max_count=-1
                     for ((j=0; j<=$max_count; j++)); do
                         path="${acl_list[$j,path]}"
                         [[ "$path" == "/pool/$stand_name" && "${acl_list[$j,type]}" == user ]] || continue
@@ -2478,7 +2479,7 @@ function manage_stands() {
 
     [[ "$switch" -ge 6 ]] && vm_snap_name='Start'
     [[ "$switch" -ge 7 && "$switch" -le 9 ]] && {
-        echo_info $'\n'"Имя снапшота может состоять из симолов ${c_value}A-Z a-z - _${c_info}. Первый симол всегда буква"
+        echo_info $'\n'"Имя снапшота может состоять из символов ${c_value}A-Z a-z - _${c_info}. Первый символ всегда буква"
         vm_snap_name=$( read_question_select 'Введите имя снапшота' '^[a-zA-Z][\w\-]+$' )
     }
     [[ "$switch" == 7 ]] && vm_snap_description="$( read_question_select $'Описание для снапшота' )"
@@ -2494,7 +2495,7 @@ function manage_stands() {
         for ((i=1; i<=$( echo "${pool_list[$group_name]}" | wc -l ); i++)); do
             echo_tty
             pool_name=$( echo "${pool_list[$group_name]}" | sed "${i}q;d" )
-            pve_api_request pool_info GET "/pools/$pool_name" || { echo_err "Ошибка: не удалось получить информацию об стенде '$pool_name'"; exit_clear; }
+            pve_api_request pool_info GET "/pools/$pool_name" || { echo_err "Ошибка: не удалось получить информацию о стенде '$pool_name'"; exit_clear; }
             vmid_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/vmid}" )
             vmname_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/name}" )
             vm_node_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/node}" )
@@ -2545,7 +2546,7 @@ function manage_stands() {
 
     if [[ $switch == 10 ]]; then
 
-        echo_tty -n $'Выбранные пользователи: '; get_val_print "$(echo ${user_list[$group_name]} )"
+        echo_tty -n $'Выбранные пользователи: '; echo_tty "$( get_val_print "$(echo ${user_list[$group_name]} )" )"
         read_question $'\nВы действительно хотите продолжить?' || return 0
 
         function make_node_ifs_info {
@@ -2579,7 +2580,7 @@ function manage_stands() {
         for ((i=1; i<=$( echo "${pool_list[$group_name]}" | wc -l ); i++)); do
             echo_tty
             pool_name=$( echo "${pool_list[$group_name]}" | sed "${i}q;d" )
-            pve_api_request pool_info GET "/pools/$pool_name" || { echo_err "Ошибка: не удалось получить информацию об стенде '$pool_name'"; exit_clear; }
+            pve_api_request pool_info GET "/pools/$pool_name" || { echo_err "Ошибка: не удалось получить информацию о стенде '$pool_name'"; exit_clear; }
             vmid_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/vmid}" )
             vmname_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/name}" )
             vm_node_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/node}" )
@@ -2642,8 +2643,9 @@ function manage_stands() {
 
         for ((i=1; i<=$( echo "${user_list[$group_name]}" | wc -l ); i++)); do
             user_name=$( echo -n "${user_list[$group_name]}" | sed "${i}q;d" )
-            
-            run_cmd /noexit pve_api_request return_cmd DELETE "/access/users/$user_name" \
+            [[ "$user_name" == '' ]] && continue
+            run_cmd /noexit pve_api_request return_cmd DELETE "/access/users/$user_name"
+            [[ $? =~ ^0$|^244$ ]] \
                 && echo_ok "Пользователь ${c_value}$user_name${c_null} удален" \
                 || { echo_err "Ошибка: не удалось удалить пользователя '$user_name' стенда '$pool_name'"; exit_clear; }
         done
@@ -3036,7 +3038,7 @@ configure_locale
 # список скачанных файлов
 declare -A list_url_files
 
-# Обработка аргуметов командой строки
+# Обработка аргументов командной строки
 switch_action=0
 iteration=1
 i=0
