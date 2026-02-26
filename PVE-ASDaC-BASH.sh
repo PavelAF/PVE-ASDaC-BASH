@@ -3173,29 +3173,67 @@ function export_vm_disks() {
     ! $opt_dry_run && ls -lh "$output_dir"/*.qcow2 2>/dev/null | awk '{printf "  %-40s %s\n", $NF, $5}' >/dev/tty
 }
 
+function exec_agent_ping() {
+    local _ep_node=$1 _ep_vmid=$2
+    local _ep_max=${3:-10} _ep_i
+    echo_verbose "agent/ping VMID=$_ep_vmid попытки=$_ep_max"
+    for ((_ep_i=1; _ep_i<=_ep_max; _ep_i++)); do
+        if pvesh create "/nodes/$_ep_node/qemu/$_ep_vmid/agent/ping" --output-format json &>/dev/null; then
+            echo_verbose "agent/ping VMID=$_ep_vmid OK (попытка $_ep_i)"
+            return 0
+        fi
+        echo_verbose "agent/ping VMID=$_ep_vmid нет ответа (попытка $_ep_i/$_ep_max)"
+        sleep 3
+    done
+    echo_verbose "agent/ping VMID=$_ep_vmid FAIL после $_ep_max попыток"
+    return 1
+}
+
+function exec_agent_file_write() {
+    local _fw_node=$1 _fw_vmid=$2 _fw_file=$3 _fw_b64=$4
+    local _fw_i _fw_response
+    echo_verbose "agent/file-write VMID=$_fw_vmid file=$_fw_file size=${#_fw_b64}"
+    for ((_fw_i=1; _fw_i<=3; _fw_i++)); do
+        _fw_response=$( pvesh create "/nodes/$_fw_node/qemu/$_fw_vmid/agent/file-write" \
+            --file "$_fw_file" --content "$_fw_b64" 2>&1 ) && return 0
+        echo_verbose "agent/file-write VMID=$_fw_vmid попытка $_fw_i/3: ${_fw_response:0:120}"
+        sleep 2
+    done
+    return 1
+}
+
 function exec_agent_cmd() {
     local -n _ea_ref=$1
     local _ea_node=$2 _ea_vmid=$3 _ea_cmd=$4
     local _ea_timeout=${5:-30}
     local _ea_response _ea_pid _ea_i _ea_out _ea_err
 
-    for ((_ea_i=0; _ea_i<3; _ea_i++)); do
+    echo_verbose "agent/exec VMID=$_ea_vmid timeout=${_ea_timeout}с cmd=${_ea_cmd:0:80}..."
+
+    for ((_ea_i=1; _ea_i<=5; _ea_i++)); do
         _ea_response=$( pvesh create "/nodes/$_ea_node/qemu/$_ea_vmid/agent/exec" \
             --command bash --command -c --command "$_ea_cmd" \
             --output-format json 2>&1 ) && break
-        sleep 2
+        echo_verbose "agent/exec VMID=$_ea_vmid попытка $_ea_i/5 неудачна: ${_ea_response:0:120}"
+        sleep $(( _ea_i * 2 ))
     done
 
     _ea_pid=$( echo "$_ea_response" | grep -Po '"pid"\s*:\s*\K[0-9]+' )
-    [[ "$_ea_pid" == '' ]] && { _ea_ref="[Ошибка] Guest Agent недоступен"; return 1; }
+    if [[ "$_ea_pid" == '' ]]; then
+        echo_verbose "agent/exec VMID=$_ea_vmid PID не получен, ответ: ${_ea_response:0:200}"
+        _ea_ref="[Ошибка] Guest Agent недоступен"
+        return 1
+    fi
+    echo_verbose "agent/exec VMID=$_ea_vmid PID=$_ea_pid, ожидание результата..."
 
     for ((_ea_i=0; _ea_i<_ea_timeout; _ea_i++)); do
-        sleep 1
+        [[ $_ea_i -gt 0 ]] && sleep 1
         _ea_response=$( pvesh get "/nodes/$_ea_node/qemu/$_ea_vmid/agent/exec-status" \
-            --pid "$_ea_pid" --output-format json 2>&1 ) || continue
+            --pid "$_ea_pid" --output-format json 2>&1 ) || { sleep 1; continue; }
 
         echo "$_ea_response" | grep -Pq '"exited"\s*:\s*(1|true)' || continue
 
+        echo_verbose "agent/exec-status VMID=$_ea_vmid завершён за ${_ea_i}с"
         _ea_out=$( echo "$_ea_response" | grep -Po '"out-data"\s*:\s*"\K(?(?=\\").{2}|[^"])+' )
         _ea_err=$( echo "$_ea_response" | grep -Po '"err-data"\s*:\s*"\K(?(?=\\").{2}|[^"])+' )
         _ea_ref=$( printf '%b' "$_ea_out" )
@@ -3203,6 +3241,7 @@ function exec_agent_cmd() {
         return 0
     done
 
+    echo_verbose "agent/exec-status VMID=$_ea_vmid таймаут ${_ea_timeout}с"
     _ea_ref="[Ошибка] Таймаут выполнения команды (${_ea_timeout}с)"
     return 1
 }
@@ -3401,6 +3440,91 @@ function autocheck_stand() {
         echo_tty " Стенд: ${c_value}$pool_name${c_null}"
         echo_tty "${c_value}══════════════════════════════════════${c_null}"
 
+        # Фаза 1: Сбор команд для пакетного выполнения через guest agent
+        local -A _ac_batch_script _ac_batch_checks
+        for ((_ac_cn=1; _ac_cn<=_ac_max_check; _ac_cn++)); do
+            local _chk_vms_var="check_${_ac_cn}_vms"
+            local _chk_vms="${!_chk_vms_var:-}"
+            [[ "$_chk_vms" == '' ]] && continue
+
+            local _chk_cmd_var="check_${_ac_cn}_cmd_exec_agent"
+            local _ac_cmd="${!_chk_cmd_var:-}"
+            [[ "$_ac_cmd" == '' ]] && continue
+
+            for _ac_vm in $_chk_vms; do
+                [[ "${_ac_vm_exec[$_ac_vm]:-}" != 'exec_agent' ]] && continue
+                [[ "${_ac_map_id[$_ac_vm]:-}" == '' || "${_ac_map_status[$_ac_vm]}" != 'running' ]] && continue
+
+                _ac_batch_script[$_ac_vm]+="echo '===AC_SEP_${_ac_cn}==='; { $_ac_cmd; } 2>&1; "
+                _ac_batch_checks[$_ac_vm]+=" $_ac_cn"
+            done
+        done
+
+        # Фаза 2: Последовательный опрос ВМ (пинг → запись скрипта → exec → пауза)
+        local -A _ac_results
+        local _ac_vm_idx=0
+        local _ac_script_path='/tmp/ac_check.sh'
+        echo_tty
+        for _ac_vm in "${!_ac_batch_script[@]}"; do
+            local _ac_vid="${_ac_map_id[$_ac_vm]}"
+            local _ac_vnode="${_ac_map_node[$_ac_vm]}"
+            local _ac_chk_count
+            _ac_chk_count=$( echo ${_ac_batch_checks[$_ac_vm]} | wc -w )
+            local _ac_batch_timeout=$(( _ac_chk_count * 5 + 30 ))
+
+            (( _ac_vm_idx++ > 0 )) && sleep 3
+
+            echo_tty "  ${c_info}▸ [${_ac_vm_idx}/${#_ac_batch_script[@]}] ${c_ok}$_ac_vm${c_info} (VMID $_ac_vid, $_ac_chk_count проверок)${c_null}"
+
+            if ! exec_agent_ping "$_ac_vnode" "$_ac_vid" 10; then
+                echo_tty "    ${c_err}✗ агент недоступен (нет ответа на ping)${c_null}"
+                for _cn in ${_ac_batch_checks[$_ac_vm]}; do
+                    _ac_results["$_ac_vm,$_cn"]="[Ошибка] Guest Agent недоступен (не ответил на ping за 30с)"
+                done
+                continue
+            fi
+
+            local _ac_b64
+            _ac_b64=$( printf '#!/bin/bash\n%s\n' "${_ac_batch_script[$_ac_vm]}" | base64 -w0 )
+            echo_verbose "Запись скрипта на $_ac_vm (VMID $_ac_vid), base64 size=${#_ac_b64}"
+
+            if ! exec_agent_file_write "$_ac_vnode" "$_ac_vid" "$_ac_script_path" "$_ac_b64"; then
+                echo_tty "    ${c_err}✗ не удалось записать скрипт на ВМ${c_null}"
+                for _cn in ${_ac_batch_checks[$_ac_vm]}; do
+                    _ac_results["$_ac_vm,$_cn"]="[Ошибка] Не удалось записать скрипт проверки на ВМ"
+                done
+                continue
+            fi
+            echo_tty "    ${c_ok}✓${c_null} скрипт записан, выполнение проверок..."
+
+            local _ac_raw=''
+            exec_agent_cmd _ac_raw "$_ac_vnode" "$_ac_vid" \
+                "base64 -d '$_ac_script_path' > '${_ac_script_path}.run' && bash '${_ac_script_path}.run'; rm -f '$_ac_script_path' '${_ac_script_path}.run'" \
+                "$_ac_batch_timeout"
+
+            if [[ $? -eq 0 ]]; then
+                local _ac_cur_check='' _ac_cur_out=''
+                while IFS= read -r _line; do
+                    if [[ "$_line" =~ ^===AC_SEP_([0-9]+)===$  ]]; then
+                        [[ "$_ac_cur_check" != '' ]] && _ac_results["$_ac_vm,$_ac_cur_check"]="$_ac_cur_out"
+                        _ac_cur_check="${BASH_REMATCH[1]}"
+                        _ac_cur_out=''
+                    else
+                        [[ "$_ac_cur_out" != '' ]] && _ac_cur_out+=$'\n'
+                        _ac_cur_out+="$_line"
+                    fi
+                done <<< "$_ac_raw"
+                [[ "$_ac_cur_check" != '' ]] && _ac_results["$_ac_vm,$_ac_cur_check"]="$_ac_cur_out"
+                echo_tty "    ${c_ok}✓${c_null} готово"
+            else
+                echo_tty "    ${c_err}✗ ошибка${c_null}"
+                for _cn in ${_ac_batch_checks[$_ac_vm]}; do
+                    _ac_results["$_ac_vm,$_cn"]="$_ac_raw"
+                done
+            fi
+        done
+
+        # Фаза 3: Вывод результатов
         for ((_ac_cn=1; _ac_cn<=_ac_max_check; _ac_cn++)); do
             local _chk_name_var="check_${_ac_cn}_name"
             local _chk_vms_var="check_${_ac_cn}_vms"
@@ -3419,9 +3543,7 @@ function autocheck_stand() {
                 local _ac_vid="${_ac_map_id[$_ac_vm]:-}"
                 [[ "$_ac_vid" == '' ]] && { echo_warn "  [${c_ok}$_ac_vm${c_warn}] ВМ не найдена в стенде $pool_name"; continue; }
 
-                local _ac_vnode="${_ac_map_node[$_ac_vm]}"
                 local _ac_vstat="${_ac_map_status[$_ac_vm]}"
-
                 [[ "$_ac_vstat" != 'running' ]] && { echo_warn "  [${c_ok}$_ac_vm${c_warn}] ВМ не запущена ($_ac_vstat)"; continue; }
 
                 local _chk_cmd_var="check_${_ac_cn}_cmd_${_ac_etype}"
@@ -3431,7 +3553,7 @@ function autocheck_stand() {
                 local _ac_out=''
                 case "$_ac_etype" in
                     exec_agent)
-                        exec_agent_cmd _ac_out "$_ac_vnode" "$_ac_vid" "$_ac_cmd"
+                        _ac_out="${_ac_results[$_ac_vm,$_ac_cn]:-}"
                         ;;
                     exec_serial)
                         local _san="${_ac_vm//-/_}"
