@@ -3179,15 +3179,15 @@ function exec_agent_cmd() {
     local _ea_timeout=${5:-30}
     local _ea_response _ea_pid _ea_i _ea_out _ea_err
 
-    _ea_response=$( pvesh create "/nodes/$_ea_node/qemu/$_ea_vmid/agent/exec" \
-        --command bash --command -c --command "$_ea_cmd" \
-        --output-format json 2>&1 ) || {
-        _ea_ref="[Ошибка] Guest Agent недоступен"
-        return 1
-    }
+    for ((_ea_i=0; _ea_i<3; _ea_i++)); do
+        _ea_response=$( pvesh create "/nodes/$_ea_node/qemu/$_ea_vmid/agent/exec" \
+            --command bash --command -c --command "$_ea_cmd" \
+            --output-format json 2>&1 ) && break
+        sleep 2
+    done
 
     _ea_pid=$( echo "$_ea_response" | grep -Po '"pid"\s*:\s*\K[0-9]+' )
-    [[ "$_ea_pid" == '' ]] && { _ea_ref="[Ошибка] Не удалось получить PID процесса"; return 1; }
+    [[ "$_ea_pid" == '' ]] && { _ea_ref="[Ошибка] Guest Agent недоступен"; return 1; }
 
     for ((_ea_i=0; _ea_i<_ea_timeout; _ea_i++)); do
         sleep 1
@@ -3266,6 +3266,14 @@ function autocheck_stand() {
         local _ac_sel=$( read_question_select 'Выберите конфигурацию' '^[0-9]+$' 1 ${#_ac_conf_files[@]} '' 2 )
         [[ "$_ac_sel" == '' ]] && return 0
         config_file="${_ac_conf_files[$((_ac_sel-1))]}"
+    fi
+
+    if isurl_check "$config_file"; then
+        local _ac_tmpfile
+        _ac_tmpfile=$( mktemp /tmp/autocheck_XXXXXX.conf )
+        echo_tty "[${c_info}Info${c_null}] Скачивание конфигурации автопроверки: ${c_value}$config_file${c_null}"
+        curl -sSL -o "$_ac_tmpfile" "$config_file" || { echo_err "Не удалось скачать файл конфигурации: $config_file"; rm -f "$_ac_tmpfile"; return 1; }
+        config_file="$_ac_tmpfile"
     fi
 
     [[ ! -f "$config_file" ]] && { echo_err "Файл конфигурации автопроверки не найден: $config_file"; return 1; }
