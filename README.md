@@ -11,6 +11,11 @@
 ./PVE-ASDaC-BASH.sh --autocheck autocheck/09.02.06-2026_module1.conf
 ```
 
+**Скачать и запустить с удалённого сервера:**
+```bash
+bash <(curl -sSL <URL_ДО_СКРИПТА>) --autocheck <URL_ДО_ФАЙЛА_ПРОВЕРКИ> -z -v
+```
+
 Или через меню: Управление стендами → пункт 11.
 
 **Документация:** [docs/autocheck-instruction.md](docs/autocheck-instruction.md)
