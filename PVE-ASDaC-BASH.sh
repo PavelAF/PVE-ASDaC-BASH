@@ -3409,7 +3409,15 @@ function autocheck_stand() {
     fi
     [[ ${#_ac_sel_stands[@]} == 0 ]] && return 0
 
+    local _ac_outfile=''
+    if read_question 'Сохранить результаты в файл?'; then
+        _ac_outfile=$( read_question_select 'Путь к файлу' '' '' '' "$(pwd)/autocheck_report.txt" 2 )
+        _ac_outfile=$( echo "$_ac_outfile" | xargs )
+        [[ "$_ac_outfile" == '' ]] && _ac_outfile="$(pwd)/autocheck_report.txt"
+    fi
+
     local regex='(,|{)\s*\"{opt_name}\"\s*:\s*(\K[0-9]+|\"\K(?(?=\\").{2}|[^"])+)'
+    local _ac_all_filebuf=''
 
     # ====== Запуск проверок для каждого стенда ======
     for _ac_sidx in "${_ac_sel_stands[@]}"; do
@@ -3442,6 +3450,11 @@ function autocheck_stand() {
         echo_tty " Стенд: ${c_value}$pool_name${c_null}"
         echo_tty "${c_value}══════════════════════════════════════${c_null}"
 
+        local _ac_stand_filebuf="══════════════════════════════════════"$'\n'
+        _ac_stand_filebuf+=" Автопроверка: $autocheck_name"$'\n'
+        _ac_stand_filebuf+=" Стенд: $pool_name"$'\n'
+        _ac_stand_filebuf+="══════════════════════════════════════"$'\n\n'
+
         # Фаза 1: Сбор команд для пакетного выполнения через guest agent
         local -A _ac_batch_script _ac_batch_checks
         for ((_ac_cn=1; _ac_cn<=_ac_max_check; _ac_cn++)); do
@@ -3455,7 +3468,7 @@ function autocheck_stand() {
 
             for _ac_vm in $_chk_vms; do
                 [[ "${_ac_vm_exec[$_ac_vm]:-}" != 'exec_agent' ]] && continue
-                [[ "${_ac_map_id[$_ac_vm]:-}" == '' || "${_ac_map_status[$_ac_vm]}" != 'running' ]] && continue
+                [[ "${_ac_map_id[$_ac_vm]:-}" == '' ]] && continue
 
                 _ac_batch_script[$_ac_vm]+="echo '===AC_SEP_${_ac_cn}==='; { $_ac_cmd; } 2>&1; "
                 _ac_batch_checks[$_ac_vm]+=" $_ac_cn"
@@ -3475,6 +3488,18 @@ function autocheck_stand() {
             local _ac_batch_timeout=$(( _ac_chk_count * 5 + 30 ))
 
             (( _ac_vm_idx++ > 0 )) && sleep 3
+
+            local _ac_cur_status
+            _ac_cur_status=$( pvesh get "/nodes/$_ac_vnode/qemu/$_ac_vid/status/current" --output-format json 2>/dev/null | grep -Po '"status"\s*:\s*"\K[^"]+' ) || _ac_cur_status=''
+            if [[ "$_ac_cur_status" != 'running' ]]; then
+                echo_tty "  ${c_info}▸ [${_ac_vm_idx}/${#_ac_batch_script[@]}] ${c_ok}$_ac_vm${c_info} (VMID $_ac_vid)${c_null}"
+                echo_tty "    ${c_warn}ВМ не запущена ($_ac_cur_status), пропуск${c_null}"
+                for _cn in ${_ac_batch_checks[$_ac_vm]}; do
+                    _ac_results["$_ac_vm,$_cn"]="[Ошибка] ВМ не запущена ($_ac_cur_status)"
+                done
+                continue
+            fi
+            _ac_map_status[$_ac_vm]='running'
 
             echo_tty "  ${c_info}▸ [${_ac_vm_idx}/${#_ac_batch_script[@]}] ${c_ok}$_ac_vm${c_info} (VMID $_ac_vid, $_ac_chk_count проверок)${c_null}"
 
@@ -3538,6 +3563,8 @@ function autocheck_stand() {
 
             [[ "$_chk_vms" == '' ]] && { echo_warn "  Список ВМ пуст для проверки $_ac_cn"; continue; }
 
+            _ac_stand_filebuf+="── Проверка $_ac_cn: ${_chk_name} ──"$'\n\n'
+
             for _ac_vm in $_chk_vms; do
                 local _ac_etype="${_ac_vm_exec[$_ac_vm]:-}"
                 [[ "$_ac_etype" == '' ]] && { echo_warn "  [${c_ok}$_ac_vm${c_warn}] Тип подключения не указан в autocheck_vms"; continue; }
@@ -3546,7 +3573,16 @@ function autocheck_stand() {
                 [[ "$_ac_vid" == '' ]] && { echo_warn "  [${c_ok}$_ac_vm${c_warn}] ВМ не найдена в стенде $pool_name"; continue; }
 
                 local _ac_vstat="${_ac_map_status[$_ac_vm]}"
-                [[ "$_ac_vstat" != 'running' ]] && { echo_warn "  [${c_ok}$_ac_vm${c_warn}] ВМ не запущена ($_ac_vstat)"; continue; }
+                if [[ "$_ac_etype" == 'exec_serial' ]]; then
+                    local _ac_vnode="${_ac_map_node[$_ac_vm]}"
+                    _ac_vstat=$( pvesh get "/nodes/$_ac_vnode/qemu/$_ac_vid/status/current" --output-format json 2>/dev/null | grep -Po '"status"\s*:\s*"\K[^"]+' ) || _ac_vstat=''
+                fi
+                if [[ "$_ac_vstat" != 'running' ]]; then
+                    echo_warn "  [${c_ok}$_ac_vm${c_warn}] ВМ не запущена ($_ac_vstat)"
+                    _ac_stand_filebuf+="  [$_ac_vm] ($_ac_etype):"$'\n'
+                    _ac_stand_filebuf+="[Ошибка] ВМ не запущена ($_ac_vstat)"$'\n\n'
+                    continue
+                fi
 
                 local _chk_cmd_var="check_${_ac_cn}_cmd_${_ac_etype}"
                 local _ac_cmd="${!_chk_cmd_var:-}"
@@ -3580,9 +3616,21 @@ function autocheck_stand() {
                 else
                     echo_tty "  ${c_info}(пустой вывод)${c_null}"
                 fi
+
+                _ac_stand_filebuf+="  [$_ac_vm] ($_ac_etype):"$'\n'
+                _ac_stand_filebuf+="${_ac_out:-(пустой вывод)}"$'\n\n'
             done
         done
+
+        # Запись в файл (только результаты проверок)
+        [[ "$_ac_outfile" != '' ]] && _ac_all_filebuf+="$_ac_stand_filebuf"
     done
+
+    if [[ "$_ac_outfile" != '' && "$_ac_all_filebuf" != '' ]]; then
+        echo "$_ac_all_filebuf" > "$_ac_outfile" || echo_err "Не удалось записать в файл: $_ac_outfile"
+        echo_tty
+        echo_ok "Результаты сохранены в ${c_value}$_ac_outfile${c_null}"
+    fi
 
     echo_tty
     echo_ok "Автопроверка завершена."
