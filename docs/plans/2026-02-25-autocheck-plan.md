@@ -1,5 +1,7 @@
 # План реализации: Автопроверка стендов
 
+> **Реализовано.** Текущая реализация включает пакетный режим (file-write + exec), agent/ping, verbose. См. [autocheck-instruction.md](../autocheck-instruction.md).
+
 Основан на дизайн-документе: `2026-02-25-autocheck-design.md`
 
 ## Шаги реализации

@@ -1,5 +1,7 @@
 # Дизайн: Автопроверка стендов
 
+> Инструкция для пользователей: [autocheck-instruction.md](../autocheck-instruction.md)
+
 ## Цель
 
 Инструмент для автоматизированного сбора информации с ВМ развёрнутых стендов.
@@ -20,12 +22,14 @@
 
 #### Guest Agent (`exec_agent`)
 
-Два вызова PVE API:
+Оптимизированный пакетный режим (все проверки для одной ВМ — один вызов):
 
-1. `POST /nodes/{node}/qemu/{vmid}/agent/exec` с параметром `command` → возвращает `pid`
-2. `GET /nodes/{node}/qemu/{vmid}/agent/exec-status?pid={pid}` → возвращает `out-data`, `err-data`, `exitcode`
+1. **agent/ping** — проверка доступности агента перед опросом
+2. **agent/file-write** — запись скрипта (base64) на ВМ в `/tmp/ac_check.sh`
+3. **agent/exec** — короткая команда: декодирование base64, запуск скрипта, удаление
+4. Поллинг `agent/exec-status` до `"exited": true` с таймаутом (зависит от числа проверок)
 
-Поллинг до `"exited": true` с таймаутом (10 секунд по умолчанию).
+Пауза 3 секунды между ВМ. Подход снижает нагрузку на слабые ВМ (1 ядро).
 
 #### Serial Console (`exec_serial`)
 

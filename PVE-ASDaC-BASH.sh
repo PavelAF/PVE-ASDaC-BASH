@@ -3236,6 +3236,8 @@ function exec_agent_cmd() {
         echo_verbose "agent/exec-status VMID=$_ea_vmid завершён за ${_ea_i}с"
         _ea_out=$( echo "$_ea_response" | grep -Po '"out-data"\s*:\s*"\K(?(?=\\").{2}|[^"])+' )
         _ea_err=$( echo "$_ea_response" | grep -Po '"err-data"\s*:\s*"\K(?(?=\\").{2}|[^"])+' )
+        _ea_out=${_ea_out//\\u00/\\x}
+        _ea_err=${_ea_err//\\u00/\\x}
         _ea_ref=$( printf '%b' "$_ea_out" )
         [[ "$_ea_err" != '' ]] && _ea_ref+=$'\n'"$( printf '%b' "$_ea_err" )"
         return 0
