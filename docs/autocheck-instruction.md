@@ -30,7 +30,7 @@
 Или с указанием URL:
 
 ```bash
-./PVE-ASDaC-BASH.sh --autocheck http://172.16.99.99/mirror/PVE-ASDaC-BASH/check.conf
+./PVE-ASDaC-BASH.sh --autocheck http://url/check.conf
 ```
 
 ### Режим отладки (verbose)
