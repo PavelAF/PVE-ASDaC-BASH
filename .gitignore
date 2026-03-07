@@ -1,0 +1,37 @@
+*.sh
+!/PVE-ASDaC-BASH.sh
+
+# misc
+config.local
+!*.example
+*.local
+local.*
+config.local
+test/
+
+# editor / temp
+*~
+*.swp
+*.swo
+*.orig
+*.log
+*.back
+*.bak
+*.tmp
+*.out
+*.err
+
+# secrets
+.env
+.env.*
+*.secret
+secrets/
+*.key
+*.pub
+*.pem
+*.p12
+*.pfx
+
+# OS junk
+.DS_Store
+Thumbs.db
