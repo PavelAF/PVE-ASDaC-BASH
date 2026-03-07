@@ -460,6 +460,7 @@ function show_help() {
         -z, --clear-vmconfig$t$_opt_zero_vms
         -api, --pve-api-url$t${config_base[_pve_api_url]}
         --slow-api$t$_opt_slow_api
+        -ac, --autocheck [file]$t$_opt_autocheck
 EOL
 }
 
@@ -2362,7 +2363,8 @@ function manage_stands() {
     echo_tty "   8. Откатить снапшоты виртуальных машин"
     echo_tty "   9. Удалить снапшоты виртуальных машин"
     echo_tty "  10. Удаление стендов"
-    local switch=$( read_question_select $'\nВыберите действие' '^[0-9]{1,2}$' 1 10 '' 2 )
+    echo_tty "  11. Автопроверка стенда"
+    local switch=$( read_question_select $'\nВыберите действие' '^[0-9]{1,2}$' 1 11 '' 2 )
 
     [[ "$switch" == '' ]] && return 0
     if [[ $switch =~ ^[1-3]$ ]]; then
@@ -2424,6 +2426,11 @@ function manage_stands() {
         fi
         opt_stand_nums=()
         echo_tty $'\n'"${c_success}Настройка завершена.${c_null} Выход"; return 0
+    fi
+
+    if [[ $switch == 11 ]]; then
+        autocheck_stand "" "$group_name"
+        return 0
     fi
 
     local stand_range='' stand_count=$( echo "${pool_list[$group_name]}" | wc -l ) stand_list='' usr_list=''
@@ -2698,7 +2705,8 @@ function utilities_menu() {
     utilities_menu[4-tweak_remaster_vm_netif]='Твик-фикс: фикс сетевой связности для запущенных ВМ после перезагрузки сети хоста PVE'
     utilities_menu[5-tweak_set_realm_description]='Изменить отображаемые названия аутентификаций на странице логина PVE'
     ! $data_is_alt_v && utilities_menu[6-tweak_set_ovs_and_fix_script]='Установить OpenvSwitch и фикс пропадания настроек ovs_options для интерфейсов OVSBridge при релоаде сети'
-    
+    utilities_menu[7-export_vm_disks]='Экспорт дисков виртуальных машин стенда в qcow2'
+
     while true; do
         i=0
         echo_tty $'\nРаздел меню с твиками/утилитами для PVE:'
@@ -2998,6 +3006,853 @@ function tweak_register_ideco_ngfw() {
     
 }
 
+function export_vm_disks() {
+    echo_tty
+
+    local -A acl_list group_list print_list pool_list
+    jq_data_to_array /access/acl acl_list
+    jq_data_to_array /access/groups group_list
+
+    local group_name pool_name max_count nl=$'\n' i j
+
+    max_count=${acl_list[count]}
+    for ((i=0; i<$max_count; i++)); do
+        [[ "${acl_list[$i,type]}" != group ]] && continue
+        if [[ "${acl_list[$i,path]}" =~ ^\/pool\/(.+) ]] && [[ "${acl_list[$i,roleid]}" == NoAccess && "${acl_list[$i,propagate]}" == 0 ]]; then
+            pool_list[${acl_list[$i,ugid]}]+=${BASH_REMATCH[1]}$nl
+        fi
+    done
+    max_count=${group_list[count]}
+    for ((i=0; i<=$max_count; i++)); do
+        [[ -v "pool_list[${group_list[$i,groupid]}]" ]] && {
+            group_name=${group_list[$i,groupid]}
+            print_list[$group_name]="${c_ok}$group_name${c_null} : ${group_list[$i,comment]}"
+            pool_list[$group_name]=$( echo "${pool_list[$group_name]}" | sed '/^$/d' | sort -uV )
+        }
+    done
+
+    [[ ${#print_list[@]} != 0 ]] && echo_tty $'\nСписок развернутых конфигураций:' || { echo_info $'\nНе найдено ни одной развернутой конфигурации'; return 0; }
+    i=0
+    for item in "${!print_list[@]}"; do
+        echo_tty "  $((++i)). ${print_list[$item]//\\\"/\"}"
+    done
+    [[ $i -gt 1 ]] && i=$( read_question_select 'Выберите номер конфигурации' '^[0-9]+$' 1 $i '' 2 )
+    [[ "$i" == '' ]] && return 0
+    j=0; group_name=''
+    for item in "${!print_list[@]}"; do
+        ((j++)); [[ $i != $j ]] && continue
+        group_name=$item; break
+    done
+
+    local stand_count=$( echo "${pool_list[$group_name]}" | wc -l )
+    [[ "$stand_count" == 0 ]] && { echo_err "Ошибка: пулы стендов '$group_name' не найдены"; return 0; }
+
+    echo_tty $'\nВыберите стенд для экспорта:'
+    for ((i=1; i<=$stand_count; i++)); do
+        echo_tty "  $i. $(echo "${pool_list[$group_name]}" | sed "${i}q;d" )"
+    done
+    local stand_idx=$( read_question_select 'Номер стенда' '^[0-9]+$' 1 $stand_count '' 2 )
+    [[ "$stand_idx" == '' ]] && return 0
+    pool_name=$( echo "${pool_list[$group_name]}" | sed "${stand_idx}q;d" )
+
+    local regex='(,|{)\s*\"{opt_name}\"\s*:\s*(\K[0-9]+|\"\K(?(?=\\").{2}|[^"])+)'
+    local pool_info vmid_list vmname_list vm_node_list vm_status_list vm_type_list vm_is_template_list
+    pve_api_request pool_info GET "/pools/$pool_name" || { echo_err "Ошибка: не удалось получить информацию о стенде '$pool_name'"; return 0; }
+    vmid_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/vmid}" )
+    vmname_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/name}" )
+    vm_node_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/node}" )
+    vm_status_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/status}" )
+    vm_type_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/type}" )
+    vm_is_template_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/template}" )
+
+    local vm_count=$( echo "$vmid_list" | wc -l )
+    [[ "$vm_count" == 0 || "$vmid_list" == '' ]] && { echo_info "В стенде '$pool_name' нет виртуальных машин"; return 0; }
+
+    local qemu_indices=() display_idx=0
+    echo_tty $'\nВиртуальные машины стенда '"${c_value}$pool_name${c_null}:"
+    for ((i=1; i<=$vm_count; i++)); do
+        local _type=$( echo -n "$vm_type_list" | sed "${i}q;d" )
+        local _is_tpl=$( echo -n "$vm_is_template_list" | sed "${i}q;d" )
+        [[ "$_type" != 'qemu' ]] && continue
+        [[ "$_is_tpl" == '1' ]] && continue
+        ((display_idx++))
+        qemu_indices+=( $i )
+        local _vmid=$( echo -n "$vmid_list" | sed "${i}q;d" )
+        local _name=$( echo -n "$vmname_list" | sed "${i}q;d" )
+        local _status=$( echo -n "$vm_status_list" | sed "${i}q;d" )
+        local status_color=$c_ok; [[ "$_status" == 'running' ]] && status_color=$c_warning
+        echo_tty "  $display_idx. ${c_ok}$_name${c_null} (${c_info}$_vmid${c_null}) [${status_color}$_status${c_null}]"
+    done
+    [[ $display_idx == 0 ]] && { echo_info "Нет QEMU виртуальных машин для экспорта"; return 0; }
+
+    local sel_range='' sel_vms=()
+    echo_tty $'\nДля выбора всех ВМ нажмите Enter'
+    sel_range=$( read_question_select 'Введите номера ВМ для экспорта (прим 1,2-6)' '\A^(([0-9]{1,3}((\-|\.\.)[0-9]{1,3})?([\,](?!$\Z)|(?![0-9])))+)$\Z' '' '' '' 2 )
+    if [[ "$sel_range" == '' ]]; then
+        sel_vms=( "${qemu_indices[@]}" )
+    else
+        local numarr=( $( get_numrange_array "$sel_range" ) )
+        for ((i=0; i<${#qemu_indices[@]}; i++)); do
+            printf '%s\n' "${numarr[@]}" | grep -Fxq "$((i+1))" && sel_vms+=( "${qemu_indices[$i]}" )
+        done
+    fi
+    [[ ${#sel_vms[@]} == 0 ]] && { echo_warn "Не выбрана ни одна ВМ"; return 0; }
+
+    local output_dir=$( read_question_select 'Директория для экспорта' '' '' '' '/root/ASDaC_export' 2 )
+    [[ "$output_dir" == '' ]] && output_dir='/root/ASDaC_export'
+    mkdir -p "$output_dir" || { echo_err "Ошибка: не удалось создать директорию '$output_dir'"; return 0; }
+
+    local convert_threads=$( nproc | awk '{if($1>16) print 16; else print $1}' )
+    local running_stopped=false
+
+    echo_tty
+
+    for idx in "${sel_vms[@]}"; do
+        local vmid=$( echo -n "$vmid_list" | sed "${idx}q;d" )
+        local vm_name=$( echo -n "$vmname_list" | sed "${idx}q;d" )
+        local vm_node=$( echo -n "$vm_node_list" | sed "${idx}q;d" )
+        local vm_status=$( echo -n "$vm_status_list" | sed "${idx}q;d" )
+
+        if [[ "$vm_status" == 'running' ]]; then
+            echo_warn "ВМ ${c_ok}$vm_name${c_warn} (${c_info}$vmid${c_warn}) запущена. Для консистентности данных рекомендуется выключить"
+            if read_question 'Выключить ВМ перед экспортом?'; then
+                run_cmd /noexit "pvesh create /nodes/$vm_node/qemu/$vmid/status/stop --timeout '60'"
+                echo_tty "[${c_info}Info${c_null}] Ожидание остановки ВМ ${c_ok}$vm_name${c_null}..."
+                for ((j=0; j<60; j++)); do
+                    local st=''
+                    pve_api_request st GET "/nodes/$vm_node/qemu/$vmid/status/current" 2>/dev/null
+                    st=$( echo -n "$st" | grep -Po '(,|{)\s*"status"\s*:\s*"\K[^"]+' )
+                    [[ "$st" == 'stopped' ]] && break
+                    sleep 2
+                done
+                running_stopped=true
+                echo_ok "ВМ ${c_ok}$vm_name${c_null} остановлена"
+            fi
+        fi
+
+        local vm_config=''
+        pve_api_request vm_config GET "/nodes/$vm_node/qemu/$vmid/config" || { echo_err "Ошибка: не удалось получить конфигурацию ВМ '$vm_name' ($vmid)"; continue; }
+
+        local disk_n=0
+        local disk_keys=$( echo -n "$vm_config" | grep -Po '(,|{)\s*"\K(scsi|virtio|ide|sata|efidisk)\d+(?="\s*:\s*")' | sort -V )
+
+        for dk in $disk_keys; do
+            local vol=$( echo -n "$vm_config" | grep -Po '(,|{)\s*"'"$dk"'"\s*:\s*"\K[^"]+' )
+            [[ "$vol" =~ media=cdrom ]] && continue
+            [[ "$vol" =~ ,?cloudinit ]] && continue
+            [[ "$vol" == 'none' || "$vol" == '' ]] && continue
+
+            local volume_id=$( echo -n "$vol" | grep -Po '^[^,]+' )
+            [[ "$volume_id" == '' ]] && continue
+
+            local storage_name=$( echo -n "$volume_id" | grep -Po '^[^:]+' )
+            local disk_path=''
+            pve_api_request disk_path GET "/nodes/$vm_node/storage/$storage_name/content/$volume_id" || { echo_err "Ошибка: не удалось получить путь к диску '$volume_id'"; continue; }
+            disk_path=$( echo -n "$disk_path" | grep -Po '(,|{)\s*"path"\s*:\s*"\K[^"]+' )
+            [[ "$disk_path" == '' ]] && { echo_err "Ошибка: пустой путь к диску '$volume_id'"; continue; }
+
+            local out_file="${output_dir}/${vm_name}_${dk}.qcow2"
+            local disk_size=$( du -sh "$disk_path" 2>/dev/null | awk '{print $1}' )
+            echo_tty "[${c_info}Info${c_null}] Экспорт ${c_ok}$vm_name${c_null} ${c_value}$dk${c_null} -> ${c_value}${out_file}${c_null}${disk_size:+ (${c_value}${disk_size}${c_null})}"
+
+            if $opt_dry_run; then
+                echo_tty "[${c_warning}dry-run${c_null}] qemu-img convert -m $convert_threads -c -O qcow2 '$disk_path' '$out_file'"
+            else
+                qemu-img convert -p -m "$convert_threads" -c -O qcow2 "$disk_path" "$out_file" \
+                    || { echo_err "Ошибка экспорта диска '$dk' ВМ '$vm_name'. qemu-img exit code: $?"; continue; }
+            fi
+            echo_ok "${vm_name}_${dk}.qcow2"
+            ((disk_n++))
+        done
+
+        [[ $disk_n == 0 ]] && echo_warn "ВМ ${c_ok}$vm_name${c_null}: дисков для экспорта не найдено"
+    done
+
+    echo_tty
+    echo_ok "Экспорт завершен. Файлы сохранены в ${c_value}$output_dir${c_null}"
+    ! $opt_dry_run && ls -lh "$output_dir"/*.qcow2 2>/dev/null | awk '{printf "  %-40s %s\n", $NF, $5}' >/dev/tty
+}
+
+function exec_agent_ping() {
+    local _ep_node=$1 _ep_vmid=$2
+    local _ep_max=${3:-10} _ep_i
+    echo_verbose "agent/ping VMID=$_ep_vmid попытки=$_ep_max"
+    for ((_ep_i=1; _ep_i<=_ep_max; _ep_i++)); do
+        if pvesh create "/nodes/$_ep_node/qemu/$_ep_vmid/agent/ping" --output-format json &>/dev/null; then
+            echo_verbose "agent/ping VMID=$_ep_vmid OK (попытка $_ep_i)"
+            return 0
+        fi
+        echo_verbose "agent/ping VMID=$_ep_vmid нет ответа (попытка $_ep_i/$_ep_max)"
+        sleep 3
+    done
+    echo_verbose "agent/ping VMID=$_ep_vmid FAIL после $_ep_max попыток"
+    return 1
+}
+
+function exec_agent_file_write() {
+    local _fw_node=$1 _fw_vmid=$2 _fw_file=$3 _fw_b64=$4
+    local _fw_i _fw_response
+    echo_verbose "agent/file-write VMID=$_fw_vmid file=$_fw_file size=${#_fw_b64}"
+    for ((_fw_i=1; _fw_i<=3; _fw_i++)); do
+        _fw_response=$( pvesh create "/nodes/$_fw_node/qemu/$_fw_vmid/agent/file-write" \
+            --file "$_fw_file" --content "$_fw_b64" 2>&1 ) && return 0
+        echo_verbose "agent/file-write VMID=$_fw_vmid попытка $_fw_i/3: ${_fw_response:0:120}"
+        sleep 2
+    done
+    return 1
+}
+
+function exec_agent_cmd() {
+    local -n _ea_ref=$1
+    local _ea_node=$2 _ea_vmid=$3 _ea_cmd=$4
+    local _ea_timeout=${5:-30}
+    local _ea_response _ea_pid _ea_i _ea_out _ea_err
+
+    echo_verbose "agent/exec VMID=$_ea_vmid timeout=${_ea_timeout}с cmd=${_ea_cmd:0:80}..."
+
+    for ((_ea_i=1; _ea_i<=5; _ea_i++)); do
+        _ea_response=$( pvesh create "/nodes/$_ea_node/qemu/$_ea_vmid/agent/exec" \
+            --command bash --command -c --command "$_ea_cmd" \
+            --output-format json 2>&1 ) && break
+        echo_verbose "agent/exec VMID=$_ea_vmid попытка $_ea_i/5 неудачна: ${_ea_response:0:120}"
+        sleep $(( _ea_i * 2 ))
+    done
+
+    _ea_pid=$( echo "$_ea_response" | grep -Po '"pid"\s*:\s*\K[0-9]+' )
+    if [[ "$_ea_pid" == '' ]]; then
+        echo_verbose "agent/exec VMID=$_ea_vmid PID не получен, ответ: ${_ea_response:0:200}"
+        _ea_ref="[Ошибка] Guest Agent недоступен"
+        return 1
+    fi
+    echo_verbose "agent/exec VMID=$_ea_vmid PID=$_ea_pid, ожидание результата..."
+
+    for ((_ea_i=0; _ea_i<_ea_timeout; _ea_i++)); do
+        [[ $_ea_i -gt 0 ]] && sleep 1
+        _ea_response=$( pvesh get "/nodes/$_ea_node/qemu/$_ea_vmid/agent/exec-status" \
+            --pid "$_ea_pid" --output-format json 2>&1 ) || { sleep 1; continue; }
+
+        echo "$_ea_response" | grep -Pq '"exited"\s*:\s*(1|true)' || continue
+
+        echo_verbose "agent/exec-status VMID=$_ea_vmid завершён за ${_ea_i}с"
+        _ea_out=$( echo "$_ea_response" | grep -Po '"out-data"\s*:\s*"\K(?(?=\\").{2}|[^"])+' )
+        _ea_err=$( echo "$_ea_response" | grep -Po '"err-data"\s*:\s*"\K(?(?=\\").{2}|[^"])+' )
+        _ea_out=${_ea_out//\\u00/\\x}
+        _ea_err=${_ea_err//\\u00/\\x}
+        _ea_ref=$( printf '%b' "$_ea_out" )
+        [[ "$_ea_err" != '' ]] && _ea_ref+=$'\n'"$( printf '%b' "$_ea_err" )"
+        return 0
+    done
+
+    echo_verbose "agent/exec-status VMID=$_ea_vmid таймаут ${_ea_timeout}с"
+    _ea_ref="[Ошибка] Таймаут выполнения команды (${_ea_timeout}с)"
+    return 1
+}
+
+function exec_serial_cmd() {
+    local -n _es_ref=$1
+    local _es_vmid=$2 _es_cmd=$3
+    local _es_prompt=${4:-'[A-Za-z0-9._-]+[#>]'}
+    local _es_timeout=${5:-3}
+    local _es_login=$6 _es_password=$7
+    local _es_socket="/var/run/qemu-server/${_es_vmid}.serial0"
+
+    [[ ! -S "$_es_socket" ]] && { _es_ref="[Ошибка] Серийный порт не настроен (${_es_socket})"; return 1; }
+    command -v socat &>/dev/null || { _es_ref="[Ошибка] socat не установлен"; return 1; }
+
+    local _es_raw
+    _es_raw=$( {
+        printf '\r\n'
+        sleep 0.5
+        if [[ "$_es_login" != '' ]]; then
+            printf '%s\r\n' "$_es_login"
+            sleep 0.5
+            printf '%s\r\n' "$_es_password"
+            sleep 1
+        fi
+        printf '%s\r\n' "$_es_cmd"
+        sleep "$_es_timeout"
+    } | timeout $(( _es_timeout + 5 )) socat - "UNIX-CONNECT:$_es_socket" 2>/dev/null ) || true
+
+    _es_ref=$( echo "$_es_raw" | tr -d '\r' | \
+        grep -Pv "$_es_prompt" | \
+        grep -Fxv "$_es_cmd" | \
+        sed '/^\s*$/d; /^[Ll]ogin:/d; /^[Uu]sername:/d; /^[Pp]assword:/d' )
+
+    return 0
+}
+
+function autocheck_stand() {
+    local config_file="${1:-}"
+    local _preselected_group="${2:-}"
+    local autocheck_dir="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )/autocheck"
+
+    # ====== Выбор файла конфигурации автопроверки ======
+    if [[ "$config_file" == '' ]]; then
+        [[ ! -d "$autocheck_dir" ]] && { echo_err "Папка autocheck/ не найдена ($autocheck_dir)"; return 1; }
+        local -a _ac_conf_files _ac_conf_names
+        local _ac_f _ac_n
+        for _ac_f in "$autocheck_dir"/*.conf; do
+            [[ -f "$_ac_f" ]] || continue
+            _ac_n=$( grep -Po "^autocheck_name=['\"]\\K[^'\"]+" "$_ac_f" 2>/dev/null ) || _ac_n="$(basename "$_ac_f")"
+            _ac_conf_files+=( "$_ac_f" )
+            _ac_conf_names+=( "$_ac_n" )
+        done
+        [[ ${#_ac_conf_files[@]} == 0 ]] && { echo_info "Файлы автопроверки не найдены в $autocheck_dir"; return 0; }
+
+        echo_tty $'\nДоступные конфигурации автопроверки:'
+        local i
+        for ((i=0; i<${#_ac_conf_files[@]}; i++)); do
+            echo_tty "  $((i+1)). ${_ac_conf_names[$i]}"
+        done
+        local _ac_sel=$( read_question_select 'Выберите конфигурацию' '^[0-9]+$' 1 ${#_ac_conf_files[@]} '' 2 )
+        [[ "$_ac_sel" == '' ]] && return 0
+        config_file="${_ac_conf_files[$((_ac_sel-1))]}"
+    fi
+
+    if isurl_check "$config_file"; then
+        local _ac_tmpfile
+        _ac_tmpfile=$( mktemp /tmp/autocheck_XXXXXX.conf )
+        echo_tty "[${c_info}Info${c_null}] Скачивание конфигурации автопроверки: ${c_value}$config_file${c_null}"
+        curl -sSL -o "$_ac_tmpfile" "$config_file" || { echo_err "Не удалось скачать файл конфигурации: $config_file"; rm -f "$_ac_tmpfile"; return 1; }
+        config_file="$_ac_tmpfile"
+    fi
+
+    [[ ! -f "$config_file" ]] && { echo_err "Файл конфигурации автопроверки не найден: $config_file"; return 1; }
+
+    # ====== Загрузка конфига ======
+    local autocheck_name='' autocheck_vms=''
+    local exec_serial_prompt='[A-Za-z0-9._-]+[#>]' exec_serial_timeout=3
+    local exec_serial_login='' exec_serial_password=''
+    source "$config_file"
+    [[ "$autocheck_name" == '' ]] && autocheck_name="$(basename "$config_file")"
+
+    local -A _ac_vm_exec
+    local _vm_n _vm_t
+    while IFS='=' read -r _vm_n _vm_t; do
+        _vm_n=$( echo "$_vm_n" | xargs )
+        _vm_t=$( echo "$_vm_t" | xargs )
+        [[ "$_vm_n" != '' && "$_vm_t" != '' ]] && _ac_vm_exec[$_vm_n]=$_vm_t
+    done <<< "$autocheck_vms"
+
+    [[ ${#_ac_vm_exec[@]} == 0 ]] && { echo_err "Не найдено ВМ в autocheck_vms конфигурации"; return 1; }
+
+    local _ac_max_check=0
+    while true; do
+        local _chk_var="check_$((_ac_max_check+1))_name"
+        [[ -v "$_chk_var" ]] || break
+        ((_ac_max_check++))
+    done
+    [[ $_ac_max_check == 0 ]] && { echo_warn "В конфигурации не найдено проверок (check_N_name)"; return 0; }
+
+    # ====== Обнаружение стендов ======
+    local -A _ac_acl _ac_grp _ac_print _ac_pools
+    jq_data_to_array /access/acl _ac_acl
+    jq_data_to_array /access/groups _ac_grp
+
+    local group_name pool_name max_count nl=$'\n' i j
+
+    max_count=${_ac_acl[count]}
+    for ((i=0; i<$max_count; i++)); do
+        [[ "${_ac_acl[$i,type]}" != group ]] && continue
+        if [[ "${_ac_acl[$i,path]}" =~ ^\/pool\/(.+) ]] && [[ "${_ac_acl[$i,roleid]}" == NoAccess && "${_ac_acl[$i,propagate]}" == 0 ]]; then
+            _ac_pools[${_ac_acl[$i,ugid]}]+=${BASH_REMATCH[1]}$nl
+        fi
+    done
+    max_count=${_ac_grp[count]}
+    for ((i=0; i<=$max_count; i++)); do
+        [[ -v "_ac_pools[${_ac_grp[$i,groupid]}]" ]] && {
+            group_name=${_ac_grp[$i,groupid]}
+            _ac_print[$group_name]="${c_ok}$group_name${c_null} : ${_ac_grp[$i,comment]}"
+            _ac_pools[$group_name]=$( echo "${_ac_pools[$group_name]}" | sed '/^$/d' | sort -uV )
+        }
+    done
+
+    [[ ${#_ac_print[@]} != 0 ]] || { echo_info $'\nНе найдено ни одной развернутой конфигурации'; return 0; }
+
+    # ====== Выбор группы (пропуск если предвыбрана из manage_stands) ======
+    if [[ "$_preselected_group" != '' && -v "_ac_pools[$_preselected_group]" ]]; then
+        group_name="$_preselected_group"
+    else
+        echo_tty $'\nСписок развернутых конфигураций:'
+        i=0
+        for item in "${!_ac_print[@]}"; do
+            echo_tty "  $((++i)). ${_ac_print[$item]//\\\"/\"}"
+        done
+        [[ $i -gt 1 ]] && i=$( read_question_select 'Выберите номер конфигурации' '^[0-9]+$' 1 $i '' 2 )
+        [[ "$i" == '' ]] && return 0
+        j=0; group_name=''
+        for item in "${!_ac_print[@]}"; do
+            ((j++)); [[ $i != $j ]] && continue
+            group_name=$item; break
+        done
+    fi
+
+    # ====== Выбор стендов ======
+    local _ac_stand_count=$( echo "${_ac_pools[$group_name]}" | wc -l )
+    [[ "$_ac_stand_count" == 0 ]] && { echo_info "Пулы стендов '$group_name' не найдены"; return 0; }
+
+    local -a _ac_sel_stands
+    if [[ "$_ac_stand_count" -gt 1 ]]; then
+        echo_tty $'\nВыберите стенды для проверки:'
+        for ((i=1; i<=$_ac_stand_count; i++)); do
+            echo_tty "  $i. $( echo "${_ac_pools[$group_name]}" | sed "${i}q;d" )"
+        done
+        echo_tty $'\nДля выбора всех стендов нажмите Enter'
+        local _ac_range=$( read_question_select 'Введите номера стендов (прим 1,2-6)' '\A^(([0-9]{1,3}((\-|\.\.)[0-9]{1,3})?([\,](?!$\Z)|(?![0-9])))+)$\Z' '' '' '' 2 )
+        if [[ "$_ac_range" == '' ]]; then
+            for ((i=1; i<=$_ac_stand_count; i++)); do _ac_sel_stands+=( $i ); done
+        else
+            _ac_sel_stands=( $( get_numrange_array "$_ac_range" ) )
+        fi
+    else
+        _ac_sel_stands=( 1 )
+    fi
+    [[ ${#_ac_sel_stands[@]} == 0 ]] && return 0
+
+    local _ac_parallel=1
+    if [[ ${#_ac_sel_stands[@]} -gt 1 ]]; then
+        while true; do
+            local _ac_par
+            _ac_par=$( read_question_select "Проверять одновременно стендов (1-${#_ac_sel_stands[@]})" '^[1-9][0-9]*$' '1' "${#_ac_sel_stands[@]}" "" 2 )
+            [[ "$_ac_par" == '' ]] && _ac_par=1
+            _ac_par=$(( _ac_par + 0 ))
+            if [[ "$_ac_par" -ge 1 && "$_ac_par" -le ${#_ac_sel_stands[@]} ]]; then
+                _ac_parallel=$_ac_par
+                break
+            fi
+            echo_warn "Введите число от 1 до ${#_ac_sel_stands[@]}"
+        done
+    fi
+
+    local _ac_outfile=''
+    if read_question 'Сохранить результаты в файл?'; then
+        _ac_outfile=$( read_question_select 'Путь к файлу' '' '' '' "$(pwd)/autocheck_report.txt" 2 )
+        _ac_outfile=$( echo "$_ac_outfile" | xargs )
+        [[ "$_ac_outfile" == '' ]] && _ac_outfile="$(pwd)/autocheck_report.txt"
+    fi
+
+    local regex='(,|{)\s*\"{opt_name}\"\s*:\s*(\K[0-9]+|\"\K(?(?=\\").{2}|[^"])+)'
+    local _ac_all_filebuf=''
+
+    _autocheck_run_stand() {
+        local _ars_sidx=$1 _ars_fbuf=$2
+        local pool_name
+        pool_name=$( echo "${_ac_pools[$group_name]}" | sed "${_ars_sidx}q;d" )
+        [[ "$pool_name" == '' ]] && return 0
+
+        local pool_info vmid_list vmname_list vm_node_list vm_status_list vm_type_list
+        pve_api_request pool_info GET "/pools/$pool_name" || { echo_err "Не удалось получить информацию о стенде '$pool_name'"; return 0; }
+        vmid_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/vmid}" )
+        vmname_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/name}" )
+        vm_node_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/node}" )
+        vm_status_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/status}" )
+        vm_type_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/type}" )
+
+        local _ac_vm_count=$( echo "$vmid_list" | wc -l )
+        local -A _ac_map_id _ac_map_node _ac_map_status
+        for ((i=1; i<=$_ac_vm_count; i++)); do
+            local _t=$( echo -n "$vm_type_list" | sed "${i}q;d" )
+            [[ "$_t" != 'qemu' ]] && continue
+            local _n=$( echo -n "$vmname_list" | sed "${i}q;d" )
+            _ac_map_id[$_n]=$( echo -n "$vmid_list" | sed "${i}q;d" )
+            _ac_map_node[$_n]=$( echo -n "$vm_node_list" | sed "${i}q;d" )
+            _ac_map_status[$_n]=$( echo -n "$vm_status_list" | sed "${i}q;d" )
+        done
+
+        local _ac_stand_filebuf="${c_value}══════════════════════════════════════${c_null}"$'\n'
+        _ac_stand_filebuf+=" Автопроверка: ${c_ok}$autocheck_name${c_null}"$'\n'
+        _ac_stand_filebuf+=" Стенд: ${c_value}$pool_name${c_null}"$'\n'
+        _ac_stand_filebuf+="${c_value}══════════════════════════════════════${c_null}"$'\n\n'
+
+        local -A _ac_batch_script _ac_batch_checks
+        for ((_ac_cn=1; _ac_cn<=_ac_max_check; _ac_cn++)); do
+            local _chk_vms_var="check_${_ac_cn}_vms"
+            local _chk_vms="${!_chk_vms_var:-}"
+            [[ "$_chk_vms" == '' ]] && continue
+            local _chk_cmd_var="check_${_ac_cn}_cmd_exec_agent"
+            local _ac_cmd="${!_chk_cmd_var:-}"
+            [[ "$_ac_cmd" == '' ]] && continue
+            for _ac_vm in $_chk_vms; do
+                [[ "${_ac_vm_exec[$_ac_vm]:-}" != 'exec_agent' ]] && continue
+                [[ "${_ac_map_id[$_ac_vm]:-}" == '' ]] && continue
+                _ac_batch_script[$_ac_vm]+="echo '===AC_SEP_${_ac_cn}==='; { $_ac_cmd; } 2>&1; "
+                _ac_batch_checks[$_ac_vm]+=" $_ac_cn"
+            done
+        done
+
+        local -A _ac_results
+        local _ac_vm_idx=0
+        local _ac_script_path='/tmp/ac_check.sh'
+        echo_tty
+        for _ac_vm in "${!_ac_batch_script[@]}"; do
+            local _ac_vid="${_ac_map_id[$_ac_vm]}"
+            local _ac_vnode="${_ac_map_node[$_ac_vm]}"
+            local _ac_chk_count
+            _ac_chk_count=$( echo ${_ac_batch_checks[$_ac_vm]} | wc -w )
+            local _ac_batch_timeout=$(( _ac_chk_count * 5 + 30 ))
+
+            (( _ac_vm_idx++ > 0 )) && sleep 3
+
+            local _ac_cur_status
+            _ac_cur_status=$( pvesh get "/nodes/$_ac_vnode/qemu/$_ac_vid/status/current" --output-format json 2>/dev/null | grep -Po '"status"\s*:\s*"\K[^"]+' ) || _ac_cur_status=''
+            if [[ "$_ac_cur_status" != 'running' ]]; then
+                echo_tty "  ${c_info}▸ [$pool_name] [${_ac_vm_idx}/${#_ac_batch_script[@]}] ${c_ok}$_ac_vm${c_info} (VMID $_ac_vid)${c_null}"
+                echo_tty "    ${c_warn}ВМ не запущена ($_ac_cur_status), пропуск${c_null}"
+                for _cn in ${_ac_batch_checks[$_ac_vm]}; do
+                    _ac_results["$_ac_vm,$_cn"]="[Ошибка] ВМ не запущена ($_ac_cur_status)"
+                done
+                continue
+            fi
+            _ac_map_status[$_ac_vm]='running'
+
+            echo_tty "  ${c_info}▸ [$pool_name] [${_ac_vm_idx}/${#_ac_batch_script[@]}] ${c_ok}$_ac_vm${c_info} (VMID $_ac_vid, $_ac_chk_count проверок)${c_null}"
+
+            if ! exec_agent_ping "$_ac_vnode" "$_ac_vid" 10; then
+                echo_tty "    ${c_err}✗ агент недоступен (нет ответа на ping)${c_null}"
+                for _cn in ${_ac_batch_checks[$_ac_vm]}; do
+                    _ac_results["$_ac_vm,$_cn"]="[Ошибка] Guest Agent недоступен (не ответил на ping за 30с)"
+                done
+                continue
+            fi
+
+            local _ac_b64
+            _ac_b64=$( printf '#!/bin/bash\n%s\n' "${_ac_batch_script[$_ac_vm]}" | base64 -w0 )
+            echo_verbose "Запись скрипта на $_ac_vm (VMID $_ac_vid), base64 size=${#_ac_b64}"
+
+            if ! exec_agent_file_write "$_ac_vnode" "$_ac_vid" "$_ac_script_path" "$_ac_b64"; then
+                echo_tty "    ${c_err}✗ не удалось записать скрипт на ВМ${c_null}"
+                for _cn in ${_ac_batch_checks[$_ac_vm]}; do
+                    _ac_results["$_ac_vm,$_cn"]="[Ошибка] Не удалось записать скрипт проверки на ВМ"
+                done
+                continue
+            fi
+            echo_tty "    ${c_ok}✓${c_null} скрипт записан, выполнение проверок..."
+
+            local _ac_raw=''
+            exec_agent_cmd _ac_raw "$_ac_vnode" "$_ac_vid" \
+                "base64 -d '$_ac_script_path' > '${_ac_script_path}.run' && bash '${_ac_script_path}.run'; rm -f '$_ac_script_path' '${_ac_script_path}.run'" \
+                "$_ac_batch_timeout"
+
+            if [[ $? -eq 0 ]]; then
+                local _ac_cur_check='' _ac_cur_out=''
+                while IFS= read -r _line; do
+                    if [[ "$_line" =~ ^===AC_SEP_([0-9]+)===$  ]]; then
+                        [[ "$_ac_cur_check" != '' ]] && _ac_results["$_ac_vm,$_ac_cur_check"]="$_ac_cur_out"
+                        _ac_cur_check="${BASH_REMATCH[1]}"
+                        _ac_cur_out=''
+                    else
+                        [[ "$_ac_cur_out" != '' ]] && _ac_cur_out+=$'\n'
+                        _ac_cur_out+="$_line"
+                    fi
+                done <<< "$_ac_raw"
+                [[ "$_ac_cur_check" != '' ]] && _ac_results["$_ac_vm,$_ac_cur_check"]="$_ac_cur_out"
+                echo_tty "    ${c_ok}✓${c_null} готово"
+            else
+                echo_tty "    ${c_err}✗ ошибка${c_null}"
+                for _cn in ${_ac_batch_checks[$_ac_vm]}; do
+                    _ac_results["$_ac_vm,$_cn"]="$_ac_raw"
+                done
+            fi
+        done
+
+        for ((_ac_cn=1; _ac_cn<=_ac_max_check; _ac_cn++)); do
+            local _chk_name_var="check_${_ac_cn}_name"
+            local _chk_vms_var="check_${_ac_cn}_vms"
+            local _chk_name="${!_chk_name_var:-Проверка $_ac_cn}"
+            local _chk_vms="${!_chk_vms_var:-}"
+
+            [[ "$_chk_vms" == '' ]] && continue
+
+            _ac_stand_filebuf+="${c_info}── Проверка $_ac_cn: ${_chk_name} ──${c_null}"$'\n\n'
+
+            for _ac_vm in $_chk_vms; do
+                local _ac_etype="${_ac_vm_exec[$_ac_vm]:-}"
+                [[ "$_ac_etype" == '' ]] && continue
+
+                local _ac_vid="${_ac_map_id[$_ac_vm]:-}"
+                [[ "$_ac_vid" == '' ]] && continue
+
+                local _ac_vstat="${_ac_map_status[$_ac_vm]}"
+                if [[ "$_ac_etype" == 'exec_serial' ]]; then
+                    local _ac_vnode="${_ac_map_node[$_ac_vm]}"
+                    _ac_vstat=$( pvesh get "/nodes/$_ac_vnode/qemu/$_ac_vid/status/current" --output-format json 2>/dev/null | grep -Po '"status"\s*:\s*"\K[^"]+' ) || _ac_vstat=''
+                fi
+                if [[ "$_ac_vstat" != 'running' ]]; then
+                    _ac_stand_filebuf+="  [${c_ok}$_ac_vm${c_null}] ($_ac_etype):"$'\n'
+                    _ac_stand_filebuf+="[Ошибка] ВМ не запущена ($_ac_vstat)"$'\n\n'
+                    continue
+                fi
+
+                local _chk_cmd_var="check_${_ac_cn}_cmd_${_ac_etype}"
+                local _ac_cmd="${!_chk_cmd_var:-}"
+                [[ "$_ac_cmd" == '' ]] && continue
+
+                local _ac_out=''
+                case "$_ac_etype" in
+                    exec_agent)
+                        _ac_out="${_ac_results[$_ac_vm,$_ac_cn]:-}"
+                        ;;
+                    exec_serial)
+                        local _san="${_ac_vm//-/_}"
+                        local _sl_var="${_san}_serial_login"
+                        local _sp_var="${_san}_serial_password"
+                        local _sl="${!_sl_var:-$exec_serial_login}"
+                        local _sp="${!_sp_var:-$exec_serial_password}"
+                        exec_serial_cmd _ac_out "$_ac_vid" "$_ac_cmd" "$exec_serial_prompt" "$exec_serial_timeout" "$_sl" "$_sp"
+                        ;;
+                    *)
+                        continue
+                        ;;
+                esac
+
+                _ac_stand_filebuf+="  [${c_ok}$_ac_vm${c_null}] ($_ac_etype):"$'\n'
+                _ac_stand_filebuf+="${_ac_out:-(пустой вывод)}"$'\n\n'
+            done
+        done
+
+        [[ "$_ars_fbuf" != '' ]] && echo "$_ac_stand_filebuf" >> "$_ars_fbuf"
+    }
+
+    # ====== Запуск проверок для каждого стенда ======
+    if [[ "$_ac_parallel" -gt 1 ]]; then
+    local _ac_stand_idx=0
+    while [[ "$_ac_stand_idx" -lt ${#_ac_sel_stands[@]} ]]; do
+        local _ac_batch_pids=() _ac_batch_fbuf=()
+        local _ac_j=0
+        while [[ "$_ac_j" -lt "$_ac_parallel" && "$((_ac_stand_idx + _ac_j))" -lt ${#_ac_sel_stands[@]} ]]; do
+            local _ac_sidx="${_ac_sel_stands[$((_ac_stand_idx + _ac_j))]}"
+            local _ac_fb=$( mktemp /tmp/ac_fb_XXXXXX.txt )
+            _ac_batch_fbuf+=( "$_ac_fb" )
+            ( _autocheck_run_stand "$_ac_sidx" "$_ac_fb" ) 2>&1 &
+            _ac_batch_pids+=( $! )
+            (( _ac_j++ ))
+        done
+        wait "${_ac_batch_pids[@]}"
+        for ((_ac_j=0; _ac_j<${#_ac_batch_fbuf[@]}; _ac_j++)); do
+            [[ -f "${_ac_batch_fbuf[$_ac_j]}" ]] && { cat "${_ac_batch_fbuf[$_ac_j]}"; [[ "$_ac_outfile" != '' ]] && _ac_all_filebuf+=$( cat "${_ac_batch_fbuf[$_ac_j]}" ); }
+            rm -f "${_ac_batch_fbuf[$_ac_j]}"
+        done
+        (( _ac_stand_idx += ${#_ac_batch_pids[@]} ))
+    done
+    else
+    # Последовательный режим (_ac_parallel=1)
+    for _ac_sidx in "${_ac_sel_stands[@]}"; do
+        pool_name=$( echo "${_ac_pools[$group_name]}" | sed "${_ac_sidx}q;d" )
+        [[ "$pool_name" == '' ]] && continue
+
+        local pool_info vmid_list vmname_list vm_node_list vm_status_list vm_type_list
+        pve_api_request pool_info GET "/pools/$pool_name" || { echo_err "Не удалось получить информацию о стенде '$pool_name'"; continue; }
+        vmid_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/vmid}" )
+        vmname_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/name}" )
+        vm_node_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/node}" )
+        vm_status_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/status}" )
+        vm_type_list=$( echo "$pool_info" | grep -Po "${regex/\{opt_name\}/type}" )
+
+        local _ac_vm_count=$( echo "$vmid_list" | wc -l )
+
+        local -A _ac_map_id _ac_map_node _ac_map_status
+        for ((i=1; i<=$_ac_vm_count; i++)); do
+            local _t=$( echo -n "$vm_type_list" | sed "${i}q;d" )
+            [[ "$_t" != 'qemu' ]] && continue
+            local _n=$( echo -n "$vmname_list" | sed "${i}q;d" )
+            _ac_map_id[$_n]=$( echo -n "$vmid_list" | sed "${i}q;d" )
+            _ac_map_node[$_n]=$( echo -n "$vm_node_list" | sed "${i}q;d" )
+            _ac_map_status[$_n]=$( echo -n "$vm_status_list" | sed "${i}q;d" )
+        done
+
+        local _ac_stand_filebuf="══════════════════════════════════════"$'\n'
+        _ac_stand_filebuf+=" Автопроверка: $autocheck_name"$'\n'
+        _ac_stand_filebuf+=" Стенд: $pool_name"$'\n'
+        _ac_stand_filebuf+="══════════════════════════════════════"$'\n\n'
+
+        # Фаза 1: Сбор команд для пакетного выполнения через guest agent
+        local -A _ac_batch_script _ac_batch_checks
+        for ((_ac_cn=1; _ac_cn<=_ac_max_check; _ac_cn++)); do
+            local _chk_vms_var="check_${_ac_cn}_vms"
+            local _chk_vms="${!_chk_vms_var:-}"
+            [[ "$_chk_vms" == '' ]] && continue
+
+            local _chk_cmd_var="check_${_ac_cn}_cmd_exec_agent"
+            local _ac_cmd="${!_chk_cmd_var:-}"
+            [[ "$_ac_cmd" == '' ]] && continue
+
+            for _ac_vm in $_chk_vms; do
+                [[ "${_ac_vm_exec[$_ac_vm]:-}" != 'exec_agent' ]] && continue
+                [[ "${_ac_map_id[$_ac_vm]:-}" == '' ]] && continue
+
+                _ac_batch_script[$_ac_vm]+="echo '===AC_SEP_${_ac_cn}==='; { $_ac_cmd; } 2>&1; "
+                _ac_batch_checks[$_ac_vm]+=" $_ac_cn"
+            done
+        done
+
+        # Фаза 2: Последовательный опрос ВМ (пинг → запись скрипта → exec → пауза)
+        local -A _ac_results
+        local _ac_vm_idx=0
+        local _ac_script_path='/tmp/ac_check.sh'
+        echo_tty
+        for _ac_vm in "${!_ac_batch_script[@]}"; do
+            local _ac_vid="${_ac_map_id[$_ac_vm]}"
+            local _ac_vnode="${_ac_map_node[$_ac_vm]}"
+            local _ac_chk_count
+            _ac_chk_count=$( echo ${_ac_batch_checks[$_ac_vm]} | wc -w )
+            local _ac_batch_timeout=$(( _ac_chk_count * 5 + 30 ))
+
+            (( _ac_vm_idx++ > 0 )) && sleep 3
+
+            local _ac_cur_status
+            _ac_cur_status=$( pvesh get "/nodes/$_ac_vnode/qemu/$_ac_vid/status/current" --output-format json 2>/dev/null | grep -Po '"status"\s*:\s*"\K[^"]+' ) || _ac_cur_status=''
+            if [[ "$_ac_cur_status" != 'running' ]]; then
+                echo_tty "  ${c_info}▸ [$pool_name] [${_ac_vm_idx}/${#_ac_batch_script[@]}] ${c_ok}$_ac_vm${c_info} (VMID $_ac_vid)${c_null}"
+                echo_tty "    ${c_warn}ВМ не запущена ($_ac_cur_status), пропуск${c_null}"
+                for _cn in ${_ac_batch_checks[$_ac_vm]}; do
+                    _ac_results["$_ac_vm,$_cn"]="[Ошибка] ВМ не запущена ($_ac_cur_status)"
+                done
+                continue
+            fi
+            _ac_map_status[$_ac_vm]='running'
+
+            echo_tty "  ${c_info}▸ [$pool_name] [${_ac_vm_idx}/${#_ac_batch_script[@]}] ${c_ok}$_ac_vm${c_info} (VMID $_ac_vid, $_ac_chk_count проверок)${c_null}"
+
+            if ! exec_agent_ping "$_ac_vnode" "$_ac_vid" 10; then
+                echo_tty "    ${c_err}✗ агент недоступен (нет ответа на ping)${c_null}"
+                for _cn in ${_ac_batch_checks[$_ac_vm]}; do
+                    _ac_results["$_ac_vm,$_cn"]="[Ошибка] Guest Agent недоступен (не ответил на ping за 30с)"
+                done
+                continue
+            fi
+
+            local _ac_b64
+            _ac_b64=$( printf '#!/bin/bash\n%s\n' "${_ac_batch_script[$_ac_vm]}" | base64 -w0 )
+            echo_verbose "Запись скрипта на $_ac_vm (VMID $_ac_vid), base64 size=${#_ac_b64}"
+
+            if ! exec_agent_file_write "$_ac_vnode" "$_ac_vid" "$_ac_script_path" "$_ac_b64"; then
+                echo_tty "    ${c_err}✗ не удалось записать скрипт на ВМ${c_null}"
+                for _cn in ${_ac_batch_checks[$_ac_vm]}; do
+                    _ac_results["$_ac_vm,$_cn"]="[Ошибка] Не удалось записать скрипт проверки на ВМ"
+                done
+                continue
+            fi
+            echo_tty "    ${c_ok}✓${c_null} скрипт записан, выполнение проверок..."
+
+            local _ac_raw=''
+            exec_agent_cmd _ac_raw "$_ac_vnode" "$_ac_vid" \
+                "base64 -d '$_ac_script_path' > '${_ac_script_path}.run' && bash '${_ac_script_path}.run'; rm -f '$_ac_script_path' '${_ac_script_path}.run'" \
+                "$_ac_batch_timeout"
+
+            if [[ $? -eq 0 ]]; then
+                local _ac_cur_check='' _ac_cur_out=''
+                while IFS= read -r _line; do
+                    if [[ "$_line" =~ ^===AC_SEP_([0-9]+)===$  ]]; then
+                        [[ "$_ac_cur_check" != '' ]] && _ac_results["$_ac_vm,$_ac_cur_check"]="$_ac_cur_out"
+                        _ac_cur_check="${BASH_REMATCH[1]}"
+                        _ac_cur_out=''
+                    else
+                        [[ "$_ac_cur_out" != '' ]] && _ac_cur_out+=$'\n'
+                        _ac_cur_out+="$_line"
+                    fi
+                done <<< "$_ac_raw"
+                [[ "$_ac_cur_check" != '' ]] && _ac_results["$_ac_vm,$_ac_cur_check"]="$_ac_cur_out"
+                echo_tty "    ${c_ok}✓${c_null} готово"
+            else
+                echo_tty "    ${c_err}✗ ошибка${c_null}"
+                for _cn in ${_ac_batch_checks[$_ac_vm]}; do
+                    _ac_results["$_ac_vm,$_cn"]="$_ac_raw"
+                done
+            fi
+        done
+
+        echo_tty
+        echo_tty "${c_value}══════════════════════════════════════${c_null}"
+        echo_tty " Автопроверка: ${c_ok}$autocheck_name${c_null}"
+        echo_tty " Стенд: ${c_value}$pool_name${c_null}"
+        echo_tty "${c_value}══════════════════════════════════════${c_null}"
+
+        # Фаза 3: Вывод результатов
+        for ((_ac_cn=1; _ac_cn<=_ac_max_check; _ac_cn++)); do
+            local _chk_name_var="check_${_ac_cn}_name"
+            local _chk_vms_var="check_${_ac_cn}_vms"
+            local _chk_name="${!_chk_name_var:-Проверка $_ac_cn}"
+            local _chk_vms="${!_chk_vms_var:-}"
+
+            echo_tty
+            echo_tty "${c_info}── Проверка $_ac_cn: ${_chk_name} ──${c_null}"
+
+            [[ "$_chk_vms" == '' ]] && { echo_warn "  Список ВМ пуст для проверки $_ac_cn"; continue; }
+
+            _ac_stand_filebuf+="${c_info}── Проверка $_ac_cn: ${_chk_name} ──${c_null}"$'\n\n'
+
+            for _ac_vm in $_chk_vms; do
+                local _ac_etype="${_ac_vm_exec[$_ac_vm]:-}"
+                [[ "$_ac_etype" == '' ]] && { echo_warn "  [${c_ok}$_ac_vm${c_warn}] Тип подключения не указан в autocheck_vms"; continue; }
+
+                local _ac_vid="${_ac_map_id[$_ac_vm]:-}"
+                [[ "$_ac_vid" == '' ]] && { echo_warn "  [${c_ok}$_ac_vm${c_warn}] ВМ не найдена в стенде $pool_name"; continue; }
+
+                local _ac_vstat="${_ac_map_status[$_ac_vm]}"
+                if [[ "$_ac_etype" == 'exec_serial' ]]; then
+                    local _ac_vnode="${_ac_map_node[$_ac_vm]}"
+                    _ac_vstat=$( pvesh get "/nodes/$_ac_vnode/qemu/$_ac_vid/status/current" --output-format json 2>/dev/null | grep -Po '"status"\s*:\s*"\K[^"]+' ) || _ac_vstat=''
+                fi
+                if [[ "$_ac_vstat" != 'running' ]]; then
+                    echo_warn "  [${c_ok}$_ac_vm${c_warn}] ВМ не запущена ($_ac_vstat)"
+                    _ac_stand_filebuf+="  [${c_ok}$_ac_vm${c_null}] ($_ac_etype):"$'\n'
+                    _ac_stand_filebuf+="[Ошибка] ВМ не запущена ($_ac_vstat)"$'\n\n'
+                    continue
+                fi
+
+                local _chk_cmd_var="check_${_ac_cn}_cmd_${_ac_etype}"
+                local _ac_cmd="${!_chk_cmd_var:-}"
+                [[ "$_ac_cmd" == '' ]] && { echo_warn "  [$_ac_vm] Команда для $_ac_etype не задана"; continue; }
+
+                local _ac_out=''
+                case "$_ac_etype" in
+                    exec_agent)
+                        _ac_out="${_ac_results[$_ac_vm,$_ac_cn]:-}"
+                        ;;
+                    exec_serial)
+                        local _san="${_ac_vm//-/_}"
+                        local _sl_var="${_san}_serial_login"
+                        local _sp_var="${_san}_serial_password"
+                        local _sl="${!_sl_var:-$exec_serial_login}"
+                        local _sp="${!_sp_var:-$exec_serial_password}"
+                        exec_serial_cmd _ac_out "$_ac_vid" "$_ac_cmd" "$exec_serial_prompt" "$exec_serial_timeout" "$_sl" "$_sp"
+                        ;;
+                    *)
+                        echo_warn "  [$_ac_vm] Неизвестный тип подключения: $_ac_etype"
+                        continue
+                        ;;
+                esac
+
+                echo_tty
+                echo_tty "  [${c_ok}$_ac_vm${c_null}] (${_ac_etype}):"
+                if [[ "$_ac_out" != '' ]]; then
+                    echo "$_ac_out" | while IFS= read -r _line; do
+                        echo_tty "  $_line"
+                    done
+                else
+                    echo_tty "  ${c_info}(пустой вывод)${c_null}"
+                fi
+
+                _ac_stand_filebuf+="  [${c_ok}$_ac_vm${c_null}] ($_ac_etype):"$'\n'
+                _ac_stand_filebuf+="${_ac_out:-(пустой вывод)}"$'\n\n'
+            done
+        done
+
+        # Запись в файл (только результаты проверок)
+        [[ "$_ac_outfile" != '' ]] && _ac_all_filebuf+="$_ac_stand_filebuf"
+    done
+    fi
+
+    if [[ "$_ac_outfile" != '' && "$_ac_all_filebuf" != '' ]]; then
+        echo "$_ac_all_filebuf" > "$_ac_outfile" || echo_err "Не удалось записать в файл: $_ac_outfile"
+        echo_tty
+        echo_ok "Результаты сохранены в ${c_value}$_ac_outfile${c_null}"
+    fi
+
+    echo_tty
+    echo_ok "Автопроверка завершена."
+}
+
 out_conf_file=''
 _opt_show_help='Вывод в терминал справки по команде, а так же примененных значений конфигурации и выход'
 opt_show_help=false
@@ -3028,6 +3883,9 @@ opt_slow_api=false
 
 _opt_sel_var='Выбор варианта установки стендов'
 opt_sel_var=0
+
+_opt_autocheck='Запустить автопроверку стенда по указанному файлу конфигурации'
+opt_autocheck_file=''
 
 var_pve_node=$( hostname -s )
 var_ovs_checked=false
@@ -3078,6 +3936,7 @@ while [ $# != 0 ]; do
                 -sctl|--silent-control) opt_silent_control=true;;
                 -api|--pve-api-url) check_arg "$2"; config_base[pve_api_url]="$2"; shift;;
                 --run-ifreload-tweak) check_arg "$2"; config_base[run_ifreload_tweak]="$2"; shift;;
+                -ac|--autocheck) check_arg "$2"; opt_autocheck_file="$2"; shift;;
                 *) echo_err "Ошибка: некорректный аргумент: '$1'"; opt_show_help=true;;
             esac
             shift;;
@@ -3115,6 +3974,10 @@ $silent_mode && {
     exit_clear
 }
 
+[[ "$opt_autocheck_file" != '' ]] && {
+    autocheck_stand "$opt_autocheck_file"
+    exit_clear 0
+}
 
 while ! $silent_mode; do
     echo_tty $'\nДействие: 1 - Развертывание стендов, 2 - Управление стендами, 3 - Утилиты\n'
