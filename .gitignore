@@ -5,6 +5,7 @@
 config.local
 !*.example
 *.local
+*.local.*
 local.*
 config.local
 test/
