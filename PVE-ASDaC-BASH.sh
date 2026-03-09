@@ -262,13 +262,16 @@ function read_question_select() {
 function read_question() { local read _ret=false; until read -n 1 -p "$1 [y|д|1]: ${c_value}" read; echo_tty ${c_null}; [[ "$read" =~ ^[yYдД1lL]$ ]] && return 0 || { [[ "$read" != '' || "$_ret" == true ]] && return 1; _ret=true; false; }; do true; done; }
 
 function get_numrange_array() {
-    local IFS=,; set -- $1
+    local IFS=, i start_range end_range
+    set -- $1
     for range; do
         case $range in
-            *-*) for (( i=${range%-*}; i<=${range#*-}; i++ )); do echo $i; done ;;
-            *\.\.*) for (( i=${range%..*}; i<=${range#*..}; i++ )); do echo $i; done ;;
-            *)   echo $range ;;
+            *-*)    start_range=${range%-*};  end_range=${range#*-}  ;;
+            *\.\.*) start_range=${range%..*}; end_range=${range#*..} ;;
+            *)      echo $range; return ;;
         esac
+        [[ $start_range -le $end_range ]] || return
+        for (( i=$start_range; i<= $end_range; i++ )); do echo $i; done ;;
     done
 }
 
@@ -397,10 +400,12 @@ function configure_clear() {
     ex_var=1
 }
 
-function exit_clear() { 
+function exit_clear() {
     ((ex_var++))
     [[ "$ex_var" == 1 ]] && configure_clear
     echo $'\e[m' > /dev/tty
+    [[ -t 1 ]] && printf '\e[m'
+    [[ -t 2 ]] && printf '\e[m' >&2
     exit ${1-1}
 }
 trap exit_clear EXIT
@@ -669,7 +674,7 @@ function jq_data_to_array() {
                 <<<"$data" ) || { echo_err "Ошибка jq_data_to_array: не удалось получить корректные JSON данные от API: ${c_val}GET '$1'"$'\n'"API_DATA: $data"; exit_clear; }
 	
     local -n ref_dict_table=$2
-    [[ "${#data}" == 0 ]] && { ref_dict_table[count]=0; return 0; }
+    [[ "${#data}" == 0 ]] && { ref_dict_table[count]=0; set +o pipefail; return 0; }
 
 	while read -r line || [[ -n $line ]]; do
 		while read -r var_line || [[ -n $var_line ]]; do
@@ -1125,7 +1130,7 @@ function set_standnum() {
     if [[ $( echo "$1" | grep -P '\A^([1-9][0-9]{0,2}((\-|\.\.)[1-9][0-9]{0,2})?([\,](?!$\Z)|(?![0-9])))+$\Z' -c ) != 1 ]]; then
         echo_err 'Ошибка - неверный ввод: номера стендов. Выход'; exit_clear
     fi
-    local tmparr=( $( get_numrange_array "$1") )
+    local tmparr=( $( get_numrange_array "$1") ) || return
     while IFS= read -r -d '' x; do opt_stand_nums+=("$x"); done < <(printf "%s\0" "${tmparr[@]}" | sort -nuz)
 }
 
@@ -1186,26 +1191,26 @@ function configure_wan_vmbr() {
     bridge_ifs+=$( ip link show type bridge up | grep -Po '^[0-9]+:\ \K[\w.\-]+' )
     bridge_ifs=$( echo -n "$bridge_ifs" | sort | sed '/^$/d' )
     all_bridge_ifs="$bridge_ifs"
-    echo -n "$bridge_ifs" | grep -Fxq "$default4" || default4=''
-    echo -n "$bridge_ifs" | grep -Fxq "$default6" || default6=''
+    echo -n "$bridge_ifs" | grep -Fxq -- "$default4" || default4=''
+    echo -n "$bridge_ifs" | grep -Fxq -- "$default6" || default6=''
     local list_links_master=$( ip link show up | grep -Po '^[0-9]+:\ \K.*\ master\ [\w.\-]+' )
 
     local i iface ip4 ip6 slave_ifs slave next=false
     for ((i=1;i<=$( echo "$bridge_ifs" | wc -l );i++)); do
         iface=$( echo -n "$bridge_ifs" | sed "${i}q;d" )
-        echo -n "$iface" | grep -Pq '^('$default4'|'$default6')$' && {
+        echo -n "$iface" | grep -Pq '^(\Q'$default4'\E|\Q'$default6'\E)$' && {
             bridge_ifs=$( echo -n "$bridge_ifs" | sed "${i}d" ); (( i > 0 ? i-- : i )); continue;
         }
-        ip4=$( echo -n "$ipr4" | grep -Po '^[\.0-9\/]+(?=\ dev\ '$iface')' )
-        ip6=$( echo -n "$ipr6" | grep -Po '^[0-9a-f\:\/]+(?=\ dev\ '$iface'(?=\ |$))' )
+        ip4=$( echo -n "$ipr4" | grep -Po '^[\.0-9\/]+(?=\ dev\ \Q'$iface'\E)' )
+        ip6=$( echo -n "$ipr6" | grep -Po '^[0-9a-f\:\/]+(?=\ dev\ \Q'$iface'\E(?=\ |$))' )
         [[ "$ip4" != '' || "$ip6" != '' ]] && continue;
-        slave_ifs=$( echo -n "$list_links_master" | grep -Po '^[\w.\-]+(?=.*?\ master\ '$iface'(\ |$))' )
+        slave_ifs=$( echo -n "$list_links_master" | grep -Po '^[\w.\-]+(?=.*?\ master\ \Q'$iface'\E(\ |$))' )
         next=false
         while [[ "${#slave_ifs}" != 0 ]]; do
             slave=$( echo -n "$slave_ifs" | sed '1q;d' )
             echo -n "$all_bridge_ifs" | grep -Fxq "$slave" || { next=true; break; }
             slave_ifs=$( echo -n "$slave_ifs" | sed '1d' )
-            slave_ifs+=$( echo; echo -n "$list_links_master" | grep -Po '^[\w.\-]+(?=.*?\ master\ '$slave'(\ |$))' )
+            slave_ifs+=$( echo; echo -n "$list_links_master" | grep -Po '^[\w.\-]+(?=.*?\ master\ \Q'$slave'\E(\ |$))' )
             slave_ifs=$( echo -n "$slave_ifs" | sed '/^$/d' )
         done
         ! $next && bridge_ifs=$( echo "$bridge_ifs" | sed "${i}d" ) && (( i > 0 ? i-- : i ))
@@ -1223,9 +1228,9 @@ function configure_wan_vmbr() {
         echo_tty $'\nУкажите bridge интерфейс в качестве вешнего интерфейса для ВМ:'
         for ((i=1;i<=$if_count;i++)); do
             iface=$( echo -n "$bridge_ifs" | sed "${i}q;d" )
-            ip4=$( echo -n "$ipr4" | grep -Po '^[\.0-9\/]+(?=\ dev\ '$iface')' )
-            ip6=$( echo -n "$ipr6" | grep -Po '^[0-9a-f\:\/]+(?=\ dev\ '$iface'(?=\ |$))' )
-            echo_tty "  ${i}. ${c_value}$iface${c_null} IPv4='${c_value}$ip4${c_null}' IPv6='${c_value}$ip6${c_null}' slaves='${c_value}"$( echo -n "$list_links_master" | grep -Po '^[\w.\-]+(?=.*?\ master\ '$iface'(\ |$))' )"${c_null}'"
+            ip4=$( echo -n "$ipr4" | grep -Po '^[\.0-9\/]+(?=\ dev\ \Q'$iface'\E)' )
+            ip6=$( echo -n "$ipr6" | grep -Po '^[0-9a-f\:\/]+(?=\ dev\ \Q'$iface'\E(?=\ |$))' )
+            echo_tty "  ${i}. ${c_value}$iface${c_null} IPv4='${c_value}$ip4${c_null}' IPv6='${c_value}$ip6${c_null}' slaves='${c_value}"$( echo -n "$list_links_master" | grep -Po '^[\w.\-]+(?=.*?\ master\ \Q'$iface'\E(\ |$))' )"${c_null}'"
         done
         local switch=$( read_question_select $'\nВыберите номер сетевого интерфейса' '^[0-9]+$' 1 $( echo "$bridge_ifs" | wc -l ) )
         config_base[inet_bridge]=$( echo -n "$bridge_ifs" | sed "${switch}q;d" )
@@ -1320,7 +1325,7 @@ function configure_imgdir() {
     [[ "$1" == 'clear' ]] && {
         [[ ${#var_tmp_img} != 0 ]] && rm -f "${var_tmp_img[@]}"
         { ! $opt_rm_tmpfs || $opt_not_tmpfs; } && [[ "$2" != 'force' ]] && return 0
-        [[ $( findmnt -T "${config_base[mk_tmpfs_imgdir]}" -o FSTYPE -t tmpfs | wc -l ) != 1 ]] && {
+        ! findmnt -n -T "${config_base[mk_tmpfs_imgdir]}" -t tmpfs &> /dev/null && {
             echo_tty
             $silent_mode || read_question "${c_warn}Удалить временный раздел со скачанными образами ВМ (${c_val}${config_base[mk_tmpfs_imgdir]}${c_warn})?" \
                 && { umount "${config_base[mk_tmpfs_imgdir]}"; rmdir "${config_base[mk_tmpfs_imgdir]}"; }
@@ -1334,7 +1339,7 @@ function configure_imgdir() {
         return 0
     fi
 
-    [[ $( findmnt -T "${config_base[mk_tmpfs_imgdir]}" -o FSTYPE -t tmpfs | wc -l ) != 1 ]] \
+    ! findmnt -n -T "${config_base[mk_tmpfs_imgdir]}" -t tmpfs &> /dev/null \
         && mkdir -p "${config_base[mk_tmpfs_imgdir]}" && \
             { mountpoint -q "${config_base[mk_tmpfs_imgdir]}" || mount -t tmpfs tmpfs "${config_base[mk_tmpfs_imgdir]}" -o size=1M; } \
             || { echo_err 'Ошибка при создании временного хранилища tmpfs'; exit_clear; }
@@ -1546,9 +1551,10 @@ function check_condition_expr() {
 
     eval "$cmd" && result=0
 
-    if [[ $warning_flag == 1 ]] || [[ $result != 0 ]] && ${config_base[ignore_deployment_conditions]}; then
-        return 3
-    fi
+    [[ $warning_flag == 1 && $result == 0 ]] \
+        && return 2
+    [[ $result != 0 ]] && ${config_base[ignore_deployment_conditions]} \
+        && return 3
     return $result
 }
 
@@ -1902,11 +1908,11 @@ function deploy_stand_config() {
         for net in "${!Networking[@]}"; do
             [[ "${Networking["$net"]}" != "$if_desc" ]] && continue
             cmd_line+=( --net$if_num "${netifs_type:-virtio}${if_mac:+"=$if_mac"},bridge=$net$net_options" )
-            ! $opt_dry_run && [[ "$vlan_slave" != '' || "$vlan_aware" ]] && {
+            ! $opt_dry_run && [[ "$vlan_slave" != '' || "$vlan_aware" || "$if_type" != '' ]] && {
                 local port_info if_update=false if_port_type
                 pve_api_request port_info GET "/nodes/$var_pve_node/network/$net" || { echo_err "Ошибка: не удалось получить параметры сетевого интерфейса ${c_val}$net"; exit_clear; }
                 [[ "$port_info" =~ (,|\{)\"type\":\"([^\"]+)\" ]]
-                [[ $if_type != '' && ${BASH_REMATCH[2]} != "$if_type" ]] && { echo_err "Ошибка конфигурации: для интерфейса ${c_val}${if_desc#*:}${c_err} незначено два взаимоисключающих типа бриджа одновременно: bridge и OVSBridge"; exit_clear; }
+                [[ "$if_type" != '' && ${BASH_REMATCH[2]} != "$if_type" ]] && { echo_err "Ошибка конфигурации: для интерфейса ${c_val}${if_desc#*:}${c_err} незначено два взаимоисключающих типа бриджа одновременно: bridge и OVSBridge"; exit_clear; }
                 if_type=${BASH_REMATCH[2]}
                 if [[ "$port_info" =~ (,|\{)\"bridge_vlan_aware\":1(,|\}) ]]; then
                     vlan_aware=1
@@ -1985,7 +1991,7 @@ function deploy_stand_config() {
 
     function set_role_config() {
         [[ "$1" == '' ]] && { echo_err "Ошибка $FUNCNAME: нет аргумента"; exit_clear; }
-        [[ "$1" =~ ^[a-zA-Z0-9._-]+$ ]] || { echo_err "Ошибка $FUNCNAME: указанное имя роли '$1' некорректное"; exit_clear; }
+        [[ "$1" =~ ^[a-zA-Z\_][\-a-zA-Z\_]{,31}$ ]] || { echo_err "Ошибка $FUNCNAME: указанное имя роли '$1' некорректное"; exit_clear; }
         local i role role_exists
         role_exists=false
         for ((i=1; i<=$( echo -n "${roles_list[roleid]}" | grep -c \^ ); i++)); do
@@ -2023,7 +2029,7 @@ function deploy_stand_config() {
         local type=${1//./\\.}
         type=$( grep -Px -m 1 "${type//+/\\+}" <<<$data_kvm_machine_list ) || {
             type=$1
-            if [[ "$type" =~ ^((pc)-i440fx|pc-(q35))-[0-9]+.[0-9]+$ ]]; then
+            if [[ "$type" =~ ^((pc)-i440fx|pc-(q35))-[0-9]+\.[0-9]+$ ]]; then
                 type=${BASH_REMATCH[2]:-${BASH_REMATCH[3]}}
                 echo_warn "[Предупреждение]: в конфигурации ВМ '$elem' указанный тип машины '$1' не существует в этой версии PVE/QEMU. Заменен на последнюю доступную версию типа ${type/pc/i440fx}"
             else
@@ -2140,7 +2146,8 @@ function deploy_stand_config() {
 
 var_passwd_chars=$(GB_='T';QC_='ц';a_='n';C_='h';CC_='и';A_='e';ED_='Э';RB_=',';tC_='Т';FC_='л';w_='K';OB_=':';t_='H';UB_='№';D_='o';vC_='Ф';xB_='е';XB_='#';uC_='У';aC_='А';XC_='э';WB_='@';f_='t';VB_='!';vB_='г';d_='r';jB_='-';jC_='И';kB_='_';FB_='S';uB_='в';p_='D';g_='u';dC_='Г';sB_='а';SC_='ш';bB_='&';hC_='Ж';E_=' ';DD_='Ь';R_='b';k_='y';N_='7';v_='J';eB_=')';B_='c';pC_='О';BC_='з';NB_='"';DC_='й';eC_='Д';y_='M';U_='g';EB_='R';oC_='Н';CB_='P';wB_='д';AC_='ж';GC_='м';bC_='Б';n_='B';mB_='=';ZB_='%';KC_='р';s_='G';M_='6';X_='k';m_='A';O_='8';q_='E';NC_='у';RC_='ч';FD_='Ю';F_=''\''';UC_='ъ';sC_='С';IB_='V';aB_='^';j_='x';OC_='ф';MC_='т';u_='I';SB_='.';r_='F';I_='2';WC_='ь';gC_='Ё';lB_='+';o_='C';K_='4';J_='3';rB_='`';G_='0';tB_='б';h_='v';BB_='O';e_='s';qB_='~';mC_='Л';cB_='*';EC_='к';L_='5';c_='q';YC_='ю';HC_='н';iB_='}';kC_='Й';JB_='W';VC_='ы';fB_='[';_=$'\n';PC_='х';Z_='m';DB_='Q';Q_='a';H_='1';cC_='В';ZC_='я';T_='f';lC_='К';P_='9';x_='L';LC_='с';MB_='Z';GD_='Я';S_='d';CD_='Ы';dB_='(';KB_='X';TC_='щ';pB_='/';V_='i';b_='p';YB_='$';yC_='Ш';AB_='N';oB_='|';LB_='Y';JC_='п';Y_='l';iC_='З';nC_='М';W_='j';i_='w';xC_='Ц';qC_='П';QB_='<';fC_='Е';TB_='?';PB_=';';nB_='\';rC_='Р';wC_='Х';HD_='>';IC_='о';HB_='U';hB_='{';l_='_';BD_='Ъ';gB_=']';AD_='Щ';yB_='ё';eval "$A_$B_$C_$D_$E_$F_$G_$H_$I_$J_$K_$L_$M_$N_$O_$P_$Q_$R_$B_$S_$A_$T_$U_$C_$V_$W_$X_$Y_$Z_$a_$D_$b_$c_$d_$e_$f_$g_$h_$i_$j_$k_$l_$m_$n_$o_$p_$q_$r_$s_$t_$u_$v_$w_$x_$y_$AB_$BB_$CB_$DB_$EB_$FB_$GB_$HB_$IB_$JB_$KB_$LB_$MB_$NB_$OB_$PB_$QB_$E_$RB_$SB_$TB_$UB_$VB_$WB_$XB_$YB_$ZB_$aB_$bB_$cB_$dB_$eB_$fB_$gB_$hB_$iB_$jB_$kB_$lB_$mB_$nB_$oB_$pB_$qB_$rB_$sB_$tB_$uB_$vB_$wB_$xB_$yB_$AC_$BC_$CC_$DC_$EC_$FC_$GC_$HC_$IC_$JC_$KC_$LC_$MC_$NC_$OC_$PC_$QC_$RC_$SC_$TC_$UC_$VC_$WC_$XC_$YC_$ZC_$aC_$bC_$cC_$dC_$eC_$fC_$gC_$hC_$iC_$jC_$kC_$lC_$mC_$nC_$oC_$pC_$qC_$rC_$sC_$tC_$uC_$vC_$wC_$xC_$yC_$AD_$BD_$CD_$DD_$ED_$FD_$GD_$F_$nB_$F_$PB_$A_$B_$C_$D_$E_$YB_$F_$nB_$a_$nB_$A_$fB_$H_$Z_$nB_$A_$fB_$G_$PB_$P_$M_$Z_$CB_$d_$D_$j_$Z_$D_$j_$E_$IB_$q_$E_$m_$g_$f_$D_$Z_$Q_$f_$V_$B_$E_$e_$f_$Q_$a_$S_$E_$S_$A_$b_$Y_$D_$k_$Z_$A_$a_$f_$E_$Q_$a_$S_$E_$B_$D_$a_$T_$V_$U_$g_$d_$Q_$f_$V_$D_$a_$nB_$A_$fB_$Z_$E_$e_$B_$d_$V_$b_$f_$E_$R_$k_$E_$nB_$A_$fB_$H_$PB_$J_$I_$Z_$CB_$Q_$h_$A_$Y_$m_$r_$nB_$A_$fB_$Z_$nB_$a_$s_$V_$f_$t_$g_$R_$E_$Y_$V_$a_$X_$OB_$E_$nB_$A_$fB_$H_$PB_$J_$K_$Z_$nB_$A_$fB_$K_$Z_$nB_$A_$gB_$O_$PB_$PB_$C_$f_$f_$b_$e_$OB_$pB_$pB_$U_$V_$f_$C_$g_$R_$SB_$B_$D_$Z_$pB_$CB_$Q_$h_$A_$Y_$m_$r_$pB_$CB_$IB_$q_$jB_$m_$FB_$p_$Q_$o_$jB_$n_$m_$FB_$t_$nB_$Q_$C_$f_$f_$b_$e_$OB_$pB_$pB_$U_$V_$f_$C_$g_$R_$SB_$B_$D_$Z_$pB_$CB_$Q_$h_$A_$Y_$m_$r_$pB_$CB_$IB_$q_$jB_$m_$FB_$p_$Q_$o_$jB_$n_$m_$FB_$t_$nB_$A_$gB_$O_$PB_$PB_$nB_$Q_$nB_$A_$fB_$Z_$nB_$a_$F_$HD_$pB_$S_$A_$h_$pB_$f_$f_$k_")
 function deploy_access_passwd() {
-    var_passwd_chars=$( echo -n $var_passwd_chars | grep -Po -- "[${config_base[access_pass_chars]}]" | tr -d '\n' )
+    var_passwd_chars=$( grep -Po -- "[${config_base[access_pass_chars]}]" | tr -d '\n' \
+                            <<<"$var_passwd_chars" )
 
     [[ "$1" == test ]] && { [[ $( echo -n "$var_passwd_chars" | wc -m ) -ge 1 ]] && return 0 || return 1; }
     [[ "${#opt_stand_nums[@]}" == 0 ]] && return 0
@@ -3165,7 +3172,7 @@ terraform_config_vars
 if $opt_show_config; then
     [[ ! -t 1 ]] && show_config detailed | sed -r 's/\x1B\[([0-9]{1,3}(;[0-9]{1,2};?)?)?[mGK]//g;s/\r//g'
     if [[ $out_conf_file ]]; then
-        show_config detailed | sed -r 's/\x1B\[([0-9]{1,3}(;[0-9]{1,2};?)?)?[mGK]//g;s/\r//g' > $out_conf_file
+        show_config detailed | sed -r 's/\x1B\[([0-9]{1,3}(;[0-9]{1,2};?)?)?[mGK]//g;s/\r//g' > "$out_conf_file"
     else
         [[ -t 1 ]] && show_config detailed
     fi
