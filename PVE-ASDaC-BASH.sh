@@ -271,7 +271,7 @@ function get_numrange_array() {
             *)      echo $range; return ;;
         esac
         [[ $start_range -le $end_range ]] || return
-        for (( i=$start_range; i<=$end_range; i++ )); do echo $i; done ;;
+        for (( i=$start_range; i<=$end_range; i++ )); do echo $i; done
     done
 }
 
