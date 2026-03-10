@@ -1130,7 +1130,9 @@ function set_standnum() {
     if [[ $( echo "$1" | grep -P '\A^([1-9][0-9]{0,2}((\-|\.\.)[1-9][0-9]{0,2})?([\,](?!$\Z)|(?![0-9])))+$\Z' -c ) != 1 ]]; then
         echo_err 'Ошибка - неверный ввод: номера стендов. Выход'; exit_clear
     fi
-    local tmparr=( $( get_numrange_array "$1") ) || return
+    local tmparr
+    tmparr=( $( get_numrange_array "$1") ) || return
+    opt_stand_nums=()
     while IFS= read -r -d '' x; do opt_stand_nums+=("$x"); done < <(printf "%s\0" "${tmparr[@]}" | sort -nuz)
 }
 
@@ -1140,9 +1142,12 @@ function configure_standnum() {
     [[ "$is_show_config" == 'false' ]] && { is_show_config=true; echo_2out "$( show_config )"; }
     echo_tty $'\nВведите номера инсталляций стендов. Напр., 1-5 развернет стенды под номерами 1, 2, 3, 4, 5 (всего 5)'
     local stands
-    stands=$( read_question_select 'Номера стендов (прим: 1,2,5-10)' '^(([1-9][0-9]{0,2}((\-|\.\.)[1-9][0-9]{0,2})?([\,](?!$\Z)|(?![0-9])))+)$' '' '' '' 2 )
-    [[ "$stands" == '' ]] && return 1
-    set_standnum "$stands"
+    while true; do
+        stands=$( read_question_select 'Номера стендов (прим: 1,2,5-10)' '^(([1-9][0-9]{0,2}((\-|\.\.)[1-9][0-9]{0,2})?([\,](?!$\Z)|(?![0-9])))+)$' '' '' '' 2 )
+        [[ "$stands" == '' ]] && return 1
+        set_standnum "$stands" && break
+        echo_warn 'Ошибка: некорректный диапазон номеров стендов'
+    done
     echo_tty $'\n'"${c_ok}Подождите, идет проверка конфигурации...${c_null}"$'\n'
 }
 
@@ -1702,10 +1707,10 @@ function get_dict_value() {
 }
 
 function run_cmd() {
-    local to_exit=true
+    local to_exit=true out
 
     [[ "$1" == '/noexit' ]] && to_exit=false && shift
-    [[ "$1" == /out=* ]] && local out=${1#*=} && shift
+    [[ "$1" == /out=* ]] && out=${1#*=} && shift
     [[ "$1" == '' ]] && { echo_err 'Ошибка run_cmd: нет команды'; exit_clear; }
 
     if $opt_dry_run; then
@@ -1728,18 +1733,19 @@ function run_cmd() {
             [[ $out ]] && printf -v $out '%s' "$return_cmd"
         fi
         if [[ $code == 0 ]]; then
-            $opt_verbose && {
+            if $opt_verbose; then
                 if [[ "$1" == pve_api_request || "$1" == pve_tapi_request ]]; then
                     shift 2; echo_tty "[${c_ok}Выполнен запрос API${c_null}] ${c_info}$( echo "${@@Q}" | sed -r "s/'([^[:space:]]+)'/\1/g" )"
                 else
                     echo_tty "[${c_ok}Выполнена команда${c_null}] ${c_info}$( echo "${@@Q}" | sed -r -e "s/'\\\''/\\\'/g" -e "s/'([^[:space:]\\]*[^[:space:]])'( |$)/\1\2/g" )${c_null}"
                 fi
-            }
+            fi
+            return 0
         else
-            ! $to_exit && {
+            if ! $to_exit; then
                 echo_tty "[${c_warning}Выполнена команда${c_null}] ${c_info}$( echo "${@@Q}" | sed -r -e "s/'\\\''/\\\'/g" -e "s/'([^[:space:]\\]*[^[:space:]])'( |$)/\1\2/g" )${c_null}"
                 return $code
-            }
+            fi
             [[ "$1" == pve_api_request || "$1" == pve_tapi_request ]] && echo_tty "[${c_err}Запрос API${c_null}] $3 ${config_base[pve_api_url]}${*:4}"
             echo_err "Ошибка выполнения команды: $( echo "${@@Q}" | sed -r -e "s/'\\\''/\\\'/g" -e "s/'([^[:space:]\\]*[^[:space:]])'( |$)/\1\2/g" )"
             echo_tty "${c_red}Error output: ${c_warning}$return_cmd${c_null}"
