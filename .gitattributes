@@ -1,0 +1,3 @@
+# Нормализация окончаний строк: скрипты и конфиги — LF (иначе на Linux «required file not found»)
+*.sh text eol=lf
+autocheck/*.conf text eol=lf

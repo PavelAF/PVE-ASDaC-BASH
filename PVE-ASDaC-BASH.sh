@@ -576,6 +576,8 @@ function configure_api_token() {
 
         [[ ${#data} -lt 30 || ${#var_pve_api_curl} -lt 30 ]] && { echo_err "Ошибка: непредвиденные значения API token (${c_val}${var_pve_api_curl}${c_err}) и/или token ID (${c_val}${data}${c_err})"; configure_api_token clear force; exit_clear; }
 
+        var_pve_api_full_tokenid="$data"
+        var_pve_api_secret="$var_pve_api_curl"
         var_pve_api_curl=( curl -ksG  -x '' -w '\n%{http_code}' --connect-timeout 5 -H "Authorization: PVEAPIToken=$data=$var_pve_api_curl" )
     }
     pve_api_request data_pve_version GET /version
@@ -3248,15 +3250,16 @@ function exec_agent_cmd() {
     return 1
 }
 
-_ac_serial_helper_path='/tmp/ac_serial_helper.py'
+_ac_helper_path='/tmp/ac_helper.py'
 
-function _ac_extract_serial_helper() {
-    cat > "$_ac_serial_helper_path" <<'AC_SERIAL_PYTHON_EOF'
+function _ac_extract_ac_helper() {
+    cat > "$_ac_helper_path" <<'AC_HELPER_PYTHON_EOF'
 #!/usr/bin/env python3
-import asyncio, json, re, sys, os
+import asyncio, base64, json, re, sys, os, subprocess, time
 
 VERBOSE = False
 ANSI_RE = re.compile(r'\x1b\[[0-9;]*[A-Za-z]|\x1b\[\?[0-9;]*[A-Za-z]|\x08.')
+AC_SEP_RE = re.compile(r'===AC_SEP_(\d+)===')
 
 def log(msg):
     if VERBOSE:
@@ -3309,17 +3312,17 @@ async def read_until(reader, pattern, timeout):
     text = buf.replace(b'\r', b'').decode('utf-8', errors='replace')
     return strip_ansi(text), False
 
-async def check_vm(vm):
-    name = vm['name']
-    sock = vm['socket']
-    cmds = vm['commands']
-    prompt = vm.get('prompt', r'[A-Za-z0-9._-]+[#>]')
-    tout = vm.get('timeout', 5)
-    login = vm.get('login', '')
-    passwd = vm.get('password', '')
-    enable = vm.get('enable', False)
-    enable_password = vm.get('enable_password', '')
-    setup_cmds = vm.get('setup_cmds', [])
+async def check_serial_vm(task):
+    name = task['name']
+    sock = task['socket']
+    cmds = task['commands']
+    prompt = task.get('prompt', r'[A-Za-z0-9._-]+[#>]')
+    tout = task.get('timeout', 5)
+    login = task.get('login', '')
+    passwd = task.get('password', '')
+    enable = task.get('enable', False)
+    enable_password = task.get('enable_password', '')
+    setup_cmds = task.get('setup_cmds', [])
     auth_prompt = prompt if '[#>]' in prompt or '>' in prompt else prompt.rstrip('#') + '[#>]'
 
     if not os.path.exists(sock):
@@ -3416,17 +3419,188 @@ async def check_vm(vm):
             pass
     return name, results, None
 
+def _decode_agent_output(s):
+    if not s or not isinstance(s, str):
+        return s or ''
+    s = s.strip()
+    if not s:
+        return ''
+    if not re.match(r'^[A-Za-z0-9+/=\s]+$', s):
+        return s
+    try:
+        b = base64.b64decode(s)
+    except Exception:
+        return s
+    for enc in ('utf-8', 'cp1251', 'latin-1'):
+        try:
+            return b.decode(enc)
+        except (UnicodeDecodeError, LookupError):
+            pass
+    return b.decode('utf-8', errors='replace')
+
+def _agent_vm_sync(task):
+    name = task['name']
+    node = task['node']
+    vmid = task['vmid']
+    script_b64 = task['script_b64']
+    timeout_sec = task.get('timeout_sec', 60)
+    check_ids = task.get('check_ids', [])
+    script_path = f'/tmp/ac_check_{vmid}.sh'
+    run_path = f'{script_path}.run'
+    run_cmd = f"base64 -d '{script_path}' > '{run_path}' && bash '{run_path}'; rm -f '{script_path}' '{run_path}'"
+
+    log(f"[agent] {name}: ping VMID={vmid}...")
+    for attempt in range(1, 11):
+        r = subprocess.run(
+            ['pvesh', 'create', f'/nodes/{node}/qemu/{vmid}/agent/ping', '--output-format', 'json'],
+            capture_output=True, timeout=10
+        )
+        if r.returncode == 0:
+            log(f"[agent] {name}: ping OK (попытка {attempt})")
+            break
+        err = (r.stderr or r.stdout or b'')[:200].decode('utf-8', errors='replace')
+        log(f"[agent] {name}: ping попытка {attempt}/10: returncode={r.returncode} err={err!r}")
+        if attempt == 10:
+            return name, None, "Guest Agent недоступен (не ответил на ping за 30с)"
+        time.sleep(3)
+
+    log(f"[agent] {name}: file-write {script_path} size={len(script_b64)}")
+    for attempt in range(1, 4):
+        r = subprocess.run(
+            ['pvesh', 'create', f'/nodes/{node}/qemu/{vmid}/agent/file-write', '--file', script_path, '--content', script_b64],
+            capture_output=True, timeout=30
+        )
+        if r.returncode == 0:
+            log(f"[agent] {name}: file-write OK")
+            break
+        err = (r.stderr or r.stdout or b'')[:200].decode('utf-8', errors='replace')
+        log(f"[agent] {name}: file-write попытка {attempt}/3: returncode={r.returncode} err={err!r}")
+        if attempt == 3:
+            return name, None, "Не удалось записать скрипт проверки на ВМ"
+        time.sleep(2)
+
+    log(f"[agent] {name}: exec (timeout {timeout_sec}s)...")
+    pid = None
+    for attempt in range(1, 6):
+        r = subprocess.run(
+            ['pvesh', 'create', f'/nodes/{node}/qemu/{vmid}/agent/exec', '--command', 'bash', '--command', '-c', '--command', run_cmd, '--output-format', 'json'],
+            capture_output=True, timeout=15
+        )
+        out_raw = (r.stdout or b'') + b'\n' + (r.stderr or b'')
+        out = out_raw.decode('utf-8', errors='replace')
+        if r.returncode != 0:
+            log(f"[agent] {name}: exec попытка {attempt}/5: returncode={r.returncode} out={out[:250]!r}")
+            time.sleep(2 * attempt)
+            continue
+        try:
+            j = json.loads((r.stdout or b'').decode('utf-8', errors='replace'))
+            pid = str(j.get('pid', ''))
+        except Exception:
+            pid = None
+        if not pid or not pid.isdigit():
+            pid_m = re.search(r'"pid"\s*:\s*(\d+)', out)
+            if not pid_m:
+                pid_m = re.search(r'pid\s*[\|\u2502]\s*(\d+)', out)
+            if pid_m:
+                pid = pid_m.group(1)
+        if pid and pid.isdigit():
+            log(f"[agent] {name}: exec PID={pid}")
+            break
+        log(f"[agent] {name}: exec ответ без pid: {out[:300]!r}")
+        time.sleep(2 * attempt)
+    else:
+        return name, None, "[Ошибка] Guest Agent недоступен"
+
+    for poll_num in range(timeout_sec):
+        r = subprocess.run(
+            ['pvesh', 'get', f'/nodes/{node}/qemu/{vmid}/agent/exec-status', '--pid', pid, '--output-format', 'json'],
+            capture_output=True, timeout=10
+        )
+        out_raw = (r.stdout or b'') + b'\n' + (r.stderr or b'')
+        out_str = out_raw.decode('utf-8', errors='replace')
+        if r.returncode != 0:
+            time.sleep(1)
+            continue
+        try:
+            data = json.loads((r.stdout or b'').decode('utf-8', errors='replace'))
+        except Exception:
+            try:
+                data = json.loads(out_str)
+            except Exception as e:
+                log(f"[agent] {name}: exec-status poll {poll_num}: json error {e}")
+                time.sleep(1)
+                continue
+        if data.get('exited') not in (1, True):
+            time.sleep(1)
+            continue
+        log(f"[agent] {name}: exec завершён за {poll_num}с")
+        out_data = data.get('out-data')
+        err_data = data.get('err-data')
+        if out_data is None:
+            out_data = ''
+        if err_data is None:
+            err_data = ''
+        if VERBOSE:
+            _ro = repr(out_data)[:600] if out_data else '(пусто)'
+            _re = repr(err_data)[:600] if err_data else '(пусто)'
+            log(f"[agent] {name}: сырые out-data: {_ro}")
+            log(f"[agent] {name}: сырые err-data: {_re}")
+        if isinstance(out_data, str):
+            out_data = _decode_agent_output(out_data)
+        if isinstance(err_data, str):
+            err_data = _decode_agent_output(err_data)
+        raw = out_data or ''
+        if err_data:
+            raw = (raw + '\n' + err_data) if raw else err_data
+        if VERBOSE and raw:
+            _preview = raw if len(raw) <= 4096 else raw[:4096] + '\n... (обрезано)'
+            log(f"[agent] {name}: вывод скрипта на ВМ:\n{_preview}")
+        results = {}
+        cur_id = None
+        cur_lines = []
+        for line in (raw.split('\n') if isinstance(raw, str) else []):
+            m = AC_SEP_RE.match(line.strip())
+            if m:
+                if cur_id is not None:
+                    results[str(cur_id)] = '\n'.join(cur_lines).strip()
+                cur_id = int(m.group(1))
+                cur_lines = []
+            elif cur_id is not None:
+                cur_lines.append(line)
+        if cur_id is not None:
+            results[str(cur_id)] = '\n'.join(cur_lines).strip()
+        for cid in check_ids:
+            if str(cid) not in results:
+                results[str(cid)] = ''
+        log(f"[agent] {name}: готово ({len(results)} проверок)")
+        return name, results, None
+
+    log(f"[agent] {name}: таймаут {timeout_sec}с")
+    return name, None, f"Таймаут выполнения команды ({timeout_sec}с)"
+
+async def check_agent_vm(task, semaphore):
+    async with semaphore:
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, _agent_vm_sync, task)
+
 async def run():
     global VERBOSE
     cfg = json.loads(sys.stdin.read())
     VERBOSE = cfg.get('verbose', False)
-    vms = cfg.get('vms', [])
-    if not vms:
+    tasks = cfg.get('tasks', [])
+    if not tasks:
         return
-    done = await asyncio.gather(*[check_vm(vm) for vm in vms], return_exceptions=True)
+    agent_semaphore = asyncio.Semaphore(5)
+
+    async def run_one(t):
+        if t.get('type') == 'agent':
+            return await check_agent_vm(t, agent_semaphore)
+        return await check_serial_vm(t)
+
+    done = await asyncio.gather(*[run_one(t) for t in tasks], return_exceptions=True)
     for item in done:
         if isinstance(item, Exception):
-            print(f'===AC_VM:???===', flush=True)
+            print('===AC_VM:???===', flush=True)
             print('===AC_ERR===', flush=True)
             print(str(item), flush=True)
             continue
@@ -3436,14 +3610,14 @@ async def run():
             print('===AC_ERR===', flush=True)
             print(error, flush=True)
         elif data:
-            for cn in sorted(data.keys(), key=int):
+            for cn in sorted(data.keys(), key=lambda x: int(x) if str(x).isdigit() else 0):
                 print(f'===AC_CHK:{cn}===', flush=True)
                 if data[cn]:
                     print(data[cn], flush=True)
 
 if __name__ == '__main__':
     asyncio.run(run())
-AC_SERIAL_PYTHON_EOF
+AC_HELPER_PYTHON_EOF
 }
 
 _ac_json_escape() {
@@ -3514,158 +3688,50 @@ _ac_collect_serial_cmds() {
     done
 }
 
-_ac_exec_agent_batch() {
-    local _eab_pool=$1
-    local _ac_vm_idx=0
-    local _ac_script_path='/tmp/ac_check.sh'
+_ac_exec_batch() {
+    local _eb_pool=$1
+    [[ ${#_ac_batch_script[@]} -eq 0 && ${#_ac_serial_cmds[@]} -eq 0 ]] && return 0
+
     echo_tty
-    local _ac_vm
-    for _ac_vm in "${!_ac_batch_script[@]}"; do
-        local _ac_vid="${_ac_map_id[$_ac_vm]}"
-        local _ac_vnode="${_ac_map_node[$_ac_vm]}"
-        local _ac_chk_count
-        _ac_chk_count=$( echo ${_ac_batch_checks[$_ac_vm]} | wc -w )
-        local _ac_batch_timeout=$(( _ac_chk_count * 5 + 30 ))
+    local _tasks_json='' _has_tasks=false
 
-        (( _ac_vm_idx++ > 0 )) && sleep 3
-
-        local _ac_cur_status
-        _ac_cur_status=$( pvesh get "/nodes/$_ac_vnode/qemu/$_ac_vid/status/current" --output-format json 2>/dev/null | grep -Po '"status"\s*:\s*"\K[^"]+' ) || _ac_cur_status=''
-        if [[ "$_ac_cur_status" != 'running' ]]; then
-            echo_tty "  ${c_info}▸ [$_eab_pool] [${_ac_vm_idx}/${#_ac_batch_script[@]}] ${c_ok}$_ac_vm${c_info} (VMID $_ac_vid)${c_null}"
-            echo_tty "    ${c_warn}ВМ не запущена ($_ac_cur_status), пропуск${c_null}"
-            local _cn
-            for _cn in ${_ac_batch_checks[$_ac_vm]}; do
-                _ac_results["$_ac_vm,$_cn"]="[Ошибка] ВМ не запущена ($_ac_cur_status)"
-            done
-            continue
-        fi
-        _ac_map_status[$_ac_vm]='running'
-
-        echo_tty "  ${c_info}▸ [$_eab_pool] [${_ac_vm_idx}/${#_ac_batch_script[@]}] ${c_ok}$_ac_vm${c_info} (VMID $_ac_vid, $_ac_chk_count проверок)${c_null}"
-
-        if ! exec_agent_ping "$_ac_vnode" "$_ac_vid" 10; then
-            echo_tty "    ${c_err}✗ агент недоступен (нет ответа на ping)${c_null}"
-            local _cn
-            for _cn in ${_ac_batch_checks[$_ac_vm]}; do
-                _ac_results["$_ac_vm,$_cn"]="[Ошибка] Guest Agent недоступен (не ответил на ping за 30с)"
-            done
-            continue
-        fi
-
-        local _ac_b64
-        _ac_b64=$( printf '#!/bin/bash\n%s\n' "${_ac_batch_script[$_ac_vm]}" | base64 -w0 )
-        echo_verbose "Запись скрипта на $_ac_vm (VMID $_ac_vid), base64 size=${#_ac_b64}"
-
-        if ! exec_agent_file_write "$_ac_vnode" "$_ac_vid" "$_ac_script_path" "$_ac_b64"; then
-            echo_tty "    ${c_err}✗ не удалось записать скрипт на ВМ${c_null}"
-            local _cn
-            for _cn in ${_ac_batch_checks[$_ac_vm]}; do
-                _ac_results["$_ac_vm,$_cn"]="[Ошибка] Не удалось записать скрипт проверки на ВМ"
-            done
-            continue
-        fi
-        echo_tty "    ${c_ok}✓${c_null} скрипт записан, выполнение проверок..."
-
-        local _ac_raw=''
-        exec_agent_cmd _ac_raw "$_ac_vnode" "$_ac_vid" \
-            "base64 -d '$_ac_script_path' > '${_ac_script_path}.run' && bash '${_ac_script_path}.run'; rm -f '$_ac_script_path' '${_ac_script_path}.run'" \
-            "$_ac_batch_timeout"
-
-        if [[ $? -eq 0 ]]; then
-            local _ac_cur_check='' _ac_cur_out='' _line
-            while IFS= read -r _line; do
-                if [[ "$_line" =~ ^===AC_SEP_([0-9]+)===$  ]]; then
-                    [[ "$_ac_cur_check" != '' ]] && _ac_results["$_ac_vm,$_ac_cur_check"]="$_ac_cur_out"
-                    _ac_cur_check="${BASH_REMATCH[1]}"
-                    _ac_cur_out=''
-                else
-                    [[ "$_ac_cur_out" != '' ]] && _ac_cur_out+=$'\n'
-                    _ac_cur_out+="$_line"
-                fi
-            done <<< "$_ac_raw"
-            [[ "$_ac_cur_check" != '' ]] && _ac_results["$_ac_vm,$_ac_cur_check"]="$_ac_cur_out"
-            echo_tty "    ${c_ok}✓${c_null} готово"
-        else
-            echo_tty "    ${c_err}✗ ошибка${c_null}"
-            local _cn
-            for _cn in ${_ac_batch_checks[$_ac_vm]}; do
-                _ac_results["$_ac_vm,$_cn"]="$_ac_raw"
-            done
-        fi
-    done
-}
-
-_ac_exec_serial_batch() {
-    local _esb_pool=$1
-    local _serial_json='{"verbose":'
-    $opt_verbose && _serial_json+='true' || _serial_json+='false'
-    _serial_json+=',"vms":['
-    local _serial_first=true
-    local _ac_vm
+    local _ac_vm _ac_vid _ac_vnode _ac_cur_status _chk_count _san _sl _sp _se _sep _ss _cmds_json _cn _cmd _sc _setup_arr
+    local IFS
 
     for _ac_vm in "${!_ac_serial_cmds[@]}"; do
-        local _ac_vid="${_ac_map_id[$_ac_vm]}"
-        local _ac_vnode="${_ac_map_node[$_ac_vm]}"
-
-        local _ac_cur_status
+        _ac_vid="${_ac_map_id[$_ac_vm]}"
+        _ac_vnode="${_ac_map_node[$_ac_vm]}"
         _ac_cur_status=$( pvesh get "/nodes/$_ac_vnode/qemu/$_ac_vid/status/current" --output-format json 2>/dev/null | grep -Po '"status"\s*:\s*"\K[^"]+' ) || _ac_cur_status=''
         if [[ "$_ac_cur_status" != 'running' ]]; then
-            echo_tty "  ${c_info}▸ [$_esb_pool] ${c_ok}$_ac_vm${c_info} (VMID $_ac_vid, serial)${c_null}"
+            echo_tty "  ${c_info}▸ [$_eb_pool] ${c_ok}$_ac_vm${c_info} (VMID $_ac_vid, serial)${c_null}"
             echo_tty "    ${c_warn}ВМ не запущена ($_ac_cur_status), пропуск${c_null}"
-            local _cn
-            for _cn in ${_ac_serial_checks[$_ac_vm]}; do
-                _ac_results["$_ac_vm,$_cn"]="[Ошибка] ВМ не запущена ($_ac_cur_status)"
-            done
+            for _cn in ${_ac_serial_checks[$_ac_vm]}; do _ac_results["$_ac_vm,$_cn"]="[Ошибка] ВМ не запущена ($_ac_cur_status)"; done
             continue
         fi
         _ac_map_status[$_ac_vm]='running'
-
-        local _chk_count
-        _chk_count=$(echo ${_ac_serial_checks[$_ac_vm]} | wc -w)
-        echo_tty "  ${c_info}▸ [$_esb_pool] ${c_ok}$_ac_vm${c_info} (VMID $_ac_vid, serial, $_chk_count проверок)${c_null}"
+        _chk_count=$( echo ${_ac_serial_checks[$_ac_vm]} | wc -w )
+        echo_tty "  ${c_info}▸ [$_eb_pool] ${c_ok}$_ac_vm${c_info} (VMID $_ac_vid, serial, $_chk_count проверок)${c_null}"
 
         local _tp_pids
         _tp_pids=$( pgrep -f "termproxy.*terminal ${_ac_vid}( |$)" 2>/dev/null ) || true
-        if [[ -n "$_tp_pids" ]]; then
-            echo_verbose "serial: отключение активных сессий консоли для VMID $_ac_vid (PIDs: $_tp_pids)"
-            echo "$_tp_pids" | xargs kill 2>/dev/null || true
-            sleep 0.5
-        fi
+        [[ -n "$_tp_pids" ]] && { echo_verbose "serial: отключение активных сессий консоли для VMID $_ac_vid (PIDs: $_tp_pids)"; echo "$_tp_pids" | xargs kill 2>/dev/null || true; sleep 0.5; }
 
-        local _san="${_ac_vm//-/_}"
-        local _sl_var="${_san}_serial_login"
-        local _sp_var="${_san}_serial_password"
-        local _sl="${!_sl_var:-$exec_serial_login}"
-        local _sp="${!_sp_var:-$exec_serial_password}"
-
-        local _cmds_json='' _cn _cmd
+        _san="${_ac_vm//-/_}"
+        _sl_var="${_san}_serial_login"; _sl="${!_sl_var:-$exec_serial_login}"
+        _sp_var="${_san}_serial_password"; _sp="${!_sp_var:-$exec_serial_password}"
+        _cmds_json=''
         while IFS='|' read -r _cn _cmd; do
             [[ -z "$_cn" ]] && continue
             [[ -n "$_cmds_json" ]] && _cmds_json+=','
             _cmds_json+="[$_cn,\"$( _ac_json_escape "$_cmd" )\"]"
         done <<< "${_ac_serial_cmds[$_ac_vm]}"
 
-        $_serial_first || _serial_json+=','
-        _serial_first=false
-        _serial_json+="{\"name\":\"$( _ac_json_escape "$_ac_vm" )\","
-        _serial_json+="\"socket\":\"/var/run/qemu-server/${_ac_vid}.serial0\","
-        _serial_json+="\"commands\":[$_cmds_json],"
-        _serial_json+="\"prompt\":\"$( _ac_json_escape "$exec_serial_prompt" )\","
-        _serial_json+="\"timeout\":$exec_serial_timeout,"
-        _serial_json+="\"login\":\"$( _ac_json_escape "$_sl" )\","
-        _serial_json+="\"password\":\"$( _ac_json_escape "$_sp" )\","
-        local _se_var="${_san}_serial_enable"
-        local _se="${!_se_var:-$exec_serial_enable}"
-        local _sep_var="${_san}_serial_enable_password"
-        local _sep="${!_sep_var:-$exec_serial_enable_password}"
-        local _ss_var="${_san}_serial_setup"
-        local _ss="${!_ss_var:-$exec_serial_setup}"
-        $_se && _serial_json+="\"enable\":true," || _serial_json+="\"enable\":false,"
-        _serial_json+="\"enable_password\":\"$( _ac_json_escape "$_sep" )\","
-        local _setup_arr=''
+        _se_var="${_san}_serial_enable"; _se="${!_se_var:-$exec_serial_enable}"
+        _sep_var="${_san}_serial_enable_password"; _sep="${!_sep_var:-$exec_serial_enable_password}"
+        _ss_var="${_san}_serial_setup"; _ss="${!_ss_var:-$exec_serial_setup}"
+        _setup_arr=''
         if [[ -n "$_ss" ]]; then
-            local IFS=';' _sc
+            IFS=';'
             for _sc in $_ss; do
                 _sc=$( echo "$_sc" | xargs )
                 [[ -z "$_sc" ]] && continue
@@ -3674,48 +3740,93 @@ _ac_exec_serial_batch() {
             done
             unset IFS
         fi
-        _serial_json+="\"setup_cmds\":[$_setup_arr]}"
+
+        $_has_tasks && _tasks_json+=','
+        _has_tasks=true
+        local _se_json='false'; [[ "$_se" == true || "$_se" == 1 ]] && _se_json='true'
+        _tasks_json+="{\"type\":\"serial\",\"name\":\"$( _ac_json_escape "$_ac_vm" )\",\"socket\":\"/var/run/qemu-server/${_ac_vid}.serial0\",\"commands\":[$_cmds_json],\"prompt\":\"$( _ac_json_escape "$exec_serial_prompt" )\",\"timeout\":$exec_serial_timeout,\"login\":\"$( _ac_json_escape "$_sl" )\",\"password\":\"$( _ac_json_escape "$_sp" )\",\"enable\":$_se_json,\"enable_password\":\"$( _ac_json_escape "$_sep" )\",\"setup_cmds\":[$_setup_arr]}"
     done
-    _serial_json+=']}'
 
-    if ! $_serial_first; then
-        local _serial_output _serial_stderr _line
-        _serial_stderr=$( mktemp /tmp/ac_serial_err_XXXXXX.txt )
-        _serial_output=$( echo "$_serial_json" | python3 "$_ac_serial_helper_path" 2>"$_serial_stderr" ) || true
-        $opt_verbose && [[ -s "$_serial_stderr" ]] && while IFS= read -r _line; do echo_verbose "$_line"; done < "$_serial_stderr"
-        rm -f "$_serial_stderr"
+    for _ac_vm in "${!_ac_batch_script[@]}"; do
+        _ac_vid="${_ac_map_id[$_ac_vm]}"
+        _ac_vnode="${_ac_map_node[$_ac_vm]}"
+        _ac_cur_status=$( pvesh get "/nodes/$_ac_vnode/qemu/$_ac_vid/status/current" --output-format json 2>/dev/null | grep -Po '"status"\s*:\s*"\K[^"]+' ) || _ac_cur_status=''
+        if [[ "$_ac_cur_status" != 'running' ]]; then
+            echo_tty "  ${c_info}▸ [$_eb_pool] ${c_ok}$_ac_vm${c_info} (VMID $_ac_vid)${c_null}"
+            echo_tty "    ${c_warn}ВМ не запущена ($_ac_cur_status), пропуск${c_null}"
+            for _cn in ${_ac_batch_checks[$_ac_vm]}; do _ac_results["$_ac_vm,$_cn"]="[Ошибка] ВМ не запущена ($_ac_cur_status)"; done
+            continue
+        fi
+        _ac_map_status[$_ac_vm]='running'
+        _chk_count=$( echo ${_ac_batch_checks[$_ac_vm]} | wc -w )
+        echo_tty "  ${c_info}▸ [$_eb_pool] ${c_ok}$_ac_vm${c_info} (VMID $_ac_vid, $_chk_count проверок)${c_null}"
 
-        local _cur_vm='' _cur_cn='' _cur_out=''
-        while IFS= read -r _line; do
-            if [[ "$_line" =~ ^===AC_VM:(.+)===$  ]]; then
-                [[ "$_cur_vm" != '' && "$_cur_cn" != '' ]] && _ac_results["$_cur_vm,$_cur_cn"]="$_cur_out"
-                _cur_vm="${BASH_REMATCH[1]}" _cur_cn='' _cur_out=''
-            elif [[ "$_line" =~ ^===AC_CHK:([0-9]+)===$  ]]; then
-                [[ "$_cur_vm" != '' && "$_cur_cn" != '' ]] && _ac_results["$_cur_vm,$_cur_cn"]="$_cur_out"
-                _cur_cn="${BASH_REMATCH[1]}" _cur_out=''
-            elif [[ "$_line" == '===AC_ERR===' ]]; then
-                [[ "$_cur_vm" != '' && "$_cur_cn" != '' ]] && _ac_results["$_cur_vm,$_cur_cn"]="$_cur_out"
-                _cur_cn='error' _cur_out=''
-            else
-                [[ "$_cur_out" != '' ]] && _cur_out+=$'\n'
-                _cur_out+="$_line"
-            fi
-        done <<< "$_serial_output"
-        [[ "$_cur_vm" != '' && "$_cur_cn" != '' ]] && _ac_results["$_cur_vm,$_cur_cn"]="$_cur_out"
-
-        local _ac_vm
-        for _ac_vm in "${!_ac_serial_checks[@]}"; do
-            if [[ -v "_ac_results[$_ac_vm,error]" ]]; then
-                local _err="${_ac_results[$_ac_vm,error]}"
-                local _cn
-                for _cn in ${_ac_serial_checks[$_ac_vm]}; do
-                    [[ ! -v "_ac_results[$_ac_vm,$_cn]" ]] && _ac_results["$_ac_vm,$_cn"]="[Ошибка] $_err"
-                done
-                unset "_ac_results[$_ac_vm,error]"
-            fi
+        local _script_b64 _check_ids_arr
+        _script_b64=$( printf '#!/bin/bash\n%s\n' "${_ac_batch_script[$_ac_vm]}" | base64 -w0 )
+        _check_ids_arr=''
+        for _cn in ${_ac_batch_checks[$_ac_vm]}; do
+            [[ -n "$_check_ids_arr" ]] && _check_ids_arr+=','
+            _check_ids_arr+="$_cn"
         done
-        echo_tty "    ${c_ok}✓${c_null} serial проверки завершены"
+        local _timeout_sec=$(( _chk_count * 5 + 30 ))
+
+        $_has_tasks && _tasks_json+=','
+        _has_tasks=true
+        _tasks_json+="{\"type\":\"agent\",\"name\":\"$( _ac_json_escape "$_ac_vm" )\",\"node\":\"$( _ac_json_escape "$_ac_vnode" )\",\"vmid\":\"$_ac_vid\",\"script_b64\":\"$( _ac_json_escape "$_script_b64" )\",\"timeout_sec\":$_timeout_sec,\"check_ids\":[$_check_ids_arr]}"
+    done
+
+    if ! $_has_tasks; then
+        echo_tty "    ${c_info}Нет запущенных ВМ для проверки${c_null}"
+        return 0
     fi
+
+    local _helper_json _helper_out _helper_err _line _cur_vm _cur_cn _cur_out
+    _helper_json='{"verbose":'
+    $opt_verbose && _helper_json+='true' || _helper_json+='false'
+    _helper_json+=",\"tasks\":[$_tasks_json]}"
+    echo_verbose "Запуск ac_helper ($_ac_helper_path), verbose=$opt_verbose"
+    _helper_err=$( mktemp /tmp/ac_helper_err_XXXXXX.txt )
+    _helper_out=$( echo "$_helper_json" | python3 "$_ac_helper_path" 2>"$_helper_err" ) || true
+    $opt_verbose && [[ -s "$_helper_err" ]] && while IFS= read -r _line; do echo_verbose "$_line"; done < "$_helper_err"
+    rm -f "$_helper_err"
+
+    _cur_vm='' _cur_cn='' _cur_out=''
+    while IFS= read -r _line; do
+        if [[ "$_line" =~ ^===AC_VM:(.+)===$  ]]; then
+            [[ "$_cur_vm" != '' && "$_cur_cn" != '' ]] && _ac_results["$_cur_vm,$_cur_cn"]="$_cur_out"
+            _cur_vm="${BASH_REMATCH[1]}" _cur_cn='' _cur_out=''
+        elif [[ "$_line" =~ ^===AC_CHK:([0-9]+)===$  ]]; then
+            [[ "$_cur_vm" != '' && "$_cur_cn" != '' ]] && _ac_results["$_cur_vm,$_cur_cn"]="$_cur_out"
+            _cur_cn="${BASH_REMATCH[1]}" _cur_out=''
+        elif [[ "$_line" == '===AC_ERR===' ]]; then
+            [[ "$_cur_vm" != '' && "$_cur_cn" != '' ]] && _ac_results["$_cur_vm,$_cur_cn"]="$_cur_out"
+            _cur_cn='error' _cur_out=''
+        else
+            [[ "$_cur_out" != '' ]] && _cur_out+=$'\n'
+            _cur_out+="$_line"
+        fi
+    done <<< "$_helper_out"
+    [[ "$_cur_vm" != '' && "$_cur_cn" != '' ]] && _ac_results["$_cur_vm,$_cur_cn"]="$_cur_out"
+
+    for _ac_vm in "${!_ac_serial_checks[@]}"; do
+        if [[ -v "_ac_results[$_ac_vm,error]" ]]; then
+            local _err="${_ac_results[$_ac_vm,error]}"
+            for _cn in ${_ac_serial_checks[$_ac_vm]}; do
+                [[ ! -v "_ac_results[$_ac_vm,$_cn]" ]] && _ac_results["$_ac_vm,$_cn"]="[Ошибка] $_err"
+            done
+            unset "_ac_results[$_ac_vm,error]"
+        fi
+    done
+    for _ac_vm in "${!_ac_batch_checks[@]}"; do
+        if [[ -v "_ac_results[$_ac_vm,error]" ]]; then
+            local _err="${_ac_results[$_ac_vm,error]}"
+            for _cn in ${_ac_batch_checks[$_ac_vm]}; do
+                [[ ! -v "_ac_results[$_ac_vm,$_cn]" ]] && _ac_results["$_ac_vm,$_cn"]="[Ошибка] $_err"
+            done
+            unset "_ac_results[$_ac_vm,error]"
+        fi
+    done
+    echo_tty "    ${c_ok}✓${c_null} проверки завершены"
 }
 
 _ac_format_results() {
@@ -3775,6 +3886,7 @@ _ac_format_results() {
             fi
 
             local _chk_cmd_var="check_${_ac_cn}_cmd_${_ac_etype}"
+            _chk_cmd_var="${_chk_cmd_var//[$'\r \t']/}"
             local _ac_cmd="${!_chk_cmd_var:-}"
             if [[ "$_ac_cmd" == '' ]]; then
                 [[ "$_fr_mode" == 'tty' ]] && echo_warn "  [$_ac_vm] Команда для $_ac_etype не задана"
@@ -3822,9 +3934,7 @@ _ac_run_stand() {
     _ac_collect_serial_cmds
 
     local -A _ac_results
-    [[ ${#_ac_batch_script[@]} -gt 0 ]] && _ac_exec_agent_batch "$pool_name"
-
-    [[ ${#_ac_serial_cmds[@]} -gt 0 ]] && _ac_exec_serial_batch "$pool_name"
+    [[ ${#_ac_batch_script[@]} -gt 0 || ${#_ac_serial_cmds[@]} -gt 0 ]] && _ac_exec_batch "$pool_name"
 
     _ac_format_results "$pool_name" "$_ars_mode" "$_ars_fbuf"
 }
@@ -3879,8 +3989,8 @@ function autocheck_stand() {
     local -A _ac_vm_exec
     local _vm_n _vm_t
     while IFS='=' read -r _vm_n _vm_t; do
-        _vm_n=$( echo "$_vm_n" | xargs )
-        _vm_t=$( echo "$_vm_t" | xargs )
+        _vm_n=$( echo "$_vm_n" | tr -d '\r' | xargs )
+        _vm_t=$( echo "$_vm_t" | tr -d '\r' | xargs )
         [[ "$_vm_n" != '' && "$_vm_t" != '' ]] && _ac_vm_exec[$_vm_n]=$_vm_t
     done <<< "$autocheck_vms"
 
@@ -3894,14 +4004,14 @@ function autocheck_stand() {
     done
     [[ $_ac_max_check == 0 ]] && { echo_warn "В конфигурации не найдено проверок (check_N_name)"; return 0; }
 
-    # ====== Проверка наличия serial-ВМ и подготовка Python-хелпера ======
-    local _ac_has_serial=false
+    # ====== Проверка наличия serial/agent ВМ и подготовка Python-хелпера ======
+    local _ac_need_helper=false
     for _vm_t in "${_ac_vm_exec[@]}"; do
-        [[ "$_vm_t" == 'exec_serial' ]] && { _ac_has_serial=true; break; }
+        [[ "$_vm_t" == 'exec_serial' || "$_vm_t" == 'exec_agent' ]] && { _ac_need_helper=true; break; }
     done
-    if $_ac_has_serial; then
-        command -v python3 &>/dev/null || { echo_err "python3 не найден (требуется для exec_serial проверок)"; return 1; }
-        _ac_extract_serial_helper
+    if $_ac_need_helper; then
+        command -v python3 &>/dev/null || { echo_err "python3 не найден (требуется для exec_serial/exec_agent проверок)"; return 1; }
+        _ac_extract_ac_helper
     fi
 
     # ====== Обнаружение стендов ======
