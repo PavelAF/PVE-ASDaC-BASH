@@ -406,6 +406,7 @@ function exit_clear() {
     echo $'\e[m' > /dev/tty
     [[ -t 1 ]] && printf '\e[m'
     [[ -t 2 ]] && printf '\e[m' >&2
+    trap - EXIT
     exit ${1-1}
 }
 trap exit_clear EXIT
@@ -1002,7 +1003,7 @@ function get_file() {
 }
 
 function terraform_config_vars() {
-   # for
+
     local var='' vars='' type='' descr_var='' conf nl=$'\n' vars_count=0 var_value='' \
         conf_nowarnings=false conf_oldsyntax=false free_vmid=0 conf_vars_list=''
     
@@ -1131,7 +1132,10 @@ function set_standnum() {
         echo_err 'Ошибка - неверный ввод: номера стендов. Выход'; exit_clear
     fi
     local tmparr
-    tmparr=( $( get_numrange_array "$1") ) || return
+    if ! tmparr=( $( get_numrange_array "$1") ); then
+        ! $silent_mode && return 1
+        echo_err 'Ошибка - неверный ввод: номера стендов. Выход'; exit_clear
+    fi
     opt_stand_nums=()
     while IFS= read -r -d '' x; do opt_stand_nums+=("$x"); done < <(printf "%s\0" "${tmparr[@]}" | sort -nuz)
 }
@@ -1513,10 +1517,10 @@ function configure_roles() {
     [[ "$( echo "$list_privs" | wc -l )" -ge 20 ]] || { echo_err "Ошибка: не удалось корректно загрузить список привилегий пользователей"; exit_clear; }
 
     for role in "${!config_access_roles[@]}"; do
-        ! [[ "$role" =~ ^[a-zA-Z\_][\-a-zA-Z\_]{,31}$ ]] && { echo_err "Ошибка: имя роли '$role' некорректное. Выход"; exit_clear; }
+        ! [[ $role != PVE* && $role =~ ^[[:alnum:]_.-]+$ ]] && { echo_err "Ошибка конфигурации: ${c_val}config_access_roles[$role]${c_err}: имя роли некорректное. Выход"; exit_clear; }
         for priv in ${config_access_roles[$role]}; do
             printf '%s\n' "$list_privs" | grep -Fxq -- "$priv" \
-                || { echo_err "Ошибка: роль ${c_val}$role${c_err}, привилегия ${c_val}$priv${c_err}: несуществующая привилегия в данной версии PVE. Выход"; exit_clear; }
+                || { echo_err "Ошибка конфигурации: роль ${c_val}$role${c_err}, привилегия ${c_val}$priv${c_err}: несуществующая привилегия в данной версии PVE. Выход"; exit_clear; }
         done
     done
 }
@@ -2002,7 +2006,7 @@ function deploy_stand_config() {
 
     function set_role_config() {
         [[ "$1" == '' ]] && { echo_err "Ошибка $FUNCNAME: нет аргумента"; exit_clear; }
-        [[ "$1" =~ ^[a-zA-Z\_][\-a-zA-Z\_]{,31}$ ]] || { echo_err "Ошибка $FUNCNAME: указанное имя роли '$1' некорректное"; exit_clear; }
+        [[ "$1" =~ ^[[:alnum:]_.-]+$ ]] || { echo_err "Ошибка $FUNCNAME: указанное имя роли '$1' некорректное"; exit_clear; }
         local i role role_exists
         role_exists=false
         for ((i=1; i<=$( echo -n "${roles_list[roleid]}" | grep -c \^ ); i++)); do
@@ -2333,7 +2337,7 @@ function install_stands() {
     ${config_base[access_create]} && deploy_access_passwd
 
     echo_tty $'\n'"${c_ok}Установка завершена.${c_null} Выход"
-    exit_clear
+    exit_clear 0
 }
 
 #       pvesh set /cluster/options --tag-style 'color-map=alt_server:ffcc14;alt_workstation:ac58e4,ordering=config,shape=none'
@@ -2794,7 +2798,11 @@ function create_vmnetwork() {
     echo_warn $'\nНа всех PVE нодах кластера будет создан SDN зона и vnet интерфейс. Сеть всех нод будет перезагружена!'
     read_question "Приступить к настройке?" || return 0
 	echo_tty
-	command -v dnsmasq >/dev/null || { read_question "Пакет dnsmasq не установлен. Установить автоматически на этом узле?" && { apt-get update && apt-get install dnsmasq -y && systemctl disable --now dnsmasq; } || return 0; }
+	if ! command -v dnsmasq >/dev/null; then
+        read_question "Пакет dnsmasq не установлен. Установить автоматически на этом узле?" && {
+            apt-get update && apt-get install dnsmasq -y && systemctl disable --now dnsmasq;
+        } || return 0
+    fi
 
 	local switch= return_cmd= regex_for_name='^[A-Za-z][A-Za-z0-9]{1,7}$' regex_for_alias='^[:?<>\[\]/\@^*()_+\-/\\=\ a-zA-Z0-9]+$' regex_cidr='' regex_ip='' regex_bool='^(0|1)$'
 
@@ -2858,9 +2866,12 @@ function create_vmnetwork() {
         && { echo_ok "Создано фаервольное правило для разрешения DHCP трафика для интерфейса ${c_val}${sdn_settings[vnet]}";:; } \
         || { echo_err $'\n'"Не удалось создать фаервольное правило для интерфейса ${c_val}${sdn_settings[vnet]}${c_null} для разрешения DHCP трафика"; }
 
-	run_cmd pvesh set /cluster/sdn
-
-	echo_ok "Сети хостов PVE перезагружены и изменения успешно применены"
+	if run_cmd /noexit /out=return_cmd pvesh set /cluster/sdn; then
+        echo_ok "Сети хостов PVE перезагружены и изменения успешно применены"
+    else
+        echo_warn "Создание объектов SDN завершено, но при применении/перезагрузке сети произошла ошибка:"$'\n'"$return_cmd"
+        [[ $return_cmd == *dnsmasq* ]] && echo_warn "Проверьте наличие и корректность установки dnsmasq"
+    fi
 }
 
 function write_var_to_file() {
@@ -2993,7 +3004,7 @@ function tweak_remaster_vm_netif() {
 			cmd_line_clear+=( "net${BASH_REMATCH[1]}=${BASH_REMATCH[3]}${BASH_REMATCH[4]},firewall=$firewall${BASH_REMATCH[6]}" )
 			cmd_line+=( "net${BASH_REMATCH[1]}=${BASH_REMATCH[2]}" )
 		done < <( echo -n "$vm_config" | grep -Po '({|,)"net\K[0-9]+":"[^"]+' )
-        run_cmd pve_api_request return_cmd PUT /nodes/${vm_list[$i,node]}/${vm_list[$i,type]}/${vm_list[$i,vmid]}/config "${cmd_line_clear[@]}"
+        run_cmd /noexit pve_api_request return_cmd PUT /nodes/${vm_list[$i,node]}/${vm_list[$i,type]}/${vm_list[$i,vmid]}/config "${cmd_line_clear[@]}"
         run_cmd pve_api_request return_cmd PUT /nodes/${vm_list[$i,node]}/${vm_list[$i,type]}/${vm_list[$i,vmid]}/config "${cmd_line[@]}"
         echo_ok "[Твик] Машина ${c_val}${vm_list[$i,name]}${c_null} (${vm_list[$i,vmid]})"
     done
@@ -3174,7 +3185,7 @@ then silent_mode=true
 else silent_mode=false
 fi
 
-if $opt_show_help; then show_help; exit; fi
+if $opt_show_help; then show_help; exit_clear 0; fi
 
 check_config base-check
 terraform_config_vars
@@ -3197,9 +3208,9 @@ $silent_mode && {
     case $switch_action in
         1) install_stands;;
         #2) manage_stands;;
-        *) echo_warn 'Функционал в процессе разработки и пока недоступен. Выход';;
+        *) echo_warn 'Функционал в процессе разработки и пока недоступен. Выход'; exit_clear ;;
     esac
-    exit_clear
+    exit_clear 0
 }
 
 
