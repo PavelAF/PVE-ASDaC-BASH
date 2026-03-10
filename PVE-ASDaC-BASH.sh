@@ -268,7 +268,7 @@ function get_numrange_array() {
         case $range in
             *-*)    start_range=${range%-*};  end_range=${range#*-}  ;;
             *\.\.*) start_range=${range%..*}; end_range=${range#*..} ;;
-            *)      echo $range; continue;;
+            *)      echo $range; continue ;;
         esac
         [[ $start_range -le $end_range ]] || return
         for (( i=$start_range; i<=$end_range; i++ )); do echo $i; done
@@ -1325,11 +1325,12 @@ function configure_imgdir() {
     [[ "$1" == 'clear' ]] && {
         [[ ${#var_tmp_img} != 0 ]] && rm -f "${var_tmp_img[@]}"
         { ! $opt_rm_tmpfs || $opt_not_tmpfs; } && [[ "$2" != 'force' ]] && return 0
-        ! findmnt -n -T "${config_base[mk_tmpfs_imgdir]}" -t tmpfs &> /dev/null && {
+        if findmnt -n -T "${config_base[mk_tmpfs_imgdir]}" -t tmpfs &> /dev/null; then
             echo_tty
-            $silent_mode || read_question "${c_warn}Удалить временный раздел со скачанными образами ВМ (${c_val}${config_base[mk_tmpfs_imgdir]}${c_warn})?" \
-                && { umount "${config_base[mk_tmpfs_imgdir]}"; rmdir "${config_base[mk_tmpfs_imgdir]}"; }
-        }
+            if $silent_mode || read_question "${c_warn}Удалить временный раздел со скачанными образами ВМ (${c_val}${config_base[mk_tmpfs_imgdir]}${c_warn})?"; then
+                umount "${config_base[mk_tmpfs_imgdir]}"; rmdir "${config_base[mk_tmpfs_imgdir]}";
+            fi
+        fi
         return 0
     }
 
@@ -1339,10 +1340,14 @@ function configure_imgdir() {
         return 0
     fi
 
-    ! findmnt -n -T "${config_base[mk_tmpfs_imgdir]}" -t tmpfs &> /dev/null \
-        && mkdir -p "${config_base[mk_tmpfs_imgdir]}" && \
-            { mountpoint -q "${config_base[mk_tmpfs_imgdir]}" || mount -t tmpfs tmpfs "${config_base[mk_tmpfs_imgdir]}" -o size=1M; } \
+    if ! findmnt -n -T "${config_base[mk_tmpfs_imgdir]}" -t tmpfs &> /dev/null; then
+        if mountpoint -q "${config_base[mk_tmpfs_imgdir]}"; then
+            echo_err "Ошибка при создании временного хранилища tmpfs: маунтпоинт ${c_val}${config_base[mk_tmpfs_imgdir]}${c_err} уже занят"
+            exit_clear;
+        fi
+        mkdir -p "${config_base[mk_tmpfs_imgdir]}" && mount -t tmpfs tmpfs "${config_base[mk_tmpfs_imgdir]}" -o size=1M \
             || { echo_err 'Ошибка при создании временного хранилища tmpfs'; exit_clear; }
+    fi
 
     if [[ "$1" == add-size ]]; then
         isdigit_check "$2" || { echo_err "Ошибка: "; exit_clear; }
