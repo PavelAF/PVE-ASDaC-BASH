@@ -268,7 +268,7 @@ function get_numrange_array() {
         case $range in
             *-*)    start_range=${range%-*};  end_range=${range#*-}  ;;
             *\.\.*) start_range=${range%..*}; end_range=${range#*..} ;;
-            *)      echo $range; return ;;
+            *)      echo $range; continue;;
         esac
         [[ $start_range -le $end_range ]] || return
         for (( i=$start_range; i<=$end_range; i++ )); do echo $i; done
