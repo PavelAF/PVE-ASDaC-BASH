@@ -4,19 +4,14 @@
 
 ## Автопроверка стендов
 
-Инструмент для автоматизированного сбора информации с ВМ развёрнутых стендов (hostname, IP, маршруты, конфиги и т.д.). Подключение через QEMU Guest Agent или serial console.
+Отдельный скрипт для автоматизированного сбора информации с ВМ развёрнутых стендов (hostname, IP, маршруты, конфиги и т.д.). Подключение через QEMU Guest Agent или serial console.
 
-**Запуск:**
+**Запуск (на ноде PVE):**
 ```bash
-./PVE-ASDaC-BASH.sh --autocheck autocheck/09.02.06-2026_module1.conf
+python3 autocheck_standalone.py autocheck/09.02.06-2026_module1.conf
 ```
 
-**Скачать и запустить с удалённого сервера:**
-```bash
-bash <(curl -sSL <URL_ДО_СКРИПТА>) --autocheck <URL_ДО_ФАЙЛА_ПРОВЕРКИ> -z -v
-```
-
-Или через меню: Управление стендами → пункт 11.
+Без аргументов — интерактивный выбор конфига, группы и стендов.
 
 **Документация:** [docs/autocheck-instruction.md](docs/autocheck-instruction.md)
 
