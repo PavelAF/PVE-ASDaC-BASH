@@ -3250,6 +3250,25 @@ function exec_agent_cmd() {
     return 1
 }
 
+# ─── Автопроверка стендов (autocheck) ─────────────────────────────────────────
+# Функции модуля (глобальные переменные читаются/записываются в контексте autocheck_stand):
+#   _ac_extract_ac_helper   — извлечь встроенный Python-хелпер в /tmp/ac_helper.py
+#   _ac_json_escape         — экранирование строки для JSON
+#   _ac_parse_pool_vms      — заполнить _ac_map_id, _ac_map_node, _ac_map_status из API пула (использует regex)
+#   _ac_collect_agent_cmds  — заполнить _ac_batch_script, _ac_batch_checks из check_N_*
+#   _ac_collect_serial_cmds — заполнить _ac_serial_cmds, _ac_serial_checks из check_N_*
+#   _ac_fill_vm_not_running — записать в _ac_results ошибку «ВМ не запущена» для списка проверок
+#   _ac_parse_helper_output — разобрать stdout хелпера (===AC_VM/AC_CHK/AC_ERR), заполнить _ac_results
+#   _ac_exec_batch          — собрать задачи, вызвать Python-хелпер, разобрать вывод
+#   _ac_format_results      — сформировать отчёт в _ac_stand_filebuf, вывод в TTY и/или файл
+#   _ac_run_stand           — для одного стенда: парсинг ВМ, сбор команд, exec_batch, format_results
+#   _ac_select_config_file  — выбор/скачивание файла конфигурации, вывод пути в stdout
+#   _ac_load_config         — source конфига, заполнить autocheck_name, _ac_vm_exec, _ac_max_check, exec_serial_*
+#   _ac_discover_pools      — заполнить _ac_pools, _ac_print из API (acl/groups)
+#   _ac_select_group_and_stands — выбор группы, стендов, параллелизма, пути отчёта → group_name, _ac_sel_stands, _ac_parallel, _ac_outfile
+# Глобальные переменные модуля: regex (для _ac_parse_pool_vms), autocheck_name, _ac_vm_exec, _ac_max_check,
+#   exec_serial_*, _ac_pools, _ac_print, group_name, _ac_sel_stands, _ac_parallel, _ac_outfile
+# ───────────────────────────────────────────────────────────────────────────────
 _ac_helper_path='/tmp/ac_helper.py'
 
 function _ac_extract_ac_helper() {
@@ -3688,6 +3707,55 @@ _ac_collect_serial_cmds() {
     done
 }
 
+_ac_fill_vm_not_running() {
+    local _vm=$1 _status=$2
+    shift 2
+    local _cn
+    for _cn in "$@"; do
+        _ac_results["$_vm,$_cn"]="[Ошибка] ВМ не запущена ($_status)"
+    done
+}
+
+_ac_parse_helper_output() {
+    local _helper_out="$1" _line _cur_vm='' _cur_cn='' _cur_out=''
+    while IFS= read -r _line; do
+        if [[ "$_line" =~ ^===AC_VM:(.+)===$  ]]; then
+            [[ "$_cur_vm" != '' && "$_cur_cn" != '' ]] && _ac_results["$_cur_vm,$_cur_cn"]="$_cur_out"
+            _cur_vm="${BASH_REMATCH[1]}" _cur_cn='' _cur_out=''
+        elif [[ "$_line" =~ ^===AC_CHK:([0-9]+)===$  ]]; then
+            [[ "$_cur_vm" != '' && "$_cur_cn" != '' ]] && _ac_results["$_cur_vm,$_cur_cn"]="$_cur_out"
+            _cur_cn="${BASH_REMATCH[1]}" _cur_out=''
+        elif [[ "$_line" == '===AC_ERR===' ]]; then
+            [[ "$_cur_vm" != '' && "$_cur_cn" != '' ]] && _ac_results["$_cur_vm,$_cur_cn"]="$_cur_out"
+            _cur_cn='error' _cur_out=''
+        else
+            [[ "$_cur_out" != '' ]] && _cur_out+=$'\n'
+            _cur_out+="$_line"
+        fi
+    done <<< "$_helper_out"
+    [[ "$_cur_vm" != '' && "$_cur_cn" != '' ]] && _ac_results["$_cur_vm,$_cur_cn"]="$_cur_out"
+
+    local _ac_vm _cn _err
+    for _ac_vm in "${!_ac_serial_checks[@]}"; do
+        if [[ -v "_ac_results[$_ac_vm,error]" ]]; then
+            _err="${_ac_results[$_ac_vm,error]}"
+            for _cn in ${_ac_serial_checks[$_ac_vm]}; do
+                [[ ! -v "_ac_results[$_ac_vm,$_cn]" ]] && _ac_results["$_ac_vm,$_cn"]="[Ошибка] $_err"
+            done
+            unset "_ac_results[$_ac_vm,error]"
+        fi
+    done
+    for _ac_vm in "${!_ac_batch_checks[@]}"; do
+        if [[ -v "_ac_results[$_ac_vm,error]" ]]; then
+            _err="${_ac_results[$_ac_vm,error]}"
+            for _cn in ${_ac_batch_checks[$_ac_vm]}; do
+                [[ ! -v "_ac_results[$_ac_vm,$_cn]" ]] && _ac_results["$_ac_vm,$_cn"]="[Ошибка] $_err"
+            done
+            unset "_ac_results[$_ac_vm,error]"
+        fi
+    done
+}
+
 _ac_exec_batch() {
     local _eb_pool=$1
     [[ ${#_ac_batch_script[@]} -eq 0 && ${#_ac_serial_cmds[@]} -eq 0 ]] && return 0
@@ -3705,7 +3773,7 @@ _ac_exec_batch() {
         if [[ "$_ac_cur_status" != 'running' ]]; then
             echo_tty "  ${c_info}▸ [$_eb_pool] ${c_ok}$_ac_vm${c_info} (VMID $_ac_vid, serial)${c_null}"
             echo_tty "    ${c_warn}ВМ не запущена ($_ac_cur_status), пропуск${c_null}"
-            for _cn in ${_ac_serial_checks[$_ac_vm]}; do _ac_results["$_ac_vm,$_cn"]="[Ошибка] ВМ не запущена ($_ac_cur_status)"; done
+            _ac_fill_vm_not_running "$_ac_vm" "$_ac_cur_status" ${_ac_serial_checks[$_ac_vm]}
             continue
         fi
         _ac_map_status[$_ac_vm]='running'
@@ -3754,7 +3822,7 @@ _ac_exec_batch() {
         if [[ "$_ac_cur_status" != 'running' ]]; then
             echo_tty "  ${c_info}▸ [$_eb_pool] ${c_ok}$_ac_vm${c_info} (VMID $_ac_vid)${c_null}"
             echo_tty "    ${c_warn}ВМ не запущена ($_ac_cur_status), пропуск${c_null}"
-            for _cn in ${_ac_batch_checks[$_ac_vm]}; do _ac_results["$_ac_vm,$_cn"]="[Ошибка] ВМ не запущена ($_ac_cur_status)"; done
+            _ac_fill_vm_not_running "$_ac_vm" "$_ac_cur_status" ${_ac_batch_checks[$_ac_vm]}
             continue
         fi
         _ac_map_status[$_ac_vm]='running'
@@ -3790,42 +3858,7 @@ _ac_exec_batch() {
     $opt_verbose && [[ -s "$_helper_err" ]] && while IFS= read -r _line; do echo_verbose "$_line"; done < "$_helper_err"
     rm -f "$_helper_err"
 
-    _cur_vm='' _cur_cn='' _cur_out=''
-    while IFS= read -r _line; do
-        if [[ "$_line" =~ ^===AC_VM:(.+)===$  ]]; then
-            [[ "$_cur_vm" != '' && "$_cur_cn" != '' ]] && _ac_results["$_cur_vm,$_cur_cn"]="$_cur_out"
-            _cur_vm="${BASH_REMATCH[1]}" _cur_cn='' _cur_out=''
-        elif [[ "$_line" =~ ^===AC_CHK:([0-9]+)===$  ]]; then
-            [[ "$_cur_vm" != '' && "$_cur_cn" != '' ]] && _ac_results["$_cur_vm,$_cur_cn"]="$_cur_out"
-            _cur_cn="${BASH_REMATCH[1]}" _cur_out=''
-        elif [[ "$_line" == '===AC_ERR===' ]]; then
-            [[ "$_cur_vm" != '' && "$_cur_cn" != '' ]] && _ac_results["$_cur_vm,$_cur_cn"]="$_cur_out"
-            _cur_cn='error' _cur_out=''
-        else
-            [[ "$_cur_out" != '' ]] && _cur_out+=$'\n'
-            _cur_out+="$_line"
-        fi
-    done <<< "$_helper_out"
-    [[ "$_cur_vm" != '' && "$_cur_cn" != '' ]] && _ac_results["$_cur_vm,$_cur_cn"]="$_cur_out"
-
-    for _ac_vm in "${!_ac_serial_checks[@]}"; do
-        if [[ -v "_ac_results[$_ac_vm,error]" ]]; then
-            local _err="${_ac_results[$_ac_vm,error]}"
-            for _cn in ${_ac_serial_checks[$_ac_vm]}; do
-                [[ ! -v "_ac_results[$_ac_vm,$_cn]" ]] && _ac_results["$_ac_vm,$_cn"]="[Ошибка] $_err"
-            done
-            unset "_ac_results[$_ac_vm,error]"
-        fi
-    done
-    for _ac_vm in "${!_ac_batch_checks[@]}"; do
-        if [[ -v "_ac_results[$_ac_vm,error]" ]]; then
-            local _err="${_ac_results[$_ac_vm,error]}"
-            for _cn in ${_ac_batch_checks[$_ac_vm]}; do
-                [[ ! -v "_ac_results[$_ac_vm,$_cn]" ]] && _ac_results["$_ac_vm,$_cn"]="[Ошибка] $_err"
-            done
-            unset "_ac_results[$_ac_vm,error]"
-        fi
-    done
+    _ac_parse_helper_output "$_helper_out"
     echo_tty "    ${c_ok}✓${c_null} проверки завершены"
 }
 
@@ -3939,54 +3972,52 @@ _ac_run_stand() {
     _ac_format_results "$pool_name" "$_ars_mode" "$_ars_fbuf"
 }
 
-function autocheck_stand() {
-    local config_file="${1:-}"
-    local _preselected_group="${2:-}"
-    local autocheck_dir="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )/autocheck"
-
-    # ====== Выбор файла конфигурации автопроверки ======
-    if [[ "$config_file" == '' ]]; then
-        [[ ! -d "$autocheck_dir" ]] && { echo_err "Папка autocheck/ не найдена ($autocheck_dir)"; return 1; }
+_ac_select_config_file() {
+    local _scf_cfg="${1:-}" _scf_dir="$2"
+    if [[ "$_scf_cfg" == '' ]]; then
+        [[ ! -d "$_scf_dir" ]] && { echo_err "Папка autocheck/ не найдена ($_scf_dir)"; return 1; }
         local -a _ac_conf_files _ac_conf_names
-        local _ac_f _ac_n
-        for _ac_f in "$autocheck_dir"/*.conf; do
+        local _ac_f _ac_n i
+        for _ac_f in "$_scf_dir"/*.conf; do
             [[ -f "$_ac_f" ]] || continue
             _ac_n=$( grep -Po "^autocheck_name=['\"]\\K[^'\"]+" "$_ac_f" 2>/dev/null ) || _ac_n="$(basename "$_ac_f")"
             _ac_conf_files+=( "$_ac_f" )
             _ac_conf_names+=( "$_ac_n" )
         done
-        [[ ${#_ac_conf_files[@]} == 0 ]] && { echo_info "Файлы автопроверки не найдены в $autocheck_dir"; return 0; }
-
+        [[ ${#_ac_conf_files[@]} == 0 ]] && { echo_info "Файлы автопроверки не найдены в $_scf_dir"; return 1; }
         echo_tty $'\nДоступные конфигурации автопроверки:'
-        local i
         for ((i=0; i<${#_ac_conf_files[@]}; i++)); do
             echo_tty "  $((i+1)). ${_ac_conf_names[$i]}"
         done
         local _ac_sel=$( read_question_select 'Выберите конфигурацию' '^[0-9]+$' 1 ${#_ac_conf_files[@]} '' 2 )
-        [[ "$_ac_sel" == '' ]] && return 0
-        config_file="${_ac_conf_files[$((_ac_sel-1))]}"
+        [[ "$_ac_sel" == '' ]] && return 1
+        echo -n "${_ac_conf_files[$((_ac_sel-1))]}"
+        return 0
     fi
-
-    if isurl_check "$config_file"; then
+    if isurl_check "$_scf_cfg"; then
         local _ac_tmpfile
         _ac_tmpfile=$( mktemp /tmp/autocheck_XXXXXX.conf )
-        echo_tty "[${c_info}Info${c_null}] Скачивание конфигурации автопроверки: ${c_value}$config_file${c_null}"
-        curl -sSL -o "$_ac_tmpfile" "$config_file" || { echo_err "Не удалось скачать файл конфигурации: $config_file"; rm -f "$_ac_tmpfile"; return 1; }
-        config_file="$_ac_tmpfile"
+        echo_tty "[${c_info}Info${c_null}] Скачивание конфигурации автопроверки: ${c_value}$_scf_cfg${c_null}"
+        curl -sSL -o "$_ac_tmpfile" "$_scf_cfg" || { echo_err "Не удалось скачать файл конфигурации: $_scf_cfg"; rm -f "$_ac_tmpfile"; return 1; }
+        echo -n "$_ac_tmpfile"
+        return 0
     fi
+    echo -n "$_scf_cfg"
+    return 0
+}
 
-    [[ ! -f "$config_file" ]] && { echo_err "Файл конфигурации автопроверки не найден: $config_file"; return 1; }
+_ac_load_config() {
+    local _lc_path="$1"
+    autocheck_name='' autocheck_vms=''
+    exec_serial_prompt='[A-Za-z0-9._-]+[#>]' exec_serial_timeout=5
+    exec_serial_login='' exec_serial_password=''
+    exec_serial_enable=false exec_serial_enable_password=''
+    exec_serial_setup=''
+    source "$_lc_path"
+    [[ "$autocheck_name" == '' ]] && autocheck_name="$(basename "$_lc_path")"
 
-    # ====== Загрузка конфига ======
-    local autocheck_name='' autocheck_vms=''
-    local exec_serial_prompt='[A-Za-z0-9._-]+[#>]' exec_serial_timeout=5
-    local exec_serial_login='' exec_serial_password=''
-    local exec_serial_enable=false exec_serial_enable_password=''
-    local exec_serial_setup=''
-    source "$config_file"
-    [[ "$autocheck_name" == '' ]] && autocheck_name="$(basename "$config_file")"
-
-    local -A _ac_vm_exec
+    declare -gA _ac_vm_exec
+    _ac_vm_exec=()
     local _vm_n _vm_t
     while IFS='=' read -r _vm_n _vm_t; do
         _vm_n=$( echo "$_vm_n" | tr -d '\r' | xargs )
@@ -3996,31 +4027,25 @@ function autocheck_stand() {
 
     [[ ${#_ac_vm_exec[@]} == 0 ]] && { echo_err "Не найдено ВМ в autocheck_vms конфигурации"; return 1; }
 
-    local _ac_max_check=0
+    _ac_max_check=0
     while true; do
         local _chk_var="check_$((_ac_max_check+1))_name"
         [[ -v "$_chk_var" ]] || break
         ((_ac_max_check++))
     done
-    [[ $_ac_max_check == 0 ]] && { echo_warn "В конфигурации не найдено проверок (check_N_name)"; return 0; }
+    [[ $_ac_max_check == 0 ]] && { echo_warn "В конфигурации не найдено проверок (check_N_name)"; return 1; }
+    return 0
+}
 
-    # ====== Проверка наличия serial/agent ВМ и подготовка Python-хелпера ======
-    local _ac_need_helper=false
-    for _vm_t in "${_ac_vm_exec[@]}"; do
-        [[ "$_vm_t" == 'exec_serial' || "$_vm_t" == 'exec_agent' ]] && { _ac_need_helper=true; break; }
-    done
-    if $_ac_need_helper; then
-        command -v python3 &>/dev/null || { echo_err "python3 не найден (требуется для exec_serial/exec_agent проверок)"; return 1; }
-        _ac_extract_ac_helper
-    fi
-
-    # ====== Обнаружение стендов ======
-    local -A _ac_acl _ac_grp _ac_print _ac_pools
+_ac_discover_pools() {
+    local -A _ac_acl _ac_grp
+    declare -gA _ac_print _ac_pools
+    _ac_print=()
+    _ac_pools=()
     jq_data_to_array /access/acl _ac_acl
     jq_data_to_array /access/groups _ac_grp
 
-    local group_name pool_name max_count nl=$'\n' i j
-
+    local max_count nl=$'\n' i
     max_count=${_ac_acl[count]}
     for ((i=0; i<$max_count; i++)); do
         [[ "${_ac_acl[$i,type]}" != group ]] && continue
@@ -4031,15 +4056,16 @@ function autocheck_stand() {
     max_count=${_ac_grp[count]}
     for ((i=0; i<=$max_count; i++)); do
         [[ -v "_ac_pools[${_ac_grp[$i,groupid]}]" ]] && {
-            group_name=${_ac_grp[$i,groupid]}
-            _ac_print[$group_name]="${c_ok}$group_name${c_null} : ${_ac_grp[$i,comment]}"
-            _ac_pools[$group_name]=$( echo "${_ac_pools[$group_name]}" | sed '/^$/d' | sort -uV )
+            _ac_print[${_ac_grp[$i,groupid]}]="${c_ok}${_ac_grp[$i,groupid]}${c_null} : ${_ac_grp[$i,comment]}"
+            _ac_pools[${_ac_grp[$i,groupid]}]=$( echo "${_ac_pools[${_ac_grp[$i,groupid]}]}" | sed '/^$/d' | sort -uV )
         }
     done
+    [[ ${#_ac_print[@]} != 0 ]]
+}
 
-    [[ ${#_ac_print[@]} != 0 ]] || { echo_info $'\nНе найдено ни одной развернутой конфигурации'; return 0; }
-
-    # ====== Выбор группы (пропуск если предвыбрана из manage_stands) ======
+_ac_select_group_and_stands() {
+    local _preselected_group="${1:-}"
+    local i j
     if [[ "$_preselected_group" != '' && -v "_ac_pools[$_preselected_group]" ]]; then
         group_name="$_preselected_group"
     else
@@ -4049,7 +4075,7 @@ function autocheck_stand() {
             echo_tty "  $((++i)). ${_ac_print[$item]//\\\"/\"}"
         done
         [[ $i -gt 1 ]] && i=$( read_question_select 'Выберите номер конфигурации' '^[0-9]+$' 1 $i '' 2 )
-        [[ "$i" == '' ]] && return 0
+        [[ "$i" == '' ]] && return 1
         j=0; group_name=''
         for item in "${!_ac_print[@]}"; do
             ((j++)); [[ $i != $j ]] && continue
@@ -4057,11 +4083,10 @@ function autocheck_stand() {
         done
     fi
 
-    # ====== Выбор стендов ======
     local _ac_stand_count=$( echo "${_ac_pools[$group_name]}" | wc -l )
-    [[ "$_ac_stand_count" == 0 ]] && { echo_info "Пулы стендов '$group_name' не найдены"; return 0; }
+    [[ "$_ac_stand_count" == 0 ]] && { echo_info "Пулы стендов '$group_name' не найдены"; return 1; }
 
-    local -a _ac_sel_stands
+    _ac_sel_stands=()
     if [[ "$_ac_stand_count" -gt 1 ]]; then
         echo_tty $'\nВыберите стенды для проверки:'
         for ((i=1; i<=$_ac_stand_count; i++)); do
@@ -4077,9 +4102,9 @@ function autocheck_stand() {
     else
         _ac_sel_stands=( 1 )
     fi
-    [[ ${#_ac_sel_stands[@]} == 0 ]] && return 0
+    [[ ${#_ac_sel_stands[@]} == 0 ]] && return 1
 
-    local _ac_parallel=1
+    _ac_parallel=1
     if [[ ${#_ac_sel_stands[@]} -gt 1 ]]; then
         while true; do
             local _ac_par
@@ -4094,14 +4119,41 @@ function autocheck_stand() {
         done
     fi
 
-    local _ac_outfile=''
+    _ac_outfile=''
     if read_question 'Сохранить результаты в файл?'; then
         _ac_outfile=$( read_question_select 'Путь к файлу' '' '' '' "$(pwd)/autocheck_report.txt" 2 )
         _ac_outfile=$( echo "$_ac_outfile" | xargs )
         [[ "$_ac_outfile" == '' ]] && _ac_outfile="$(pwd)/autocheck_report.txt"
     fi
+    return 0
+}
 
-    local regex='(,|{)\s*\"{opt_name}\"\s*:\s*(\K[0-9]+|\"\K(?(?=\\").{2}|[^"])+)'
+function autocheck_stand() {
+    local config_file="${1:-}"
+    local _preselected_group="${2:-}"
+    local autocheck_dir="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )/autocheck"
+
+    config_file=$( _ac_select_config_file "$config_file" "$autocheck_dir" ) || return 0
+    [[ -z "$config_file" ]] && return 0
+    [[ ! -f "$config_file" ]] && { echo_err "Файл конфигурации автопроверки не найден: $config_file"; return 1; }
+
+    _ac_load_config "$config_file" || return $?
+
+    local _ac_need_helper=false
+    for _vm_t in "${_ac_vm_exec[@]}"; do
+        [[ "$_vm_t" == 'exec_serial' || "$_vm_t" == 'exec_agent' ]] && { _ac_need_helper=true; break; }
+    done
+    if $_ac_need_helper; then
+        command -v python3 &>/dev/null || { echo_err "python3 не найден (требуется для exec_serial/exec_agent проверок)"; return 1; }
+        _ac_extract_ac_helper
+    fi
+
+    _ac_discover_pools || { echo_info $'\nНе найдено ни одной развернутой конфигурации'; return 0; }
+
+    _ac_select_group_and_stands "$_preselected_group" || return 0
+
+    # regex используется в _ac_parse_pool_vms; при параллельном запуске подпроцесс не наследует local — задаём глобально
+    regex='(,|{)\s*\"{opt_name}\"\s*:\s*(\K[0-9]+|\"\K(?(?=\\").{2}|[^"])+)'
     local _ac_all_filebuf=''
 
     # ====== Запуск проверок для каждого стенда ======
