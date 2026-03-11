@@ -26,6 +26,28 @@ AC_SEP_RE = re.compile(r'===AC_SEP_(\d+)===')
 SCRIPT_DIR = Path(__file__).resolve().parent
 AUTOCHECK_DIR = SCRIPT_DIR / 'autocheck'
 
+
+def _reconfigure_stdin():
+    """Use replacement strategy for stdin to avoid UnicodeDecodeError on non-UTF-8 or mixed input."""
+    try:
+        if hasattr(sys.stdin, 'reconfigure'):
+            sys.stdin.reconfigure(errors='replace')
+    except Exception:
+        pass
+
+
+def _safe_input(prompt: str) -> str:
+    """Read line from stdin; on decode error use buffer with errors='replace'."""
+    try:
+        return input(prompt).strip()
+    except (UnicodeDecodeError, UnicodeError):
+        print(prompt, end='', flush=True)
+        line = sys.stdin.buffer.readline()
+        return line.decode('utf-8', errors='replace').strip()
+    except EOFError:
+        return ''
+
+
 # Colors (disable if NO_COLOR or not TTY)
 def _use_color():
     if os.environ.get('NO_COLOR'):
@@ -708,7 +730,7 @@ def select_config_file(config_arg: str | None, autocheck_dir: Path) -> str | Non
             name = f.name
         print(f"  {i}. {name}")
     try:
-        sel = input("Выберите конфигурацию (номер): ").strip()
+        sel = _safe_input("Выберите конфигурацию (номер): ")
         idx = int(sel)
         if 1 <= idx <= len(conf_files):
             return str(conf_files[idx - 1])
@@ -728,6 +750,8 @@ def run_stand(
 ) -> list[str]:
     """Run checks for one stand (pool_name). Returns list of report lines."""
     filebuf: list[str] = []
+    if mode == 'tty':
+        print(f"\n── Стенд: {_c('value')}{pool_name}{_c('null')} ──", flush=True)
     members = pools_members.get(pool_name, [])
     map_id = {}
     map_node = {}
@@ -792,14 +816,14 @@ def run_stand(
         status = get_vm_status(node, int(vmid))
         if status != 'running':
             if mode == 'tty':
-                print(f"  ▸ [{pool_name}] {_c('ok')}{vm}{_c('null')} (VMID {vmid}, serial)")
-                print(f"    {_c('warn')}ВМ не запущена ({status}), пропуск{_c('null')}")
+                print(f"  ▸ [{pool_name}] {_c('ok')}{vm}{_c('null')} (VMID {vmid}, serial)", flush=True)
+                print(f"    {_c('warn')}ВМ не запущена ({status}), пропуск{_c('null')}", flush=True)
             fill_not_running(vm, status, serial_checks[vm])
             continue
         map_status[vm] = 'running'
         chk_count = len(serial_cmds[vm])
         if mode == 'tty':
-            print(f"  ▸ [{pool_name}] {_c('ok')}{vm}{_c('null')} (VMID {vmid}, serial, {chk_count} проверок)")
+            print(f"  ▸ [{pool_name}] {_c('ok')}{vm}{_c('null')} (VMID {vmid}, serial, {chk_count} проверок)", flush=True)
 
         san = vm.replace('-', '_')
         login = conf.get(f'{san}_serial_login') or conf.get('exec_serial_login') or ''
@@ -831,14 +855,14 @@ def run_stand(
         status = get_vm_status(node, int(vmid))
         if status != 'running':
             if mode == 'tty':
-                print(f"  ▸ [{pool_name}] {_c('ok')}{vm}{_c('null')} (VMID {vmid})")
-                print(f"    {_c('warn')}ВМ не запущена ({status}), пропуск{_c('null')}")
+                print(f"  ▸ [{pool_name}] {_c('ok')}{vm}{_c('null')} (VMID {vmid})", flush=True)
+                print(f"    {_c('warn')}ВМ не запущена ({status}), пропуск{_c('null')}", flush=True)
             fill_not_running(vm, status, batch_checks[vm])
             continue
         map_status[vm] = 'running'
         chk_count = len(batch_checks[vm])
         if mode == 'tty':
-            print(f"  ▸ [{pool_name}] {_c('ok')}{vm}{_c('null')} (VMID {vmid}, {chk_count} проверок)")
+            print(f"  ▸ [{pool_name}] {_c('ok')}{vm}{_c('null')} (VMID {vmid}, {chk_count} проверок)", flush=True)
 
         script_body = '#!/bin/bash\n' + ''.join(batch_script[vm])
         script_b64 = base64.b64encode(script_body.encode()).decode()
@@ -855,9 +879,11 @@ def run_stand(
 
     if not tasks_payload:
         if mode == 'tty':
-            print("    Нет запущенных ВМ для проверки")
-        return
+            print("    Нет запущенных ВМ для проверки", flush=True)
+        return []
 
+    if mode == 'tty':
+        print("  Выполнение проверок на ВМ...", flush=True)
     helper_out = asyncio.run(run_tasks(tasks_payload, verbose))
 
     cur_vm = ''
@@ -903,7 +929,7 @@ def run_stand(
                     results[(vm, cid)] = f"[Ошибка] {err}"
 
     if mode == 'tty':
-        print(f"    {_c('ok')}✓{_c('null')} проверки завершены")
+        print(f"    {_c('ok')}✓{_c('null')} проверки завершены", flush=True)
 
     autocheck_name = conf.get('autocheck_name', pool_name)
     sep = f"{_c('value')}══════════════════════════════════════{_c('null')}"
@@ -971,6 +997,7 @@ def run_stand(
 
 
 def main():
+    _reconfigure_stdin()
     parser = argparse.ArgumentParser(description='Автопроверка стендов PVE')
     parser.add_argument('config', nargs='?', help='Файл или URL конфигурации .conf')
     parser.add_argument('-g', '--group', help='Группа (ID) стендов')
@@ -1032,7 +1059,7 @@ def main():
             for i, gid in enumerate(items, 1):
                 print(f"  {i}. {print_info.get(gid, gid)}")
             try:
-                sel = input("Выберите номер конфигурации: ").strip()
+                sel = _safe_input("Выберите номер конфигурации: ")
                 idx = int(sel)
                 if 1 <= idx <= len(items):
                     group_name = items[idx - 1]
@@ -1062,7 +1089,7 @@ def main():
             for i, p in enumerate(stand_list, 1):
                 print(f"  {i}. {p}")
             print("\nДля выбора всех стендов нажмите Enter")
-            inp = input("Введите номера стендов (прим 1,2-6): ").strip()
+            inp = _safe_input("Введите номера стендов (прим 1,2-6): ")
             if inp:
                 indices = parse_numrange(inp)
                 sel_stands = [i for i in indices if 1 <= i <= stand_count]
@@ -1077,7 +1104,7 @@ def main():
     parallel = args.parallel
     if parallel is None and len(sel_stands) > 1 and not args.no_interact:
         try:
-            inp = input(f"Проверять одновременно стендов (1-{len(sel_stands)}) [1]: ").strip()
+            inp = _safe_input(f"Проверять одновременно стендов (1-{len(sel_stands)}) [1]: ")
             if inp:
                 parallel = max(1, min(len(sel_stands), int(inp)))
             else:
@@ -1092,9 +1119,9 @@ def main():
     outfile = args.output
     if not outfile and not args.no_interact:
         try:
-            inp = input("Сохранить результаты в файл? [y/N]: ").strip().lower()
+            inp = _safe_input("Сохранить результаты в файл? [y/N]: ").lower()
             if inp and inp[0] in ('y', 'д', '1'):
-                outfile = input(f"Путь к файлу [{os.getcwd()}/autocheck_report.txt]: ").strip()
+                outfile = _safe_input(f"Путь к файлу [{os.getcwd()}/autocheck_report.txt]: ")
                 if not outfile:
                     outfile = f"{os.getcwd()}/autocheck_report.txt"
         except EOFError:
@@ -1124,6 +1151,7 @@ def main():
             )
             all_filebuf.extend(lines)
     else:
+        print(f"\nПроверка {len(sel_stands)} стендов параллельно (до {parallel} потоков)...", flush=True)
         def run_one(idx: int) -> tuple[int, list[str]]:
             if idx < 1 or idx > stand_count:
                 return idx, []
