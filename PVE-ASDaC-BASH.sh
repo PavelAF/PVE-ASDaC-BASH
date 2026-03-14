@@ -863,17 +863,34 @@ function get_yadisk_url_info() {
 function get_url_fileinfo() {
     isurl_check "$1" || { echo_err "Ошибка get_url_filesize: указанный URL '$1' не является валидным. Выход"; exit_clear; }
     local baseurl=$( grep -Po '^[^:]+://[^/]+' <<<$1 ) info
-    info=$( curl -sLv -H "Referer: $baseurl" -H "Sec-Fetch-Dest: document" -H "Range: bytes=0-0" -r 0-0 "$1" 2>&1 >/dev/null ) || exit_clear
+    info=$( curl -fsSL -D - -o /dev/null -w '\n%{http_code}' \
+                --connect-timeout 5 --max-time 15 --max-filesize 2 \
+                -H "Referer: $baseurl" -H 'Sec-Fetch-Dest: document' \
+                -r 0-1 "$1" 2>/dev/null )
+    case $? in
+        0|63) true;;
+        *)  local code=$?
+            [[ $info =~ .*$'\n'([0-9]{3})$ ]]
+            echo_err "Ошибка $FUNCNAME: не удалось получить информацию о файле по URL '$1'"
+            echo_err "curl code: $code, http code: ${BASH_REMATCH[1]:-none}"
+            exit_clear ;;
+    esac
     baseurl=$1
     shift
     while [[ $1 ]]; do
         [[ "$1" =~ ^([a-zA-Z][0-9a-zA-Z_]{0,32})\=(name|size|mime_type)$ ]] || { echo_err "Ошибка $FUNCNAME: некорректый аргумент '$1'"; exit_clear; }
         local -n ref_var=${BASH_REMATCH[1]}
         case ${BASH_REMATCH[2]} in
-            name) ref_var=$( grep -ioP '<\s*Content-Disposition\s*:\s*attachment\s*;\s*filename\s*=\s*"?\K[^"]+' <<<$info )
-                [[ ! $ref_var ]] && { ref_var=$( grep -Po '.*/\K[^?]+' <<<$baseurl ); printf -v ref_var "%b" "${ref_var//\%/\\x}"; } ;;
-            size) ref_var=$( grep -ioP '<\s*Content-Range\s*:\s*bytes\s*[\-\d]+\/\K\d+' <<<$info );;
-            mime_type) ref_var=$( grep -ioP '<\s*Content-Type\s*:\s*\K[^\s]+' <<<$info );;
+            name)
+                ref_var=$( grep -ioP '^Content-Disposition:\s*(?:attachment|inline)\s*;\s*(?:(?!filename).*?;\s*)*\Kfilename\*?\s*=\s*.+' <<<$info )
+                if [[ $ref_var =~ (^|\;)[[:space:]]*filename\*[[:space:]]*=[[:space:]]*UTF-8\'[a-zA-Z\-]*\'([^[:space:]\"\;]+) ]]; then
+                    ref_var=${BASH_REMATCH[2]}
+                elif [[ $ref_var =~ (^|\;)[[:space:]]*filename[[:space:]]*=[[:space:]]*(\"([^\\\"]+(\\.[^\\\"]*)*)\"|[^\"\;[:space:]]+) ]]; then
+                    ref_var=${BASH_REMATCH[3]:-${BASH_REMATCH[2]}}
+                fi
+                [[ ! $ref_var ]] && { ref_var=$( grep -Po '.*/\K[^?/#]+' <<<$baseurl ); printf -v ref_var "%b" "${ref_var//\%/\\x}"; } ;;
+            size) ref_var=$( grep -ioP '^Content-Range:\s*bytes\s*[\-\d]+\/\K\d+' <<<$info );;
+            mime_type) ref_var=$( grep -ioP '^Content-Type:\s*\K[^\s]+' <<<$info );;
         esac
         [[ ! $ref_var ]] && { echo_err "Ошибка $FUNCNAME: не удалось получить запрашиваемое значение '${BASH_REMATCH[2]}' для файла по URL '$baseurl'"; exit_clear; }
         shift
