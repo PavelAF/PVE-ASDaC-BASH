@@ -95,6 +95,50 @@ declare -A config_access_roles=(
     [test]='VM.Audit     VM.Console   ,   VM.PowerMgmt,VM.Snapshot.Rollback;VM.Snapshot.Rollback'
 )
 
+declare -A var_vmdisk_opts=(
+	[base,aio]=1
+	[base,cache]=1
+	[base,detect_zeroes]=1
+	[base,discard]=1
+	[base,backup]=1
+	[base,replicate]=1
+	[base,rerror]=1
+	[base,werror]=1
+	[base,serial]=1
+	[base,shared]=1
+	[base,bps]=1
+	[base,bps_max_length]=1
+	[base,bps_rd]=1
+	[base,bps_rd_max_length]=1
+	[base,iops]=1
+	[base,iops_max]=1
+	[base,iops_max_length]=1
+	[base,iops_rd]=1
+	[base,iops_rd_max]=1
+	[base,iops_rd_max_length]=1
+	[base,mbps]=1
+	[base,mbps_max]=1
+	[base,mbps_rd]=1
+	[base,mbps_rd_max]=1
+	[base,mbps_wr]=1
+	[base,mbps_wr_max]=1
+	[ide,ssd]=1
+	[ide,wwn]=1
+	[ide,model]=1
+	[sata,ssd]=1
+	[sata,wwn]=1
+	[scsi,ssd]=
+	[scsi,wwn]=1
+	[scsi,iothread]=1
+	[scsi,ro]=1
+	[scsi,product]=1
+	[scsi,vendor]=1
+	[scsi,queues]=1
+	[scsi,scsiblock]=1
+	[virtio,iothread]=1
+	[virtio,ro]=1
+)
+
 
 # Список шаблонов ВМ
 
@@ -1976,49 +2020,116 @@ function deploy_stand_config() {
     }
 
     function set_disk_conf() {
-        [[ "$1" == '' || "$2" == '' && "$1" != test ]] && { echo_err 'Ошибка: set_disk_conf нет аргумента'; exit_clear; }
-        [[ "$1" == 'test' ]] && { [[ "$disk_type" =~ ^(ide|sata|scsi|virtio)$ ]] && return 0; echo_err "Ошибка: указаный в конфигурации тип диска '$disk_type' не является корректным [ide|sata|scsi|virtio]"; exit_clear; }
-        [[ ! "$1" =~ ^(boot_|)(disk|iso)_?[0-9]+$ ]] && { echo_err "Ошибка: неизвестный параметр ВМ '$1'" && exit_clear; }
-        local _exit=false
-        case "$disk_type" in
-            ide)    [[ "$disk_num" -lt 4  ]] || _exit=true;;
-            sata)   [[ "$disk_num" -lt 6  ]] || _exit=true;;
-            scsi)   [[ "$disk_num" -lt 31 ]] || _exit=true;;
-            virtio) [[ "$disk_num" -lt 16 ]] || _exit=true;;
-        esac
-        $_exit && { echo_err "Ошибка: невозможно присоединить больше $disk_num дисков типа '$disk_type' к ВМ '$elem'. Выход"; exit_clear;}
+        function place_disk_options() {
+            ! [[ $config_disk_opts ]] && return
 
-        if [[ ${BASH_REMATCH[2]} == disk ]]; then
-            if [[ "${BASH_REMATCH[1]}" != boot_ ]] && [[ "$2" =~ ^([0-9]+(|\.[0-9]+))\ *([gGГг][bBБб]?)?$ ]]; then
-                cmd_line+=( "--${disk_type}${disk_num}" "${config_base[storage]}:${BASH_REMATCH[1]},format=$config_disk_format" )
+            local item cmd_disk_opts IFS=','
+            local -A dup_item
+            for item in $config_disk_opts; do
+                [[ ${#item} == 0 ]] && continue
+                [[ "$item" =~ ^\ *([^ ]+)\ *=\ *([^ ]+(|\ *[^ ]+)*)\ *$ ]] || { echo_err "Ошибка $FUNCNAME: некорректный синтаксис опции '$item'"; exit_clear; }
+
+                [[ -v "dup_item[${BASH_REMATCH[1]}]" ]] && continue
+
+                ! [[ -v "var_vmdisk_opts[base,${BASH_REMATCH[1]}]" || -v "var_vmdisk_opts[$disk_type,${BASH_REMATCH[1]}]" ]] && {
+                    [[ -v "var_vmdisk_opts[ide,${BASH_REMATCH[1]}]" || -v "var_vmdisk_opts[scsi,${BASH_REMATCH[1]}]" ]] && {
+                        echo_verbose "$FUNCNAME: Пропущена опция ${BASH_REMATCH[1]} как несовместимая для диска типа $disk_type"
+                        continue
+                    }
+                    echo_err "Ошибка $FUNCNAME: некорректный параметр диска: '${BASH_REMATCH[1]}'"
+                    exit_clear
+                }
+
+                cmd_disk_opts+="${BASH_REMATCH[1]}=${BASH_REMATCH[2]},"
+                dup_item[${BASH_REMATCH[1]}]=1
+            done
+            cmd_disk_opts=','${cmd_disk_opts::-1}
+            cmd_line[$(( ${#cmd_line[@]} - 1 ))]+=$cmd_disk_opts
+        }
+        [[ "$1" == 'test' ]] && {
+            [[ "$disk_type" =~ ^(ide|sata|scsi|virtio)$ ]] && return 0
+            echo_err "Ошибка: указаный в конфигурации тип диска '$disk_type' не является корректным [ide|sata|scsi|virtio]"
+            exit_clear
+        }
+        [[ "$1" == 'resize-disk' ]] && {
+            [[ ${#resize_disks[@]} == 0 ]] && return
+            local e
+            for e in ${!resize_disks[@]}; do
+                run_cmd /noexit pvesh set "/nodes/$var_pve_node/qemu/$vmid/resize" --disk "$e" --size "${resize_disks[$e]}" || { echo_err "Ошибка: не удалось изменить размер '$e' диска ВМ '$vmid'. Выход"; exit_clear; }
+            done
+            return
+        }
+        [[ "$1" == '' || "$2" == '' ]] && { echo_err 'Ошибка: set_disk_conf нет аргумента'; exit_clear; }
+        [[ ! "$1" =~ ^(boot_|)(disk|iso)_?[0-9]+$ ]] && { echo_err "Ошибка: неизвестный параметр ВМ '$1'" && exit_clear; }
+        local disk_type="$disk_type" disk_num file='' disk_opts='' config_disk_opts='' disk_kind=${BASH_REMATCH[2]} boot_prefix=${BASH_REMATCH[1]}
+
+        if [[ -v vm_config[${1}_opt] ]]; then
+            [[ ${vm_config[${1}_opt]} =~ ^\{\ *([^{}]+)\ *\}$ ]] || \
+                { echo_err "Ошибка: некорректная/пустая настройка '${1}_opt' для ВМ '$elem'"; exit_clear; }
+            disk_opts=${BASH_REMATCH[1]}
+            [[ $disk_opts =~ (^|,\ *)disk_type\ *=\ *([^\ ,]*)\ *($|,) ]] && disk_type=${BASH_REMATCH[2]}
+        fi
+
+        case "$disk_type" in
+            ide)    disk_num=$((disk_num_ide++));    [[ $disk_num -lt 4   ]];;
+            sata)   disk_num=$((disk_num_sata++));   [[ $disk_num -lt 6   ]];;
+            scsi)   disk_num=$((disk_num_scsi++));   [[ $disk_num -lt 31  ]];;
+            virtio) disk_num=$((disk_num_virtio++)); [[ $disk_num -lt 16  ]];;
+            *) echo_err "Ошибка: указаный в конфигурации тип диска '$disk_type' не является корректным (ide|sata|scsi|virtio)"; exit_clear;;
+        esac
+        [[ $? != 0 ]] && { echo_err "Ошибка: невозможно присоединить больше $disk_num дисков типа '$disk_type' к ВМ '$elem'. Выход"; exit_clear; }
+
+        if [[ $disk_kind == disk ]]; then
+            if [[ "$boot_prefix" != boot_ ]] && [[ "$2" =~ ^([0-9]+(|\.[0-9]+))\ *([GbГг][BbБб]?)?$ ]]; then
+                cmd_line+=( "--${disk_type}${disk_num}" "${config_base[storage]}:${BASH_REMATCH[1]},format=$config_disk_format" );
             else
-                [[ ${BASH_REMATCH[1]} == boot_ ]] && {
+                [[ $boot_prefix == boot_ ]] && {
                     [[ $boot_order ]] && boot_order+=';'
                     boot_order+="${disk_type}${disk_num}"
                 }
-                local file="$2" disk_opts cmd_disk_opts
+                file="$2"
                 get_file file || exit_clear
-                if [[ -v vm_config[$1_opt] ]]; then
-                    [[ ${vm_config[$1_opt]} =~ ^\{\ *([^{}]*)\ *\}$ ]] || exit_clear
-                    disk_opts=${BASH_REMATCH[1]}
-                    [[ $disk_opts =~ (^|,\ *)overlay_img\ *=\ *([^, ]+(\ +[^, ]+|))* ]] && {
-                        get_file file '' diff "${BASH_REMATCH[2]}" || exit_clear
-                    }
-                    [[ $disk_opts =~ (^|,\ *)iothread\ *=\ *1($|\ *,) ]] && cmd_disk_opts+=',iothread=1'
-                fi
-                cmd_line+=( "--${disk_type}${disk_num}" "${config_base[storage]}:0,format=$config_disk_format$cmd_disk_opts,import-from=$file" )
+                cmd_line+=( "--${disk_type}${disk_num}" "${config_base[storage]}:0,format=$config_disk_format,import-from=$file" )
             fi
+            [[ -v vm_config[disk_opt] ]] && config_disk_opts="${vm_config[disk_opt]},"
+            if [[ $disk_opts ]]; then
+                [[ $disk_opts =~ (^|,\ *)overlay_img\ *=\ *([^, ]+(\ +[^, ]+)*) ]] && {
+                    if [[ ! $file ]]; then
+                        echo_warn "Предупреждение: недопустимая опция 'overlay_img' при создании нового диска"
+                    else
+                        get_file file '' diff "${BASH_REMATCH[2]}" || exit_clear
+                    fi
+                }
+
+                [[ $disk_opts =~ (^|,\ *)iothread\ *=\ *1\ *($|,) ]] && { [[ $disk_type == scsi || $disk_type == virtio ]] \
+                    && config_disk_opts='iothread=1,'$config_disk_opts; echo_warn "Предупреждение: устаревший способ указания параметра 'iothread=1' напрямую в '${1}_opt'. Используйте под опцию disk_options"; }
+                [[ $disk_opts =~ (^|,\ *)disk_options\ *=\ *\"[\ \,]*([^\" \,]*([\ \,]+[^\" \,]+)*)[\ \,]*\"($|\ *,) ]] && {
+                    if [[ ${BASH_REMATCH[2]::1} == '!' ]]; then
+                        config_disk_opts=${BASH_REMATCH[2]:1}
+                    else
+                        config_disk_opts=${BASH_REMATCH[2]}','$config_disk_opts
+                    fi
+                    config_disk_opts=${config_disk_opts// /}
+                }
+                [[ $disk_opts =~ (^|,\ *)size\ *=\ *(\+?\ *[0-9]+(\.\d+)?)\ *([kKmMGgtTкКмМГгтТ][BbБб]?)?($|\ *,) ]] && {
+                    case ${BASH_REMATCH[4]^^} in
+                        K | К )      resize_disks[${disk_type}${disk_num}]="${BASH_REMATCH[2]// /}K";;
+                        M | М )      resize_disks[${disk_type}${disk_num}]="${BASH_REMATCH[2]// /}M";;
+                        G | Г | '' ) resize_disks[${disk_type}${disk_num}]="${BASH_REMATCH[2]// /}G";;
+                        T | Т )      resize_disks[${disk_type}${disk_num}]="${BASH_REMATCH[2]// /}T";;
+                    esac
+                }
+            fi
+            place_disk_options
         else
-            [[ ${BASH_REMATCH[1]} == boot_ ]] && {
+            [[ $boot_prefix == boot_ ]] && {
                 [[ $boot_order ]] && boot_order+=';'
                 boot_order+="${disk_type}${disk_num}"
             }
-            local file="$2"
+            file="$2"
             get_file file '' iso || exit_clear
             cmd_line+=( "--${disk_type}${disk_num}" "$file,media=cdrom" )
-
         fi
-        ((disk_num++))
     }
 
     function set_role_config() {
@@ -2113,17 +2224,21 @@ function deploy_stand_config() {
     }
 
     local -a cmd_line
-    local netifs_type='virtio' netifs_mac disk_type='scsi' disk_num=0 boot_order vm_template vm_name
-    local -A vm_config=()
+    local netifs_type='virtio' netifs_mac disk_type='scsi' disk_num_ide=0 disk_num_sata=0 disk_num_scsi=0 disk_num_virtio=0 boot_order vm_template vm_name
+    local -A vm_config=() resize_disks=()
 
     for elem in $(printf '%s\n' "${!config_var[@]}" | grep -P 'vm_\d+' | sort -V ); do
 
         netifs_type='virtio'
         netifs_mac=''
         disk_type='scsi'
-        disk_num=0
+        disk_num_ide=0
+        disk_num_sata=0
+        disk_num_scsi=0
+        disk_num_virtio=0
         boot_order=''
         vm_config=()
+        resize_disks=()
         vm_template="$( get_dict_value config_stand_${opt_sel_var}_var[$elem] config_template )"
 
         [[ "$vm_template" != '' ]] && {
@@ -2153,13 +2268,15 @@ function deploy_stand_config() {
                 ?(boot_)@(disk|iso)_+([0-9])) set_disk_conf "$opt" "${vm_config[$opt]}";;
                 access_role) ${config_base[access_create]} && set_role_config "${vm_config[$opt]}";;
                 machine) set_machine_type "${vm_config[$opt]}";;
-                firewall_opt|?(boot_)@(disk|iso)_+([0-9])_opt|templ_*) continue;;
+                firewall_opt|disk_opt|?(boot_)@(disk|iso)_+([0-9])_opt|templ_*) continue;;
                 *) echo_warn "[Предупреждение]: обнаружен неизвестный параметр конфигурации '$opt = ${vm_config[$opt]}' ВМ '$vm_name'. Пропущен"
             esac
         done
         [[ $boot_order ]] && cmd_line+=( --boot "order=$boot_order" )
 
         run_cmd /noexit "${cmd_line[@]}" || { echo_err "Ошибка: не удалось создать ВМ '$vm_name' стенда '$pool_name'. Выход"; exit_clear; }
+
+        set_disk_conf resize-disk
 
         set_firewall_opt "${vm_config[firewall_opt]}"
 
