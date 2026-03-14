@@ -892,7 +892,7 @@ function get_url_fileinfo() {
             size) ref_var=$( grep -ioP '^Content-Range:\s*bytes\s*[\-\d]+\/\K\d+' <<<$info );;
             mime_type) ref_var=$( grep -ioP '^Content-Type:\s*\K[^\s]+' <<<$info );;
         esac
-        [[ ! $ref_var ]] && { echo_err "Ошибка $FUNCNAME: не удалось получить запрашиваемое значение '${BASH_REMATCH[2]}' для файла по URL '$baseurl'"; exit_clear; }
+        [[ ! $ref_var ]] && { echo_err "Ошибка $FUNCNAME: не удалось получить запрашиваемое значение '$1' для файла по URL '$baseurl'"; exit_clear; }
         shift
     done
 }
