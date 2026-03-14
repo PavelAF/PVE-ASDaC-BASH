@@ -2046,6 +2046,7 @@ function deploy_stand_config() {
             cmd_disk_opts=','${cmd_disk_opts::-1}
             cmd_line[$(( ${#cmd_line[@]} - 1 ))]+=$cmd_disk_opts
         }
+        [[ "$1" == '' || "$2" == '' ]] && { echo_err 'Ошибка: set_disk_conf нет аргумента'; exit_clear; }
         [[ "$1" == 'test' ]] && {
             [[ "$disk_type" =~ ^(ide|sata|scsi|virtio)$ ]] && return 0
             echo_err "Ошибка: указаный в конфигурации тип диска '$disk_type' не является корректным [ide|sata|scsi|virtio]"
@@ -2059,7 +2060,6 @@ function deploy_stand_config() {
             done
             return
         }
-        [[ "$1" == '' || "$2" == '' ]] && { echo_err 'Ошибка: set_disk_conf нет аргумента'; exit_clear; }
         [[ ! "$1" =~ ^(boot_|)(disk|iso)_?[0-9]+$ ]] && { echo_err "Ошибка: неизвестный параметр ВМ '$1'" && exit_clear; }
         local disk_type="$disk_type" disk_num file='' disk_opts='' config_disk_opts='' disk_kind=${BASH_REMATCH[2]} boot_prefix=${BASH_REMATCH[1]}
 
@@ -2111,8 +2111,8 @@ function deploy_stand_config() {
                     fi
                     config_disk_opts=${config_disk_opts// /}
                 }
-                [[ $disk_opts =~ (^|,\ *)size\ *=\ *(\+?\ *[0-9]+(\.\d+)?)\ *([kKmMGgtTкКмМГгтТ][BbБб]?)?($|\ *,) ]] && {
-                    case ${BASH_REMATCH[4]^^} in
+                [[ $disk_opts =~ (^|,\ *)size\ *=\ *(\+?\ *[0-9]+(\.[0-9]+)?)\ *(([kKmMGgtTкКмМГгтТ])[BbБб]?)?($|\ *,) ]] && {
+                    case ${BASH_REMATCH[5]^^} in
                         K | К )      resize_disks[${disk_type}${disk_num}]="${BASH_REMATCH[2]// /}K";;
                         M | М )      resize_disks[${disk_type}${disk_num}]="${BASH_REMATCH[2]// /}M";;
                         G | Г | '' ) resize_disks[${disk_type}${disk_num}]="${BASH_REMATCH[2]// /}G";;
