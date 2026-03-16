@@ -95,51 +95,6 @@ declare -A config_access_roles=(
     [test]='VM.Audit     VM.Console   ,   VM.PowerMgmt,VM.Snapshot.Rollback;VM.Snapshot.Rollback'
 )
 
-declare -A var_vmdisk_opts=(
-	[base,aio]=1
-	[base,cache]=1
-	[base,detect_zeroes]=1
-	[base,discard]=1
-	[base,backup]=1
-	[base,replicate]=1
-	[base,rerror]=1
-	[base,werror]=1
-	[base,serial]=1
-	[base,shared]=1
-	[base,bps]=1
-	[base,bps_max_length]=1
-	[base,bps_rd]=1
-	[base,bps_rd_max_length]=1
-	[base,iops]=1
-	[base,iops_max]=1
-	[base,iops_max_length]=1
-	[base,iops_rd]=1
-	[base,iops_rd_max]=1
-	[base,iops_rd_max_length]=1
-	[base,mbps]=1
-	[base,mbps_max]=1
-	[base,mbps_rd]=1
-	[base,mbps_rd_max]=1
-	[base,mbps_wr]=1
-	[base,mbps_wr_max]=1
-	[ide,ssd]=1
-	[ide,wwn]=1
-	[ide,model]=1
-	[sata,ssd]=1
-	[sata,wwn]=1
-	[scsi,ssd]=
-	[scsi,wwn]=1
-	[scsi,iothread]=1
-	[scsi,ro]=1
-	[scsi,product]=1
-	[scsi,vendor]=1
-	[scsi,queues]=1
-	[scsi,scsiblock]=1
-	[virtio,iothread]=1
-	[virtio,ro]=1
-)
-
-
 # Список шаблонов ВМ
 
 declare -A config_templates=(
@@ -219,6 +174,50 @@ declare -A config_stand_2_var=(
 ########################## -= Конец встроенной конфигурации =- ##########################
 
 
+# Список валидных опций дисков
+declare -A var_vmdisk_opts=(
+	[base,aio]=1
+	[base,cache]=1
+	[base,detect_zeroes]=1
+	[base,discard]=1
+	[base,backup]=1
+	[base,replicate]=1
+	[base,rerror]=1
+	[base,werror]=1
+	[base,serial]=1
+	[base,shared]=1
+	[base,bps]=1
+	[base,bps_max_length]=1
+	[base,bps_rd]=1
+	[base,bps_rd_max_length]=1
+	[base,iops]=1
+	[base,iops_max]=1
+	[base,iops_max_length]=1
+	[base,iops_rd]=1
+	[base,iops_rd_max]=1
+	[base,iops_rd_max_length]=1
+	[base,mbps]=1
+	[base,mbps_max]=1
+	[base,mbps_rd]=1
+	[base,mbps_rd_max]=1
+	[base,mbps_wr]=1
+	[base,mbps_wr_max]=1
+	[ide,ssd]=1
+	[ide,wwn]=1
+	[ide,model]=1
+	[sata,ssd]=1
+	[sata,wwn]=1
+	[scsi,ssd]=
+	[scsi,wwn]=1
+	[scsi,iothread]=1
+	[scsi,ro]=1
+	[scsi,product]=1
+	[scsi,vendor]=1
+	[scsi,queues]=1
+	[scsi,scsiblock]=1
+	[virtio,iothread]=1
+	[virtio,ro]=1
+)
 
 
 # Объявление вспомогательных функций:
@@ -2091,7 +2090,7 @@ function deploy_stand_config() {
                 get_file file || exit_clear
                 cmd_line+=( "--${disk_type}${disk_num}" "${config_base[storage]}:0,format=$config_disk_format,import-from=$file" )
             fi
-            [[ -v vm_config[disk_opt] ]] && config_disk_opts="${vm_config[disk_opt]},"
+            [[ -v vm_config[disk_options] ]] && config_disk_opts="${vm_config[disk_options]},"
             if [[ $disk_opts ]]; then
                 [[ $disk_opts =~ (^|,\ *)overlay_img\ *=\ *([^, ]+(\ +[^, ]+)*) ]] && {
                     if [[ ! $file ]]; then
