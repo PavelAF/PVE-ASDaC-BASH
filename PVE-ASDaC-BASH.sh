@@ -2078,57 +2078,56 @@ function deploy_stand_config() {
         esac
         [[ $? != 0 ]] && { echo_err "Ошибка: невозможно присоединить больше $disk_num дисков типа '$disk_type' к ВМ '$elem'. Выход"; exit_clear; }
 
+        if [[ $boot_prefix ]]; then
+            [[ $boot_order ]] && boot_order+=';'
+            boot_order+="${disk_type}${disk_num}"
+        fi
+
         if [[ $disk_kind == disk ]]; then
-            if [[ "$boot_prefix" != boot_ ]] && [[ "$2" =~ ^([0-9]+(|\.[0-9]+))\ *([GbГг][BbБб]?)?$ ]]; then
+            [[ -v vm_config[disk_options] ]] && config_disk_opts=${vm_config[disk_options]}
+            if [[ "$2" =~ ^([0-9]+(|\.[0-9]+))\ *([GbГг][BbБб]?)?$ ]]; then
                 cmd_line+=( "--${disk_type}${disk_num}" "${config_base[storage]}:${BASH_REMATCH[1]},format=$config_disk_format" );
             else
-                [[ $boot_prefix == boot_ ]] && {
-                    [[ $boot_order ]] && boot_order+=';'
-                    boot_order+="${disk_type}${disk_num}"
-                }
                 file="$2"
                 get_file file || exit_clear
-                cmd_line+=( "--${disk_type}${disk_num}" "${config_base[storage]}:0,format=$config_disk_format,import-from=$file" )
             fi
-            [[ -v vm_config[disk_options] ]] && config_disk_opts="${vm_config[disk_options]},"
             if [[ $disk_opts ]]; then
-                [[ $disk_opts =~ (^|,\ *)overlay_img\ *=\ *([^, ]+(\ +[^, ]+)*) ]] && {
+                if [[ $disk_opts =~ (^|,\ *)overlay_img\ *=\ *([^, ]+(\ +[^, ]+)*) ]]; then
                     if [[ ! $file ]]; then
-                        echo_warn "Предупреждение: недопустимая опция 'overlay_img' при создании нового диска"
+                        echo_err "Ошибка: недопустимая опция 'overlay_img' при создании нового диска"
+                        exit_clear
                     else
                         get_file file '' diff "${BASH_REMATCH[2]}" || exit_clear
                     fi
-                }
-
-                [[ $disk_opts =~ (^|,\ *)iothread\ *=\ *1\ *($|,) ]] && { [[ $disk_type == scsi || $disk_type == virtio ]] \
-                    && config_disk_opts='iothread=1,'$config_disk_opts; echo_warn "Предупреждение: устаревший способ указания параметра 'iothread=1' напрямую в '${1}_opt'. Используйте под опцию disk_options"; }
-                [[ $disk_opts =~ (^|,\ *)disk_options\ *=\ *\"[\ \,]*([^\" \,]*([\ \,]+[^\" \,]+)*)[\ \,]*\"($|\ *,) ]] && {
-                    if [[ ${BASH_REMATCH[2]::1} == '!' ]]; then
-                        config_disk_opts=${BASH_REMATCH[2]:1}
-                    else
-                        config_disk_opts=${BASH_REMATCH[2]}','$config_disk_opts
-                    fi
-                    config_disk_opts=${config_disk_opts// /}
-                }
-                [[ $disk_opts =~ (^|,\ *)size\ *=\ *(\+?\ *[0-9]+(\.[0-9]+)?)\ *(([kKmMGgtTкКмМГгтТ])[BbБб]?)?($|\ *,) ]] && {
+                fi
+                if [[ $disk_opts =~ (^|,\ *)size\ *=\ *(\+?\ *[0-9]+(\.[0-9]+)?)\ *(([[:alpha:]])[[:alpha:]]?)?($|\ *,) ]]; then
                     case ${BASH_REMATCH[5]^^} in
-                        K | К )      resize_disks[${disk_type}${disk_num}]="${BASH_REMATCH[2]// /}K";;
-                        M | М )      resize_disks[${disk_type}${disk_num}]="${BASH_REMATCH[2]// /}M";;
-                        G | Г | '' ) resize_disks[${disk_type}${disk_num}]="${BASH_REMATCH[2]// /}G";;
-                        T | Т )      resize_disks[${disk_type}${disk_num}]="${BASH_REMATCH[2]// /}T";;
+                        K | К )      resize_disks[${disk_type}${disk_num}]="${BASH_REMATCH[2]// /}K" ;;
+                        M | М )      resize_disks[${disk_type}${disk_num}]="${BASH_REMATCH[2]// /}M" ;;
+                        G | Г | '' ) resize_disks[${disk_type}${disk_num}]="${BASH_REMATCH[2]// /}G" ;;
+                        T | Т )      resize_disks[${disk_type}${disk_num}]="${BASH_REMATCH[2]// /}T" ;;
+                        *)           echo_err "Ошибка: параметр size имеет недопустимый синтаксис в ВМ '$elem' -> '$1'"; exit_clear ;;
                     esac
-                }
+                fi
             fi
-            place_disk_options
+            if [[ $file ]]; then 
+                cmd_line+=( "--${disk_type}${disk_num}" "${config_base[storage]}:0,format=$config_disk_format,import-from=$file" )
+            fi
         else
-            [[ $boot_prefix == boot_ ]] && {
-                [[ $boot_order ]] && boot_order+=';'
-                boot_order+="${disk_type}${disk_num}"
-            }
             file="$2"
             get_file file '' iso || exit_clear
             cmd_line+=( "--${disk_type}${disk_num}" "$file,media=cdrom" )
         fi
+       if [[ $disk_opts =~ (^|,\ *)disk_options\ *=\ *\"[\ \,]*([^\" \,]*([\ \,]+[^\" \,]+)*)[\ \,]*\"($|\ *,) ]]; then
+            if [[ ${BASH_REMATCH[2]::1} == '!' ]]; then
+                config_disk_opts=${BASH_REMATCH[2]:1}
+            else
+                config_disk_opts=${BASH_REMATCH[2]}','$config_disk_opts
+            fi
+            config_disk_opts=${config_disk_opts// /}
+        fi
+        place_disk_options
+
     }
 
     function set_role_config() {
@@ -2148,13 +2147,13 @@ function deploy_stand_config() {
             role_exists=true
             break
         done
-        ! $role_exists && {
+        if ! $role_exists; then
             [[ ! -v "config_access_roles[$1]" ]] && { echo_err "Ошибка: в конфигурации для установки ВМ '$elem' установлена несуществующая access роль '$1'. Выход"; exit_clear; }
             run_cmd pve_api_request return_cmd POST /access/roles "roleid=$1" "privs=${config_access_roles[$1]}"
             echo_ok "Создана access роль ${c_val}$1"
             roles_list[roleid]=$( echo "$1"; echo -n "${roles_list[roleid]}" )
             roles_list[privs]=$( echo "${config_access_roles[$1]}"; echo -n "${roles_list[privs]}" )
-        }
+        fi
     }
 
     function set_machine_type() {
