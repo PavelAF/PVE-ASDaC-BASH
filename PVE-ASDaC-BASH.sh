@@ -879,12 +879,22 @@ function get_yadisk_url_info() {
     [[ ${BASH_REMATCH[2]} != d ]] && { echo_err "Ошибка $FUNCNAME: указанный URL ЯДиска '$ref_url' не является валидным, т.к. файл защищен паролем. Скачивание файлов ЯДиска защищенные паролем на даный момент недоступно. Выход"; exit_clear; }
     
     local opt_name='' reply='' regex='\A[\s\n]*{([^{]*?|({[^}]*}))*\"{opt_name}\"\s*:\s*((\"\K[^\"]*)|\K[0-9]+)'
-    reply=$( curl -sGf 'https://cloud-api.yandex.net/v1/disk/public/resources?public_key='"${BASH_REMATCH[1]}&path=${BASH_REMATCH[3]:-/}" ) || {
-        case $? in
+    
+    reply=$( curl -fsS --connect-timeout 5 --max-time 20 --max-filesize 1048576 \
+                --retry 2 --retry-delay 2 --retry-connrefused -H 'Accept: application/json' \
+                'https://cloud-api.yandex.net/v1/disk/public/resources?public_key='"${BASH_REMATCH[1]}&path=${BASH_REMATCH[3]:-/}" ) \
+    || {
+        local code=$?
+        case $code in
             5) echo_err "Ошибка запроса к Яндекс API: на хосте некорректные настройки прокси";;
-            6|7|28) echo_err "Ошибка запроса к Яндекс API: не удалось связаться с API. Проверьте подключение к интернету/настройки DNS"$'\n'"Код ошибки curl: $?";;
+            6|7|28) echo_err "Ошибка запроса к Яндекс API: не удалось связаться с API. Проверьте подключение к интернету/настройки DNS"$'\n'"Код ошибки curl: $code";;
             22) echo_err "Ошибка запроса к Яндекс API: сервер ответил ошибкой. Проверьте правильность URL '$ref_url'";;
-            *) echo_err "Ошибка: не удалось выполнить запрос Яндекс API для ${c_val}$ref_url${c_err}"$'\n'"Код ошибки curl: $?";;
+            *)
+                echo_err "Ошибка: не удалось выполнить запрос Яндекс API для ${c_val}$ref_url${c_err}"$'\n'"Код ошибки curl: $code"
+                [[ $code == 63 ]] && echo_err "API вернул слишком большой ответ; возможны прокси/капча/DPI/HTML-заглушка"
+                if ((code >= 128)); then
+                    echo_err "Процесс сurl был убит сигналом. Возможные причины: некорректный ответ Яндекс API, спам фильтр, капча. Либо на хосте недостаточно ресурсов (маловероятно). Проверьте, не находится ли ваш ip в списке недоверенных, использование VPN/прокси/DPI и пр."
+                fi ;;
         esac
         exit_clear
     }
