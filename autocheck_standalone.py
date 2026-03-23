@@ -1043,17 +1043,108 @@ def run_stand(
     return filebuf
 
 
+def get_selected_group(args, pools, print_info):
+    group_name = args.group
+    if not group_name:
+        if args.no_interact:
+            return next(iter(pools.keys()), None)
+        print("\nСписок развернутых конфигураций:")
+        items = list(pools.keys())
+        for i, gid in enumerate(items, 1):
+            print(f"  {i}. {print_info.get(gid, gid)}")
+        try:
+            sel = _safe_input("Выберите номер конфигурации: ")
+            idx = int(sel)
+            if 1 <= idx <= len(items):
+                return items[idx - 1]
+        except (ValueError, EOFError):
+            pass
+    return group_name
+
+
+def get_selected_stands(args, stand_count, stand_list):
+    if args.stands:
+        indices = parse_numrange(args.stands)
+        sel = [i for i in indices if 1 <= i <= stand_count]
+        return sel if sel else list(range(1, stand_count + 1))
+    if args.no_interact:
+        return list(range(1, stand_count + 1))
+    if stand_count > 1:
+        print("\nВыберите стенды для проверки:")
+        for i, p in enumerate(stand_list, 1):
+            print(f"  {i}. {p}")
+        print("\nДля выбора всех стендов нажмите Enter")
+        inp = _safe_input("Введите номера стендов (прим 1,2-6): ")
+        if inp:
+            indices = parse_numrange(inp)
+            return [i for i in indices if 1 <= i <= stand_count]
+    return list(range(1, stand_count + 1))
+
+
+def get_parallel_count(args, sel_stands):
+    parallel = args.parallel
+    if parallel is None and len(sel_stands) > 1 and not args.no_interact:
+        try:
+            inp = _safe_input(f"Проверять одновременно стендов (1-{len(sel_stands)}) [1]: ")
+            if inp:
+                return max(1, min(len(sel_stands), int(inp)))
+        except (ValueError, EOFError):
+            pass
+        return 1
+    if parallel is None:
+        return 1
+    return max(1, min(len(sel_stands), parallel))
+
+
+def get_outfile(args):
+    outfile = args.output
+    if not outfile and not args.no_interact:
+        try:
+            inp = _safe_input("Сохранить результаты в файл? [д|y|1]: ").lower()
+            if inp and inp[0] in ('y', 'д', '1'):
+                outfile = _safe_input(f"Путь к файлу [{os.getcwd()}/autocheck_report.txt]: ")
+                if not outfile:
+                    outfile = f"{os.getcwd()}/autocheck_report.txt"
+        except EOFError:
+            pass
+    return outfile
+
+
 def main():
     _reconfigure_stdin()
-    parser = argparse.ArgumentParser(description='Автопроверка стендов PVE')
+    parser = argparse.ArgumentParser(description='Автопроверка стендов PVE', add_help=False)
+    parser.add_argument('-h', '--help', action='help', default=argparse.SUPPRESS, help='Показать эту справку и выйти')
     parser.add_argument('config', nargs='?', help='Файл или URL конфигурации .conf')
     parser.add_argument('-g', '--group', help='Группа (ID) стендов')
     parser.add_argument('-s', '--stands', help='Номера стендов (например 1,2-5,8)')
     parser.add_argument('-o', '--output', help='Файл для сохранения отчёта')
     parser.add_argument('-p', '--parallel', type=int, default=None, metavar='N', help='Проверять одновременно N стендов (по умолчанию 1)')
+    parser.add_argument('-l', '--list', action='store_true', help='Показать список доступных групп и стендов и выйти')
     parser.add_argument('-v', '--verbose', action='store_true', help='Подробный вывод')
     parser.add_argument('--no-interact', action='store_true', help='Без интерактивных вопросов')
     args = parser.parse_args()
+
+    if args.list:
+        try:
+            pools, print_info = discover_pools()
+        except Exception as e:
+            print(f"Не удалось получить список пулов: {e}", file=sys.stderr)
+            sys.exit(1)
+            
+        if not pools:
+            print("Развернутые конфигурации (пулы) не найдены.")
+            sys.exit(0)
+            
+        print("Список доступных конфигураций и стендов:\n")
+        for gid, stands in pools.items():
+            print(f"[{_c('ok')}{gid}{_c('null')}]")
+            name = print_info.get(gid, gid)
+            if name != gid:
+                print(f"  Название: {name}")
+            print(f"  Всего стендов: {len(stands)}")
+            print(f"  Доступные номера для вызова (-s): от 1 до {len(stands)}")
+            print()
+        sys.exit(0)
 
     autocheck_dir = AUTOCHECK_DIR
     config_path = args.config
@@ -1096,83 +1187,21 @@ def main():
         print("Не найдено ни одной развёрнутой конфигурации.")
         return
 
-    group_name = args.group
-    if not group_name:
-        if args.no_interact:
-            group_name = next(iter(pools.keys()), None)
-        else:
-            print("\nСписок развернутых конфигураций:")
-            items = list(pools.keys())
-            for i, gid in enumerate(items, 1):
-                print(f"  {i}. {print_info.get(gid, gid)}")
-            try:
-                sel = _safe_input("Выберите номер конфигурации: ")
-                idx = int(sel)
-                if 1 <= idx <= len(items):
-                    group_name = items[idx - 1]
-            except (ValueError, EOFError):
-                pass
-            if not group_name:
-                print("Конфигурация не выбрана.", file=sys.stderr)
-                sys.exit(1)
-
-    if group_name not in pools:
-        print(f"Группа '{group_name}' не найдена.", file=sys.stderr)
+    group_name = get_selected_group(args, pools, print_info)
+    if not group_name or group_name not in pools:
+        print(f"Группа '{group_name}' не найдена или не выбрана.", file=sys.stderr)
         sys.exit(1)
 
     stand_list = pools[group_name]
     stand_count = len(stand_list)
-    sel_stands = []
-    if args.stands:
-        indices = parse_numrange(args.stands)
-        sel_stands = [i for i in indices if 1 <= i <= stand_count]
-        if not sel_stands:
-            sel_stands = list(range(1, stand_count + 1))
-    elif args.no_interact:
-        sel_stands = list(range(1, stand_count + 1))
-    else:
-        if stand_count > 1:
-            print("\nВыберите стенды для проверки:")
-            for i, p in enumerate(stand_list, 1):
-                print(f"  {i}. {p}")
-            print("\nДля выбора всех стендов нажмите Enter")
-            inp = _safe_input("Введите номера стендов (прим 1,2-6): ")
-            if inp:
-                indices = parse_numrange(inp)
-                sel_stands = [i for i in indices if 1 <= i <= stand_count]
-            else:
-                sel_stands = list(range(1, stand_count + 1))
-        else:
-            sel_stands = [1]
-        if not sel_stands:
-            print("Стенды не выбраны.", file=sys.stderr)
-            sys.exit(1)
+    
+    sel_stands = get_selected_stands(args, stand_count, stand_list)
+    if not sel_stands:
+        print("Стенды не выбраны.", file=sys.stderr)
+        sys.exit(1)
 
-    parallel = args.parallel
-    if parallel is None and len(sel_stands) > 1 and not args.no_interact:
-        try:
-            inp = _safe_input(f"Проверять одновременно стендов (1-{len(sel_stands)}) [1]: ")
-            if inp:
-                parallel = max(1, min(len(sel_stands), int(inp)))
-            else:
-                parallel = 1
-        except (ValueError, EOFError):
-            parallel = 1
-    elif parallel is None:
-        parallel = 1
-    else:
-        parallel = max(1, min(len(sel_stands), parallel))
-
-    outfile = args.output
-    if not outfile and not args.no_interact:
-        try:
-            inp = _safe_input("Сохранить результаты в файл? [y/N]: ").lower()
-            if inp and inp[0] in ('y', 'д', '1'):
-                outfile = _safe_input(f"Путь к файлу [{os.getcwd()}/autocheck_report.txt]: ")
-                if not outfile:
-                    outfile = f"{os.getcwd()}/autocheck_report.txt"
-        except EOFError:
-            pass
+    parallel = get_parallel_count(args, sel_stands)
+    outfile = get_outfile(args)
 
     pools_members = {}
     for p in stand_list:
