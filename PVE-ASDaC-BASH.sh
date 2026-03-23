@@ -460,6 +460,7 @@ function show_help() {
         -z, --clear-vmconfig$t$_opt_zero_vms
         -api, --pve-api-url$t${config_base[_pve_api_url]}
         --slow-api$t$_opt_slow_api
+        -exp, --export$t$_opt_export_wizard
 EOL
 }
 
@@ -3098,10 +3099,28 @@ function export_vm_disks() {
     mkdir -p "$output_dir" || { echo_err "Ошибка: не удалось создать директорию '$output_dir'"; return 0; }
 
     local convert_threads=$( nproc | awk '{if($1>16) print 16; else print $1}' )
-    local running_stopped=false
+
+    local has_libguestfs=true run_sysprep=false
+    if ! command -v virt-sparsify >/dev/null 2>&1; then
+        echo_warn $'\nВ системе не установлен пакет libguestfs-tools.'
+        echo_warn "Он необходим для уменьшения (sparsify) и очистки (sysprep) образов без запуска ВМ."
+        if read_question "Установить пакет libguestfs-tools сейчас?"; then
+            apt-get install -y libguestfs-tools || {
+                echo_err "Ошибка установки libguestfs-tools. Экспорт будет выполнен без оптимизации."
+                has_libguestfs=false
+            }
+        else
+            has_libguestfs=false
+        fi
+    fi
+
+    if $has_libguestfs; then
+        if read_question $'\nЗапустить virt-sysprep для очистки системы (machine-id, logs, ssh keys)?'; then
+            run_sysprep=true
+        fi
+    fi
 
     echo_tty
-
     for idx in "${sel_vms[@]}"; do
         local vmid=$( echo -n "$vmid_list" | sed "${idx}q;d" )
         local vm_name=$( echo -n "$vmname_list" | sed "${idx}q;d" )
@@ -3120,7 +3139,6 @@ function export_vm_disks() {
                     [[ "$st" == 'stopped' ]] && break
                     sleep 2
                 done
-                running_stopped=true
                 echo_ok "ВМ ${c_ok}$vm_name${c_null} остановлена"
             fi
         fi
@@ -3148,13 +3166,71 @@ function export_vm_disks() {
 
             local out_file="${output_dir}/${vm_name}_${dk}.qcow2"
             local disk_size=$( du -sh "$disk_path" 2>/dev/null | awk '{print $1}' )
+
+            local backing_file="" is_overlay=false export_type=1
+            backing_file=$( qemu-img info --output=json "$disk_path" | grep -Po '"backing-filename"\s*:\s*"\K[^"]+' )
+            if [[ -n "$backing_file" ]]; then
+                is_overlay=true
+                echo_tty $'\n'"Обнаружен ${c_warning}образ-оверлей${c_null} для ${c_val}$dk${c_null} (базовый образ: $backing_file)."
+                echo_tty "Выберите тип экспорта:"
+                echo_tty "  1. Плоский (цельный) образ (слияние с базой) [По умолчанию]"
+                echo_tty "  2. Только слой изменений (оверлей)"
+                export_type=$( read_question_select 'Тип экспорта' '^[12]$' 1 2 '' 1 )
+            fi
+
             echo_tty "[${c_info}Info${c_null}] Экспорт ${c_ok}$vm_name${c_null} ${c_value}$dk${c_null} -> ${c_value}${out_file}${c_null}${disk_size:+ (${c_value}${disk_size}${c_null})}"
 
             if $opt_dry_run; then
-                echo_tty "[${c_warning}dry-run${c_null}] qemu-img convert -m $convert_threads -c -O qcow2 '$disk_path' '$out_file'"
+                if [[ "$export_type" == "2" ]]; then
+                    echo_tty "[${c_warning}dry-run${c_null}] cp '$disk_path' '$out_file'"
+                    $run_sysprep && echo_tty "[${c_warning}dry-run${c_null}] virt-sysprep -a '$out_file'"
+                    echo_tty "[${c_warning}dry-run${c_null}] qemu-img rebase -u -b \"\" '$out_file'"
+                elif $run_sysprep; then
+                    echo_tty "[${c_warning}dry-run${c_null}] qemu-img convert -m $convert_threads -O qcow2 '$disk_path' '${out_file}.tmp'"
+                    echo_tty "[${c_warning}dry-run${c_null}] virt-sysprep -a '${out_file}.tmp'"
+                    echo_tty "[${c_warning}dry-run${c_null}] virt-sparsify --compress '${out_file}.tmp' '$out_file'"
+                elif $has_libguestfs; then
+                    echo_tty "[${c_warning}dry-run${c_null}] virt-sparsify --convert qcow2 --compress '$disk_path' '$out_file'"
+                else
+                    echo_tty "[${c_warning}dry-run${c_null}] qemu-img convert -m $convert_threads -c -O qcow2 '$disk_path' '$out_file'"
+                fi
             else
-                qemu-img convert -p -m "$convert_threads" -c -O qcow2 "$disk_path" "$out_file" \
-                    || { echo_err "Ошибка экспорта диска '$dk' ВМ '$vm_name'. qemu-img exit code: $?"; continue; }
+                export LIBGUESTFS_BACKEND=direct
+                if [[ "$export_type" == "2" ]]; then
+                    cp -f "$disk_path" "$out_file" || { echo_err "Ошибка копирования диска '$dk'"; continue; }
+                    $run_sysprep && {
+                        echo_tty "[${c_info}Info${c_null}] Очистка системы sysprep на слое изменений ${c_value}${out_file}${c_null}..."
+                        virt-sysprep -a "$out_file" || echo_warn "Очистка sysprep завершилась с ошибками для ${c_val}$dk"
+                    }
+                    qemu-img rebase -u -b "" "$out_file" || { echo_err "Ошибка применения rebase для слоя изменений '$dk'"; continue; }
+                elif $run_sysprep; then
+                    local tmp_file="${out_file}.tmp"
+                    echo_tty "[${c_info}Info${c_null}] Копирование диска для очистки -> ${c_value}${tmp_file}${c_null}..."
+                    qemu-img convert -p -m "$convert_threads" -O qcow2 "$disk_path" "$tmp_file" || { echo_err "Ошибка экспорта диска '$dk'"; continue; }
+                    
+                    echo_tty "[${c_info}Info${c_null}] Очистка системы sysprep..."
+                    virt-sysprep -a "$tmp_file" || echo_warn "Очистка sysprep завершилась с ошибками"
+                    
+                    if $has_libguestfs; then
+                        echo_tty "[${c_info}Info${c_null}] Зануление и сжатие sparsify -> ${c_value}${out_file}${c_null}..."
+                        virt-sparsify --compress "$tmp_file" "$out_file" || {
+                            echo_warn "virt-sparsify завершился с ошибкой, использование qemu-img convert..."
+                            qemu-img convert -p -m "$convert_threads" -c -O qcow2 "$tmp_file" "$out_file"
+                        }
+                    else
+                        qemu-img convert -p -m "$convert_threads" -c -O qcow2 "$tmp_file" "$out_file"
+                    fi
+                    rm -f "$tmp_file"
+                else
+                    if $has_libguestfs; then
+                        virt-sparsify --convert qcow2 --compress "$disk_path" "$out_file" || {
+                            echo_warn "virt-sparsify завершился с ошибкой, использование qemu-img convert..."
+                            qemu-img convert -p -m "$convert_threads" -c -O qcow2 "$disk_path" "$out_file" || { echo_err "Ошибка экспорта диска '$dk'"; continue; }
+                        }
+                    else
+                        qemu-img convert -p -m "$convert_threads" -c -O qcow2 "$disk_path" "$out_file" || { echo_err "Ошибка экспорта диска '$dk'"; continue; }
+                    fi
+                fi
             fi
             echo_ok "${vm_name}_${dk}.qcow2"
             ((disk_n++))
@@ -3274,6 +3350,9 @@ opt_slow_api=false
 _opt_sel_var='Выбор варианта установки стендов'
 opt_sel_var=0
 
+_opt_export_wizard='Запуск мастера экспорта образов виртуальных машин'
+opt_export_wizard=false
+
 var_pve_node=$( hostname -s )
 var_ovs_checked=false
 
@@ -3323,6 +3402,7 @@ while [ $# != 0 ]; do
                 -sctl|--silent-control) opt_silent_control=true;;
                 -api|--pve-api-url) check_arg "$2"; config_base[pve_api_url]="$2"; shift;;
                 --run-ifreload-tweak) check_arg "$2"; config_base[run_ifreload_tweak]="$2"; shift;;
+                -exp|--export) opt_export_wizard=true;;
                 *) echo_err "Ошибка: некорректный аргумент: '$1'"; opt_show_help=true;;
             esac
             shift;;
@@ -3350,6 +3430,11 @@ fi
 
 
 check_config check-only;
+
+$opt_export_wizard && {
+    export_vm_disks
+    exit_clear 0
+}
 
 $silent_mode && {
     case $switch_action in
