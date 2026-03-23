@@ -650,15 +650,21 @@ async def check_agent_vm(task: dict, semaphore: asyncio.Semaphore, verbose: bool
         return await loop.run_in_executor(None, lambda: _agent_vm_sync(task, verbose))
 
 
-async def run_tasks(tasks: list[dict], verbose: bool) -> str:
+async def run_tasks(tasks: list[dict], verbose: bool, active_vms: set = None) -> str:
     """Run all tasks, return combined stdout (===AC_VM/AC_CHK/AC_ERR protocol)."""
     agent_semaphore = asyncio.Semaphore(5)
     out_lines = []
 
     async def run_one(t):
-        if t.get('type') == 'agent':
-            return await check_agent_vm(t, agent_semaphore, verbose)
-        return await check_serial_vm(t, verbose)
+        if active_vms is not None:
+            active_vms.add(t['name'])
+        try:
+            if t.get('type') == 'agent':
+                return await check_agent_vm(t, agent_semaphore, verbose)
+            return await check_serial_vm(t, verbose)
+        finally:
+            if active_vms is not None:
+                active_vms.discard(t['name'])
 
     done = await asyncio.gather(*[run_one(t) for t in tasks], return_exceptions=True)
     for item in done:
@@ -813,7 +819,7 @@ def run_stand(
     for vm in serial_cmds:
         vmid = map_id[vm]
         node = map_node[vm]
-        status = get_vm_status(node, int(vmid))
+        status = map_status.get(vm, 'unknown')
         if status != 'running':
             if mode == 'tty':
                 print(f"  ▸ [{pool_name}] {_c('ok')}{vm}{_c('null')} (VMID {vmid}, serial)", flush=True)
@@ -852,7 +858,7 @@ def run_stand(
     for vm in batch_script:
         vmid = map_id[vm]
         node = map_node[vm]
-        status = get_vm_status(node, int(vmid))
+        status = map_status.get(vm, 'unknown')
         if status != 'running':
             if mode == 'tty':
                 print(f"  ▸ [{pool_name}] {_c('ok')}{vm}{_c('null')} (VMID {vmid})", flush=True)
@@ -883,8 +889,45 @@ def run_stand(
         return []
 
     if mode == 'tty':
-        print("  Выполнение проверок на ВМ...", flush=True)
-    helper_out = asyncio.run(run_tasks(tasks_payload, verbose))
+        if verbose:
+            print("  Выполнение проверок на ВМ...", flush=True)
+
+    async def _run_with_spinner():
+        active_vms = set()
+        spinner_chars = ['-', '\\', '|', '/']
+        
+        async def spin():
+            i = 0
+            try:
+                while True:
+                    vms = ", ".join(sorted(active_vms))
+                    if len(vms) > 60:
+                        vms = vms[:57] + "..."
+                    msg = f"Проверка: {vms}" if vms else "Подготовка..."
+                    pad = " " * max(0, 70 - len(msg))
+                    sys.stdout.write(f"\r  {spinner_chars[i % len(spinner_chars)]} {msg}{pad}")
+                    sys.stdout.flush()
+                    i += 1
+                    await asyncio.sleep(0.15)
+            except asyncio.CancelledError:
+                sys.stdout.write('\r' + ' ' * 75 + '\r')
+                sys.stdout.flush()
+        
+        spinner = None
+        if mode == 'tty':
+            spinner = asyncio.create_task(spin())
+            
+        try:
+            return await run_tasks(tasks_payload, verbose, active_vms)
+        finally:
+            if spinner:
+                spinner.cancel()
+                try:
+                    await spinner
+                except asyncio.CancelledError:
+                    pass
+
+    helper_out = asyncio.run(_run_with_spinner())
 
     cur_vm = ''
     cur_cn = ''
@@ -984,12 +1027,16 @@ def run_stand(
             if mode == 'tty':
                 print()
                 print(f"  [{_c('ok')}{vm}{_c('null')}] ({etype}):")
+                if verbose:
+                    print(f"  {_c('info')}$ {cmd_val}{_c('null')}")
                 if out:
                     for ln in out.split('\n'):
                         print(f"  {ln}")
                 else:
                     print(f"  {_c('info')}(пустой вывод){_c('null')}")
             filebuf.append(f"  [{_c('ok')}{vm}{_c('null')}] ({etype}):")
+            if verbose:
+                filebuf.append(f"  $ {cmd_val}")
             filebuf.append(out or '(пустой вывод)')
             filebuf.append('')
 
@@ -1170,9 +1217,29 @@ def main():
         with ThreadPoolExecutor(max_workers=parallel) as executor:
             futures = {executor.submit(run_one, idx): idx for idx in sel_stands}
             results_by_idx: dict[int, list[str]] = {}
-            for future in as_completed(futures):
-                idx, lines = future.result()
-                results_by_idx[idx] = lines
+            
+            not_done = set(futures.keys())
+            spinner_chars = ['-', '\\', '|', '/']
+            spin_idx = 0
+            
+            while not_done:
+                done_now = [f for f in not_done if f.done()]
+                for f in done_now:
+                    idx, lines = f.result()
+                    results_by_idx[idx] = lines
+                    not_done.remove(f)
+                
+                if not_done:
+                    completed = len(sel_stands) - len(not_done)
+                    msg = f"Ожидание ({completed}/{len(sel_stands)} завершено)..."
+                    pad = " " * max(0, 50 - len(msg))
+                    sys.stdout.write(f"\r  {spinner_chars[spin_idx % len(spinner_chars)]} {msg}{pad}")
+                    sys.stdout.flush()
+                    spin_idx += 1
+                    time.sleep(0.15)
+                    
+            sys.stdout.write('\r' + ' ' * 60 + '\r')
+            sys.stdout.flush()
             for idx in sel_stands:
                 if idx in results_by_idx:
                     lines = results_by_idx[idx]
