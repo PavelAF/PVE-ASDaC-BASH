@@ -1994,7 +1994,7 @@ function deploy_stand_config() {
             [[ "${Networking["$net"]}" != "$if_desc" ]] && continue
             cmd_line+=( --net$if_num "${netifs_type:-virtio}${if_mac:+"=$if_mac"},bridge=$net$net_options" )
             ! $opt_dry_run && [[ "$vlan_slave" != '' || "$vlan_aware" || "$if_type" != '' ]] && {
-                local port_info if_update=false if_port_type
+                local port_info if_update=false
                 pve_api_request port_info GET "/nodes/$var_pve_node/network/$net" || { echo_err "Ошибка: не удалось получить параметры сетевого интерфейса ${c_val}$net"; exit_clear; }
                 [[ "$port_info" =~ (,|\{)\"type\":\"([^\"]+)\" ]]
                 [[ "$if_type" != '' && ${BASH_REMATCH[2]} != "$if_type" ]] && { echo_err "Ошибка конфигурации: для интерфейса ${c_val}${if_desc#*:}${c_err} незначено два взаимоисключающих типа бриджа одновременно: bridge и OVSBridge"; exit_clear; }
@@ -2208,6 +2208,7 @@ function deploy_stand_config() {
         else
             vm_config[tags]=${vm_config[tags]:1}
         fi
+        vm_config[tags]=${vm_config[tags],,}
         vm_config[tags]=${vm_config[tags]//,/ }
         vm_config[tags]=" ${vm_config[tags]//;/ } "
 
@@ -2554,13 +2555,13 @@ function manage_stands() {
     function load_bulk_vm_tags() {
         [[ "$1" == '' ]] && exit_pid
         local -n ref_tags_list=$1
-        local -A data=()
+        local -A vm_data=()
         local i tags
         ref_tags_list=()
-        jq_data_to_array /cluster/resources?type=vm data
-        for ((i=0; i<data[count]; i++)); do
-            tags=${data[$i,tags]}
-            [[ "$tags" != '' ]] && ref_tags_list[${data[$i,vmid]}]=";${tags%;};"
+        jq_data_to_array /cluster/resources?type=vm vm_data
+        for ((i=0; i<vm_data[count]; i++)); do
+            tags=${vm_data[$i,tags]}
+            [[ "$tags" != '' ]] && ref_tags_list[${vm_data[$i,vmid]}]=";${tags%;};"
         done
     }
 
